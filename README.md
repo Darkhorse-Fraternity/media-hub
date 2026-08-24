@@ -40,6 +40,10 @@ pnpm db:seed      # 创建或同步环境变量中配置的管理员账号
 
 `pnpm db:seed` 是幂等的：管理员不存在时创建，已存在时同步姓名、管理员权限和密码。必须先在本地 `.env` 中配置 `MEDIA_HUB_SEED_ADMIN_NAME`、`MEDIA_HUB_SEED_ADMIN_EMAIL` 和 `MEDIA_HUB_SEED_ADMIN_PASSWORD`；不要把真实密码写入 Git。
 
+### 接口集成测试
+
+`pnpm test` 会通过 Testcontainers 启动一个临时 PostgreSQL 17，执行完整 Drizzle migration，并验证视频修改 REST API 的鉴权、输入校验和数据库落库。测试不会连接 `.env` 中的业务数据库，结束后会自动销毁容器；运行机器需要提供 Docker。可通过 `TEST_POSTGRES_IMAGE` 指定兼容的 PostgreSQL 镜像。
+
 ## 配置分层
 
 登录后可从首页进入“设置”：

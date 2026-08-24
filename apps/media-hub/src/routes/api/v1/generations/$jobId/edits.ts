@@ -33,7 +33,7 @@ const createVideoEditBody = z.object({
     .max(4),
 });
 
-async function handlePost(
+export async function handlePost(
   request: Request,
   sourceJobId: string,
 ): Promise<Response> {
