@@ -20,6 +20,7 @@
     "auth:generate": "pnpm -F @acme/auth generate",
     "db:generate": "pnpm -F @acme/db generate",
     "db:migrate": "pnpm -F @acme/db migrate",
+    "db:seed": "pnpm -F @acme/auth seed",
     "db:studio": "pnpm -F @acme/db studio"
   },
   "devDependencies": {

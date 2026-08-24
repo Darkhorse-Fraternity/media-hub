@@ -16,6 +16,11 @@ import {
 } from "~/lib/media-generation-form";
 import { compressReferenceImage } from "~/lib/reference-image-compression";
 import { useTRPC } from "~/lib/trpc";
+import {
+  createVideoEditTitle,
+  MAX_VIDEO_EDIT_TITLE_LENGTH,
+  validateVideoEditTitle,
+} from "~/lib/video-edit-form";
 
 interface VideoEditSegmentDraft {
   id: string;
@@ -40,7 +45,7 @@ export function VideoEditWorkspace({
 }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
-  const [title, setTitle] = useState(`修改：${sourceTitle}`);
+  const [title, setTitle] = useState(() => createVideoEditTitle(sourceTitle));
   const [language, setLanguage] = useState<ContentLanguage>(initialLanguage);
   const [scheduleDay, setScheduleDay] = useState("now");
   const [scheduleTime, setScheduleTime] = useState("09:00");
@@ -226,6 +231,11 @@ export function VideoEditWorkspace({
   };
 
   const submitEdit = async () => {
+    const titleError = validateVideoEditTitle(title);
+    if (titleError) {
+      setMessage(titleError);
+      return;
+    }
     const ordered = [...segments].sort(
       (left, right) => left.startSeconds - right.startSeconds,
     );
@@ -310,9 +320,15 @@ export function VideoEditWorkspace({
       <div className="space-y-5 p-5 sm:p-6">
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="text-xs text-slate-400">
-            新视频名称
+            <span className="flex items-center justify-between gap-2">
+              <span>新视频名称</span>
+              <span className="font-mono text-[10px] text-slate-500">
+                {title.length}/{MAX_VIDEO_EDIT_TITLE_LENGTH}
+              </span>
+            </span>
             <input
               value={title}
+              maxLength={MAX_VIDEO_EDIT_TITLE_LENGTH}
               onChange={(event) => setTitle(event.target.value)}
               className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-slate-200 transition outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/10"
             />

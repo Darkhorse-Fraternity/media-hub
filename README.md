@@ -17,6 +17,7 @@ Pumpkii Media Hub 是独立的视频生成、审核与多平台发布服务。�
 cp .env.example .env
 pnpm install
 pnpm db:migrate
+pnpm db:seed
 pnpm dev
 ```
 
@@ -34,7 +35,10 @@ pnpm test         # Media Hub 与 API 测试
 pnpm typecheck    # 全工作区类型检查
 pnpm lint         # 全工作区 lint
 pnpm daily-report # 发送每日媒体报告
+pnpm db:seed      # 创建或同步环境变量中配置的管理员账号
 ```
+
+`pnpm db:seed` 是幂等的：管理员不存在时创建，已存在时同步姓名、管理员权限和密码。必须先在本地 `.env` 中配置 `MEDIA_HUB_SEED_ADMIN_NAME`、`MEDIA_HUB_SEED_ADMIN_EMAIL` 和 `MEDIA_HUB_SEED_ADMIN_PASSWORD`；不要把真实密码写入 Git。
 
 ## Docker
 
