@@ -45,6 +45,9 @@ const durationOptions = [15, 30, 45, 60] as const;
 type DurationSeconds = (typeof durationOptions)[number];
 
 const maxReferenceImages = 5;
+const historyPageSize = 10;
+const activeGenerationStatuses = ["scheduled", "queued", "running"] as const;
+const historyGenerationStatuses = ["succeeded", "failed", "canceled"] as const;
 
 interface GenerationEditDraft {
   id: string;
@@ -224,6 +227,7 @@ function MediaHubDashboard({
   const [showUserManagement, setShowUserManagement] = useState(false);
   const [showApiManagement, setShowApiManagement] = useState(false);
   const [isFloatingQueueOpen, setIsFloatingQueueOpen] = useState(true);
+  const [historyPage, setHistoryPage] = useState(1);
   const [selectedPublishJobId, setSelectedPublishJobId] = useState<
     string | null
   >(null);
@@ -394,10 +398,23 @@ function MediaHubDashboard({
     });
   };
 
-  const jobsQuery = useQuery(
+  const activeJobsQuery = useQuery(
     trpc.mediaHub.generation.list.queryOptions(
-      { page: 1, pageSize: 100 },
+      { page: 1, pageSize: 100, statuses: [...activeGenerationStatuses] },
       { refetchInterval: 5000 },
+    ),
+  );
+  const historyJobsQuery = useQuery(
+    trpc.mediaHub.generation.list.queryOptions(
+      {
+        page: historyPage,
+        pageSize: historyPageSize,
+        statuses: [...historyGenerationStatuses],
+      },
+      {
+        placeholderData: (previousData) => previousData,
+        refetchInterval: 30_000,
+      },
     ),
   );
   const providerHealthQuery = useQuery(
@@ -629,20 +646,24 @@ function MediaHubDashboard({
     }
   };
 
-  const jobs = jobsQuery.data?.rows ?? [];
+  const activeJobs = activeJobsQuery.data?.rows ?? [];
+  const historyJobs = historyJobsQuery.data?.rows ?? [];
   type DetailedGenerationJob = Extract<
-    (typeof jobs)[number],
+    (typeof historyJobs)[number],
     { isPrivate: false }
   >;
-  const activeJobs = jobs.filter(
-    (job) =>
-      job.isPrivate || ["scheduled", "queued", "running"].includes(job.status),
+  const detailedHistoryJobs = historyJobs.filter(
+    (job): job is DetailedGenerationJob => !job.isPrivate,
   );
-  const historyJobs = jobs.filter(
-    (job): job is DetailedGenerationJob =>
-      !job.isPrivate &&
-      ["succeeded", "failed", "canceled"].includes(job.status),
+  const historyTotal = historyJobsQuery.data?.total ?? 0;
+  const historyPageCount = Math.max(
+    1,
+    Math.ceil(historyTotal / historyPageSize),
   );
+
+  useEffect(() => {
+    if (historyPage > historyPageCount) setHistoryPage(historyPageCount);
+  }, [historyPage, historyPageCount]);
   const platformAccounts = (accountsQuery.data ?? []).filter((account) =>
     ["youtube", "instagram"].includes(account.platform),
   );
@@ -796,7 +817,7 @@ function MediaHubDashboard({
     currentDescription,
     fallbackDraft,
   }: {
-    job: (typeof jobs)[number];
+    job: DetailedGenerationJob;
     account: (typeof platformAccounts)[number];
     currentDescription: string;
     fallbackDraft: PublishTargetDraft;
@@ -1214,16 +1235,21 @@ function MediaHubDashboard({
             <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
               <h2 className="text-lg font-semibold">历史生成</h2>
               <span className="text-xs text-slate-500">
-                {historyJobs.length} 条历史记录 · 每 5 秒刷新
+                {historyTotal} 条历史记录 · 每页 {historyPageSize} 条 · 30
+                秒刷新
               </span>
             </div>
-            {historyJobs.length === 0 ? (
+            {historyJobsQuery.isLoading ? (
+              <div className="rounded-xl border border-dashed border-slate-700 px-4 py-12 text-center text-sm text-slate-500">
+                正在读取历史记录…
+              </div>
+            ) : detailedHistoryJobs.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-700 px-4 py-12 text-center text-sm text-slate-500">
                 暂无历史生成记录
               </div>
             ) : (
               <div className="space-y-3">
-                {historyJobs.map((job) => {
+                {detailedHistoryJobs.map((job) => {
                   const fallbackAccountIds = job.publishTargets
                     .filter((target) =>
                       ["pending", "failed"].includes(target.status),
@@ -2384,6 +2410,47 @@ function MediaHubDashboard({
                     </article>
                   );
                 })}
+                <nav
+                  aria-label="历史生成分页"
+                  className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4"
+                >
+                  <p className="font-mono text-[11px] text-slate-500">
+                    PAGE {historyPage.toString().padStart(2, "0")} /{" "}
+                    {historyPageCount.toString().padStart(2, "0")}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={
+                        historyPage === 1 || historyJobsQuery.isFetching
+                      }
+                      onClick={() =>
+                        setHistoryPage((current) => Math.max(1, current - 1))
+                      }
+                      className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-300 transition hover:border-cyan-400/50 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      ← 上一页
+                    </button>
+                    <span className="inline-flex min-w-9 items-center justify-center rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 font-mono text-xs font-semibold text-cyan-200">
+                      {historyPage}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={
+                        historyPage >= historyPageCount ||
+                        historyJobsQuery.isFetching
+                      }
+                      onClick={() =>
+                        setHistoryPage((current) =>
+                          Math.min(historyPageCount, current + 1),
+                        )
+                      }
+                      className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-300 transition hover:border-cyan-400/50 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      下一页 →
+                    </button>
+                  </div>
+                </nav>
               </div>
             )}
           </section>

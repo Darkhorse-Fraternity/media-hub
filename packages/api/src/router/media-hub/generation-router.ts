@@ -207,8 +207,9 @@ export const mediaGenerationRouter = {
       const actorRole = (
         ctx.session.user as typeof ctx.session.user & { role?: string }
       ).role;
-      const statusWhere = input.status
-        ? eq(mediaGenerationJob.status, input.status)
+      const requestedStatuses = input.status ? [input.status] : input.statuses;
+      const statusWhere = requestedStatuses?.length
+        ? inArray(mediaGenerationJob.status, requestedStatuses)
         : undefined;
       const where =
         actorRole === "admin"

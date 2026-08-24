@@ -364,6 +364,7 @@ export const mediaGenerationListSchema = z.object({
   page: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(100).default(20),
   status: mediaGenerationStatusEnum.optional(),
+  statuses: z.array(mediaGenerationStatusEnum).min(1).max(6).optional(),
 });
 
 export const mediaGenerationIdSchema = z.object({
