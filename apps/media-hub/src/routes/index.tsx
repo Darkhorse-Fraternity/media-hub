@@ -241,8 +241,6 @@ function MediaHubDashboard({
   const [preparingImages, setPreparingImages] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [showPlatformManagement, setShowPlatformManagement] = useState(false);
-  const [showUserManagement, setShowUserManagement] = useState(false);
   const [showApiManagement, setShowApiManagement] = useState(false);
   const [isFloatingQueueOpen, setIsFloatingQueueOpen] = useState(true);
   const [historyPage, setHistoryPage] = useState(1);
@@ -906,37 +904,19 @@ function MediaHubDashboard({
               </p>
               <p className="text-[11px] text-slate-500">{currentUser.email}</p>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                setShowPlatformManagement((current) => !current);
-                setShowUserManagement(false);
-                setShowApiManagement(false);
-              }}
-              className={`rounded-xl border px-3 py-2 text-xs font-medium transition focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:outline-none ${
-                showPlatformManagement
-                  ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-200"
-                  : "border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-600"
-              }`}
+            <Link
+              to="/platforms"
+              className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-cyan-400/50 hover:text-cyan-200 focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:outline-none"
             >
               平台管理
-            </button>
+            </Link>
             {isAdmin && (
-              <button
-                type="button"
-                onClick={() => {
-                  setShowUserManagement((current) => !current);
-                  setShowPlatformManagement(false);
-                  setShowApiManagement(false);
-                }}
-                className={`rounded-xl border px-3 py-2 text-xs font-medium transition focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:outline-none ${
-                  showUserManagement
-                    ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-200"
-                    : "border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-600"
-                }`}
+              <Link
+                to="/admin/users"
+                className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-cyan-400/50 hover:text-cyan-200 focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:outline-none"
               >
                 用户管理
-              </button>
+              </Link>
             )}
             <Link
               to="/settings"
@@ -946,11 +926,7 @@ function MediaHubDashboard({
             </Link>
             <button
               type="button"
-              onClick={() => {
-                setShowApiManagement((current) => !current);
-                setShowPlatformManagement(false);
-                setShowUserManagement(false);
-              }}
+              onClick={() => setShowApiManagement((current) => !current)}
               className={`rounded-xl border px-3 py-2 text-xs font-medium transition focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:outline-none ${
                 showApiManagement
                   ? "border-violet-400/50 bg-violet-400/10 text-violet-200"
@@ -973,15 +949,7 @@ function MediaHubDashboard({
           </div>
         </header>
 
-        {isAdmin && showUserManagement && (
-          <UserManagementPanel currentUserId={currentUser.id} />
-        )}
-
         {showApiManagement && <AgentApiManagementPanel />}
-
-        {showPlatformManagement && (
-          <PlatformAccountManagementPanel isAdmin={isAdmin} />
-        )}
 
         <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.85fr)]">
           <form
@@ -3206,7 +3174,11 @@ function getFormErrorMessage(error: unknown): string | null {
   return null;
 }
 
-function PlatformAccountManagementPanel({ isAdmin }: { isAdmin: boolean }) {
+export function PlatformAccountManagementPanel({
+  isAdmin,
+}: {
+  isAdmin: boolean;
+}) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const [platformMessage, setPlatformMessage] = useState<string | null>(null);
@@ -3276,7 +3248,7 @@ function PlatformAccountManagementPanel({ isAdmin }: { isAdmin: boolean }) {
             disabled={isStartingOAuth}
             onClick={() => {
               setPlatformMessage(null);
-              youtubeOAuthMutation.mutate({ returnTo: "/" });
+              youtubeOAuthMutation.mutate({ returnTo: "/platforms" });
             }}
             className="rounded-xl border border-red-400/30 bg-red-400/5 px-3 py-2 text-xs font-medium text-red-200 transition hover:bg-red-400/10 disabled:cursor-not-allowed disabled:opacity-45"
           >
@@ -3546,7 +3518,11 @@ function AgentApiManagementPanel() {
   );
 }
 
-function UserManagementPanel({ currentUserId }: { currentUserId: string }) {
+export function UserManagementPanel({
+  currentUserId,
+}: {
+  currentUserId: string;
+}) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const [name, setName] = useState("");

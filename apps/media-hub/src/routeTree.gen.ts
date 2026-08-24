@@ -10,12 +10,14 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as PlatformsRouteImport } from './routes/platforms'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LegalTermsOfServiceRouteImport } from './routes/legal/terms-of-service'
 import { Route as LegalPrivacyPolicyRouteImport } from './routes/legal/privacy-policy'
 import { Route as LegalDataDeletionRouteImport } from './routes/legal/data-deletion'
 import { Route as ApiOpenapiRouteImport } from './routes/api/openapi'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
+import { Route as AdminUsersRouteImport } from './routes/admin.users'
 import { Route as OauthYoutubeCallbackRouteImport } from './routes/oauth/youtube/callback'
 import { Route as OauthInstagramCallbackRouteImport } from './routes/oauth/instagram/callback'
 import { Route as GenerationsJobIdEditRouteImport } from './routes/generations.$jobId.edit'
@@ -37,6 +39,11 @@ import { Route as ApiMediaHubGenerationJobIdVideoRouteImport } from './routes/ap
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PlatformsRoute = PlatformsRouteImport.update({
+  id: '/platforms',
+  path: '/platforms',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -67,6 +74,11 @@ const ApiOpenapiRoute = ApiOpenapiRouteImport.update({
 const ApiHealthRoute = ApiHealthRouteImport.update({
   id: '/api/health',
   path: '/api/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminUsersRoute = AdminUsersRouteImport.update({
+  id: '/admin/users',
+  path: '/admin/users',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OauthYoutubeCallbackRoute = OauthYoutubeCallbackRouteImport.update({
@@ -164,7 +176,9 @@ const ApiMediaHubGenerationJobIdVideoRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/platforms': typeof PlatformsRoute
   '/settings': typeof SettingsRoute
+  '/admin/users': typeof AdminUsersRoute
   '/api/health': typeof ApiHealthRoute
   '/api/openapi': typeof ApiOpenapiRoute
   '/legal/data-deletion': typeof LegalDataDeletionRoute
@@ -190,7 +204,9 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/platforms': typeof PlatformsRoute
   '/settings': typeof SettingsRoute
+  '/admin/users': typeof AdminUsersRoute
   '/api/health': typeof ApiHealthRoute
   '/api/openapi': typeof ApiOpenapiRoute
   '/legal/data-deletion': typeof LegalDataDeletionRoute
@@ -217,7 +233,9 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/platforms': typeof PlatformsRoute
   '/settings': typeof SettingsRoute
+  '/admin/users': typeof AdminUsersRoute
   '/api/health': typeof ApiHealthRoute
   '/api/openapi': typeof ApiOpenapiRoute
   '/legal/data-deletion': typeof LegalDataDeletionRoute
@@ -245,7 +263,9 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/platforms'
     | '/settings'
+    | '/admin/users'
     | '/api/health'
     | '/api/openapi'
     | '/legal/data-deletion'
@@ -271,7 +291,9 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/platforms'
     | '/settings'
+    | '/admin/users'
     | '/api/health'
     | '/api/openapi'
     | '/legal/data-deletion'
@@ -297,7 +319,9 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/platforms'
     | '/settings'
+    | '/admin/users'
     | '/api/health'
     | '/api/openapi'
     | '/legal/data-deletion'
@@ -324,7 +348,9 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  PlatformsRoute: typeof PlatformsRoute
   SettingsRoute: typeof SettingsRoute
+  AdminUsersRoute: typeof AdminUsersRoute
   ApiHealthRoute: typeof ApiHealthRoute
   ApiOpenapiRoute: typeof ApiOpenapiRoute
   LegalDataDeletionRoute: typeof LegalDataDeletionRoute
@@ -350,6 +376,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/platforms': {
+      id: '/platforms'
+      path: '/platforms'
+      fullPath: '/platforms'
+      preLoaderRoute: typeof PlatformsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -392,6 +425,13 @@ declare module '@tanstack/react-router' {
       path: '/api/health'
       fullPath: '/api/health'
       preLoaderRoute: typeof ApiHealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/users': {
+      id: '/admin/users'
+      path: '/admin/users'
+      fullPath: '/admin/users'
+      preLoaderRoute: typeof AdminUsersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/oauth/youtube/callback': {
@@ -550,7 +590,9 @@ const ApiV1GenerationsRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  PlatformsRoute: PlatformsRoute,
   SettingsRoute: SettingsRoute,
+  AdminUsersRoute: AdminUsersRoute,
   ApiHealthRoute: ApiHealthRoute,
   ApiOpenapiRoute: ApiOpenapiRoute,
   LegalDataDeletionRoute: LegalDataDeletionRoute,
