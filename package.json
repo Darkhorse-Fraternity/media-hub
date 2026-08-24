@@ -1,0 +1,41 @@
+{
+  "name": "pumpkii-media-hub",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": "^22.21.0",
+    "pnpm": "^10.19.0"
+  },
+  "packageManager": "pnpm@10.19.0",
+  "scripts": {
+    "dev": "pnpm --filter @acme/media-hub dev",
+    "build": "pnpm --filter @acme/media-hub build",
+    "start": "pnpm --filter @acme/media-hub start",
+    "test": "turbo run test --filter=@acme/media-hub --filter=@acme/api",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint --continue",
+    "format": "prettier --check .",
+    "format:fix": "prettier --write .",
+    "daily-report": "pnpm --filter @acme/media-hub daily-report",
+    "auth:generate": "pnpm -F @acme/auth generate",
+    "db:generate": "pnpm -F @acme/db generate",
+    "db:migrate": "pnpm -F @acme/db migrate",
+    "db:studio": "pnpm -F @acme/db studio"
+  },
+  "devDependencies": {
+    "@acme/prettier-config": "workspace:*",
+    "@turbo/gen": "^2.5.8",
+    "dotenv-cli": "^10.0.0",
+    "prettier": "catalog:",
+    "turbo": "^2.5.8",
+    "typescript": "catalog:"
+  },
+  "prettier": "@acme/prettier-config",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@tailwindcss/oxide",
+      "better-sqlite3",
+      "esbuild"
+    ]
+  }
+}

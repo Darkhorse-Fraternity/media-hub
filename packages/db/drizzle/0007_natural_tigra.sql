@@ -1,0 +1,1 @@
+ALTER TABLE "media_generation_job" ADD COLUMN "reference_images" jsonb DEFAULT '[]'::jsonb NOT NULL;

@@ -1,0 +1,1 @@
+ALTER TABLE "invoice" ADD COLUMN "print_landscape" boolean DEFAULT false NOT NULL;

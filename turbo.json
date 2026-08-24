@@ -1,0 +1,105 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "globalEnv": [
+    "POSTGRES_URL",
+    "AUTH_SECRET",
+    "APP_URL",
+    "TRUSTED_ORIGINS",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "PORT",
+    "LOG_LEVEL",
+    "SERVICE_NAME",
+    "HOSTNAME",
+    "CODEX_TIMEOUT_MS",
+    "CODEX_WORKER_URL",
+    "CODEX_WORKER_SOURCE",
+    "OLLAMA_BASE_URL",
+    "OLLAMA_MODEL",
+    "MEDIA_HUB_FEISHU_APP_ID",
+    "MEDIA_HUB_FEISHU_APP_SECRET",
+    "MEDIA_HUB_REVIEW_CHAT_ID",
+    "MEDIA_HUB_CRYPTO_KEY",
+    "MEDIA_HUB_S3_REGION",
+    "MEDIA_HUB_S3_BUCKET",
+    "MEDIA_HUB_S3_ACCESS_KEY",
+    "MEDIA_HUB_S3_SECRET_KEY",
+    "MEDIA_HUB_S3_ENDPOINT",
+    "YOUTUBE_CLIENT_ID",
+    "YOUTUBE_CLIENT_SECRET",
+    "YOUTUBE_OAUTH_REDIRECT_URI",
+    "FFMPEG_PATH",
+    "MEDIA_HUB_GENERATION_PROVIDER_URL",
+    "MEDIA_HUB_GENERATION_PROVIDER_TOKEN",
+    "META_API_VERSION",
+    "META_APP_ID",
+    "META_APP_SECRET",
+    "META_OAUTH_REDIRECT_URI",
+    "META_FACEBOOK_PAGE_ID",
+    "META_FACEBOOK_PAGE_IDS",
+    "META_LOGIN_CONFIG_ID"
+  ],
+  "globalPassThroughEnv": [
+    "NODE_ENV",
+    "CI",
+    "VERCEL",
+    "VERCEL_ENV",
+    "VERCEL_URL",
+    "npm_lifecycle_event"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [".cache/tsbuildinfo.json", "dist/**"]
+    },
+    "clean": {
+      "cache": false
+    },
+    "dev": {
+      "cache": false,
+      "dependsOn": ["^dev"],
+      "persistent": false
+    },
+    "format": {
+      "outputs": [".cache/.prettiercache"],
+      "outputLogs": "new-only"
+    },
+    "generate": {
+      "cache": false
+    },
+    "lint": {
+      "dependsOn": ["^topo", "^build"],
+      "outputs": [".cache/.eslintcache"]
+    },
+    "migrate": {
+      "cache": false
+    },
+    "push": {
+      "cache": false,
+      "interactive": true
+    },
+    "studio": {
+      "cache": false,
+      "persistent": true
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"]
+    },
+    "topo": {
+      "dependsOn": ["^topo"]
+    },
+    "typecheck": {
+      "dependsOn": ["^topo", "^build"],
+      "outputs": [".cache/tsbuildinfo.json"]
+    },
+    "ui-add": {
+      "cache": false,
+      "interactive": true
+    },
+    "//#clean": {
+      "cache": false
+    }
+  },
+  "ui": "tui"
+}

@@ -1,0 +1,13 @@
+.git
+.github
+.DS_Store
+node_modules
+**/node_modules
+**/.cache
+**/.output
+**/.turbo
+.env
+.env.*
+!.env.example
+npm-debug.log*
+pnpm-debug.log*

@@ -1,0 +1,1 @@
+ALTER TABLE "media_generation_job" ADD COLUMN "language" text DEFAULT 'zh' NOT NULL;

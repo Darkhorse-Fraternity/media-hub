@@ -1,0 +1,12 @@
+services:
+  media-hub:
+    build:
+      context: .
+      dockerfile: apps/media-hub/Dockerfile
+    image: pumpkii-media-hub:local
+    container_name: media-hub
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "3051:3000"

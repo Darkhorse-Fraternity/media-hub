@@ -1,0 +1,1 @@
+ALTER TABLE "reimbursement_item" ADD COLUMN "report_description" text;
