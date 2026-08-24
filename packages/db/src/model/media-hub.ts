@@ -1,6 +1,7 @@
 import {
   bigint,
   boolean,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -159,6 +160,11 @@ export const mediaGenerationJob = pgTable("media_generation_job", {
     .$type<MediaGenerationReferenceImage[]>()
     .notNull()
     .default([]),
+  /** 从用户图片素材库选择的资产 ID；只用于引用保护和审计。 */
+  inputImageAssetIds: jsonb("input_image_asset_ids")
+    .$type<string[]>()
+    .notNull()
+    .default([]),
   /** 目标时长；H3 单段最长约 15 秒，后台会拼接多段达到目标时长。 */
   durationSeconds: integer("duration_seconds").notNull().default(30),
   fps: integer("fps").notNull().default(24),
@@ -181,6 +187,98 @@ export const mediaGenerationJob = pgTable("media_generation_job", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+/** HiDream 图片生成/修改任务；图片和视频任务保持独立语义。 */
+export const mediaImageJob = pgTable(
+  "media_image_job",
+  {
+    id: text("id").primaryKey(),
+    /** generate | edit */
+    kind: text("kind").notNull().default("generate"),
+    title: text("title"),
+    prompt: text("prompt").notNull(),
+    negativePrompt: text("negative_prompt").notNull().default(""),
+    width: integer("width").notNull().default(1024),
+    height: integer("height").notNull().default(1024),
+    seed: bigint("seed", { mode: "number" }),
+    outputCount: integer("output_count").notNull().default(1),
+    diversity: integer("diversity").notNull().default(50),
+    profile: text("profile").notNull().default("platform-hidream-o1-image-v1"),
+    workflowVersion: text("workflow_version"),
+    modelVersion: text("model_version"),
+    /** queued|running|succeeded|failed|canceled */
+    status: text("status").notNull().default("queued"),
+    providerJobId: text("provider_job_id"),
+    errorMessage: text("error_message"),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    startedAt: timestamp("started_at"),
+    finishedAt: timestamp("finished_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("media_image_job_owner_created_idx").on(
+      table.createdBy,
+      table.createdAt,
+    ),
+  ],
+);
+
+/** 用户私有图片素材；ownerUserId 是普通素材 API 的强制授权边界。 */
+export const mediaImageAsset = pgTable(
+  "media_image_asset",
+  {
+    id: text("id").primaryKey(),
+    jobId: text("job_id").references(() => mediaImageJob.id, {
+      onDelete: "set null",
+    }),
+    storageKey: text("storage_key").notNull(),
+    filename: text("filename").notNull(),
+    contentType: text("content_type").notNull(),
+    width: integer("width"),
+    height: integer("height"),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+    checksum: text("checksum").notNull(),
+    /** upload | generated */
+    origin: text("origin").notNull(),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at"),
+  },
+  (table) => [
+    index("media_image_asset_owner_created_idx").on(
+      table.ownerUserId,
+      table.createdAt,
+    ),
+    uniqueIndex("media_image_asset_storage_key_uidx").on(table.storageKey),
+  ],
+);
+
+/** 图片修改任务的有序输入资产；任务和资产 owner 在服务端创建时强校验一致。 */
+export const mediaImageJobInput = pgTable(
+  "media_image_job_input",
+  {
+    id: text("id").primaryKey(),
+    jobId: text("job_id")
+      .notNull()
+      .references(() => mediaImageJob.id, { onDelete: "cascade" }),
+    assetId: text("asset_id")
+      .notNull()
+      .references(() => mediaImageAsset.id, { onDelete: "restrict" }),
+    position: integer("position").notNull(),
+    role: text("role").notNull().default("reference"),
+  },
+  (table) => [
+    uniqueIndex("media_image_job_input_position_uidx").on(
+      table.jobId,
+      table.position,
+    ),
+  ],
+);
 
 /** Media Hub Agent API 的用户 Bearer Token；密文用于本人查看，哈希用于请求鉴权。 */
 export const mediaApiToken = pgTable(

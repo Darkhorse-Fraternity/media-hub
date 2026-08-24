@@ -14,6 +14,8 @@ import type {
   ReferenceImageRole,
 } from "~/lib/media-generation-form";
 import { authClient } from "~/auth/client";
+import { ContentLanguageMenu } from "~/components/content-language-menu";
+import { MediaHubAccountMenu } from "~/components/media-hub-account-menu";
 import {
   contentLanguageStorageKey,
   defaultContentLanguage,
@@ -37,8 +39,16 @@ import {
 } from "~/lib/reference-image-compression";
 import { useTRPC } from "~/lib/trpc";
 
+interface MediaHubSearch {
+  imageAssets?: string;
+}
+
 export const Route = createFileRoute("/")({
   component: MediaHubHome,
+  validateSearch: (search: Record<string, unknown>): MediaHubSearch => ({
+    imageAssets:
+      typeof search.imageAssets === "string" ? search.imageAssets : undefined,
+  }),
 });
 
 const durationOptions = [15, 30, 45, 60] as const;
@@ -221,8 +231,33 @@ function MediaHubDashboard({
   onSignOut: () => void;
 }) {
   const trpc = useTRPC();
+  const routeSearch = Route.useSearch();
   const queryClient = useQueryClient();
   const preferencesQuery = useQuery(trpc.mediaHub.settings.me.queryOptions());
+  const updatePreferencesMutation = useMutation(
+    trpc.mediaHub.settings.updateMe.mutationOptions({
+      onSuccess: () =>
+        queryClient.invalidateQueries({
+          queryKey: trpc.mediaHub.settings.me.queryKey(),
+        }),
+      onError: (error) => setMessage(error.message),
+    }),
+  );
+  const requestedImageAssetIds = (routeSearch.imageAssets ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, maxReferenceImages);
+  const preparedImageAssetsQuery = useQuery({
+    ...trpc.mediaHub.image.prepareVideoInputs.queryOptions({
+      assetIds:
+        requestedImageAssetIds.length > 0 ? requestedImageAssetIds : ["none"],
+    }),
+    enabled: requestedImageAssetIds.length > 0,
+  });
+  const imageLibraryQuery = useQuery(
+    trpc.mediaHub.image.list.queryOptions({ limit: 80 }),
+  );
   const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");
   const [contentLanguage, setContentLanguage] = useState<ContentLanguage>(
@@ -236,7 +271,9 @@ function MediaHubDashboard({
   const [referenceImages, setReferenceImages] = useState<ReferenceImageDraft[]>(
     [],
   );
+  const [isImageLibraryOpen, setIsImageLibraryOpen] = useState(false);
   const referenceImagesRef = useRef<ReferenceImageDraft[]>([]);
+  const appliedImageAssetsRef = useRef<string | null>(null);
   const preferencesAppliedForUserRef = useRef<string | null>(null);
   const [preparingImages, setPreparingImages] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -272,6 +309,28 @@ function MediaHubDashboard({
   useEffect(() => {
     referenceImagesRef.current = referenceImages;
   }, [referenceImages]);
+
+  useEffect(() => {
+    const key = requestedImageAssetIds.join(",");
+    const assets = preparedImageAssetsQuery.data;
+    if (!key || !assets || appliedImageAssetsRef.current === key) return;
+    setReferenceImages((current) => {
+      if (current.length > 0) return current;
+      return assets.map((asset, index) => ({
+        id: createReferenceImageDraftId(),
+        asset: {
+          id: asset.id,
+          name: asset.name,
+          contentType: asset.contentType,
+          sizeBytes: asset.sizeBytes,
+        },
+        previewUrl: asset.url,
+        role: index === 0 ? ("first_frame" as const) : ("subject" as const),
+      }));
+    });
+    appliedImageAssetsRef.current = key;
+    setMessage(`已从图片素材库载入 ${assets.length} 张图片。`);
+  }, [preparedImageAssetsQuery.data, requestedImageAssetIds]);
 
   useEffect(() => {
     const savedLanguage = window.localStorage.getItem(
@@ -316,6 +375,12 @@ function MediaHubDashboard({
       contentLanguageStorageKey(currentUser.id),
       language,
     );
+    if (preferencesQuery.data) {
+      updatePreferencesMutation.mutate({
+        ...preferencesQuery.data,
+        contentLanguage: language,
+      });
+    }
   };
 
   const addReferenceImages = async (files: File[]) => {
@@ -425,6 +490,56 @@ function MediaHubDashboard({
         );
       }
       return remaining;
+    });
+  };
+
+  const toggleLibraryImage = (asset: {
+    id: string;
+    filename: string;
+    contentType: string;
+    sizeBytes: number;
+    url: string;
+  }) => {
+    const contentType = asset.contentType as ReferenceImageContentType;
+    if (!referenceImageContentTypes.has(contentType)) {
+      setMessage(`素材“${asset.filename}”的图片格式暂不支持。`);
+      return;
+    }
+    setReferenceImages((current) => {
+      const selected = current.find((image) => image.asset?.id === asset.id);
+      if (selected) {
+        const remaining = current.filter((image) => image.id !== selected.id);
+        if (
+          selected.role === "first_frame" &&
+          remaining.length > 0 &&
+          !remaining.some((image) => image.role === "first_frame")
+        ) {
+          return remaining.map((image, index) =>
+            index === 0 ? { ...image, role: "first_frame" } : image,
+          );
+        }
+        return remaining;
+      }
+      if (current.length >= maxReferenceImages) {
+        setMessage(`最多选择 ${maxReferenceImages} 张参考图片。`);
+        return current;
+      }
+      return [
+        ...current,
+        {
+          id: createReferenceImageDraftId(),
+          asset: {
+            id: asset.id,
+            name: asset.filename,
+            contentType,
+            sizeBytes: asset.sizeBytes,
+          },
+          previewUrl: asset.url,
+          role: current.some((image) => image.role === "first_frame")
+            ? "subject"
+            : "first_frame",
+        },
+      ];
     });
   };
 
@@ -631,8 +746,17 @@ function MediaHubDashboard({
     setUploading(true);
     setMessage(null);
     try {
-      const uploadedImages = await Promise.all(
+      const preparedImages = await Promise.all(
         referenceImages.map(async (image) => {
+          if (image.asset) {
+            return {
+              assetId: image.asset.id,
+              name: image.asset.name,
+              contentType: image.asset.contentType,
+              role: image.role,
+            };
+          }
+          if (!image.file) throw new Error("参考图片文件不可用");
           const uploaded = await uploadReferenceImage(image.file);
           return {
             storageKey: uploaded.key,
@@ -642,28 +766,48 @@ function MediaHubDashboard({
           };
         }),
       );
-      const firstFrame = uploadedImages.find(
+      const firstFrame = preparedImages.find(
         (image) => image.role === "first_frame",
       );
+      const uploadedReferences: {
+        storageKey: string;
+        name: string;
+        contentType: ReferenceImageContentType;
+        role: "style" | "subject";
+      }[] = [];
+      const assetReferences: {
+        assetId: string;
+        role: "style" | "subject";
+      }[] = [];
+      for (const image of preparedImages) {
+        if (image.role === "first_frame") continue;
+        if (typeof image.storageKey === "string") {
+          uploadedReferences.push({
+            storageKey: image.storageKey,
+            name: image.name,
+            contentType: image.contentType,
+            role: image.role,
+          });
+        } else if (typeof image.assetId === "string") {
+          assetReferences.push({ assetId: image.assetId, role: image.role });
+        }
+      }
       await createMutation.mutateAsync({
         prompt: prompt.trim(),
         language: contentLanguage,
         title: title.trim() || undefined,
-        sourceImageStorageKey: firstFrame?.storageKey,
+        sourceImageAssetId:
+          firstFrame && "assetId" in firstFrame
+            ? firstFrame.assetId
+            : undefined,
+        sourceImageStorageKey:
+          firstFrame && "storageKey" in firstFrame
+            ? firstFrame.storageKey
+            : undefined,
         sourceImageName: firstFrame?.name,
         sourceImageContentType: firstFrame?.contentType,
-        referenceImages: uploadedImages.flatMap((image) =>
-          image.role === "first_frame"
-            ? []
-            : [
-                {
-                  storageKey: image.storageKey,
-                  name: image.name,
-                  contentType: image.contentType,
-                  role: image.role,
-                },
-              ],
-        ),
+        referenceImages: uploadedReferences,
+        referenceImageAssets: assetReferences,
         durationSeconds,
         scheduledAt,
         width: resolution.width,
@@ -886,8 +1030,8 @@ function MediaHubDashboard({
   return (
     <main className="min-h-screen bg-slate-950 p-6 text-slate-100">
       <div className="mx-auto max-w-6xl space-y-6">
-        <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
+        <header className="relative flex flex-col gap-4 border-b border-slate-800/80 pb-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="pr-24 sm:pr-28 lg:pr-0">
             <p className="text-sm font-medium text-cyan-300">
               PUMPKII MEDIA HUB
             </p>
@@ -897,55 +1041,41 @@ function MediaHubDashboard({
               秒视频。生成完成后会自动进入媒体草稿，可继续审核和发布。
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <div className="hidden text-right sm:block">
-              <p className="text-xs font-medium text-slate-200">
-                {currentUser.name}
-              </p>
-              <p className="text-[11px] text-slate-500">{currentUser.email}</p>
-            </div>
-            <Link
-              to="/platforms"
-              className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-cyan-400/50 hover:text-cyan-200 focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:outline-none"
-            >
-              平台管理
-            </Link>
-            {isAdmin && (
-              <Link
-                to="/admin/users"
-                className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-cyan-400/50 hover:text-cyan-200 focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:outline-none"
-              >
-                用户管理
-              </Link>
-            )}
-            <Link
-              to="/settings"
-              className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-cyan-400/40 hover:text-cyan-200 focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:outline-none"
-            >
-              设置
-            </Link>
-            <button
-              type="button"
-              onClick={() => setShowApiManagement((current) => !current)}
-              className={`rounded-xl border px-3 py-2 text-xs font-medium transition focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:outline-none ${
-                showApiManagement
-                  ? "border-violet-400/50 bg-violet-400/10 text-violet-200"
-                  : "border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-600"
+          <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
+            <ContentLanguageMenu
+              value={contentLanguage}
+              disabled={
+                !preferencesQuery.data || updatePreferencesMutation.isPending
+              }
+              onChange={updateContentLanguage}
+            />
+            <span
+              className={`rounded-full border px-3 py-1.5 font-mono text-[11px] ${
+                providerHealthQuery.data?.status === "healthy"
+                  ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                  : "border-amber-400/30 bg-amber-400/10 text-amber-300"
               }`}
             >
-              Agent API
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void authClient.signOut({
-                  fetchOptions: { onSuccess: onSignOut },
-                });
-              }}
-              className="rounded-xl border border-slate-800 px-3 py-2 text-xs text-slate-400 transition hover:border-rose-400/40 hover:text-rose-300 focus-visible:ring-2 focus-visible:ring-rose-300 focus-visible:outline-none"
+              MiniMax H3 ·{" "}
+              {providerHealthQuery.data?.status === "healthy"
+                ? "READY"
+                : "CHECKING"}
+            </span>
+            <Link
+              to="/images"
+              className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-300 transition hover:border-violet-400/50 hover:text-violet-200 focus-visible:ring-2 focus-visible:ring-violet-300 focus-visible:outline-none"
             >
-              退出
-            </button>
+              图片创作
+            </Link>
+          </div>
+          <div className="absolute top-0 right-0 z-50">
+            <MediaHubAccountMenu
+              user={currentUser}
+              isAdmin={isAdmin}
+              agentApiOpen={showApiManagement}
+              onAgentApi={() => setShowApiManagement((current) => !current)}
+              onSignedOut={onSignOut}
+            />
           </div>
         </header>
 
@@ -957,9 +1087,14 @@ function MediaHubDashboard({
             className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl"
           >
             <div className="mb-5 flex items-center justify-between">
-              <h2 className="text-lg font-semibold">创建生成任务</h2>
-              <span className="rounded-full bg-cyan-400/10 px-3 py-1 text-xs text-cyan-300">
-                MiniMax H3 · {durationSeconds}s
+              <div>
+                <p className="font-mono text-[10px] tracking-[0.18em] text-slate-500">
+                  CREATE
+                </p>
+                <h2 className="mt-1 text-lg font-semibold">创建生成任务</h2>
+              </div>
+              <span className="rounded-full bg-cyan-400/10 px-3 py-1 text-xs text-cyan-200">
+                {referenceImages.length}/{maxReferenceImages} 参考
               </span>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -990,24 +1125,7 @@ function MediaHubDashboard({
                   ))}
                 </select>
               </label>
-              <label className="block text-sm text-slate-300">
-                内容语言
-                <select
-                  value={contentLanguage}
-                  onChange={(event) =>
-                    updateContentLanguage(event.target.value as ContentLanguage)
-                  }
-                  className="mt-2 w-full cursor-pointer rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm outline-none focus:border-cyan-400"
-                >
-                  <option value="zh">中文</option>
-                  <option value="en">English</option>
-                </select>
-                <span className="mt-2 block text-xs leading-5 text-slate-500">
-                  默认英文。选择会按当前账号保存在此浏览器；AI
-                  优化提示词和平台发布文案都会使用所选语言。
-                </span>
-              </label>
-              <label className="block text-sm text-slate-300">
+              <label className="block text-sm text-slate-300 sm:col-span-2">
                 分辨率 / 画幅
                 <select
                   value={resolutionValue}
@@ -1098,46 +1216,140 @@ function MediaHubDashboard({
                 <div>
                   <p className="text-sm text-slate-300">参考图片（可选）</p>
                   <p className="mt-1 text-xs text-slate-500">
-                    最多 {maxReferenceImages} 张；必须明确 1
-                    张首帧，其余标记为风格或主体参考；大图会自动压缩到{" "}
-                    {maxReferenceImageMegabytes} MB 以内。
+                    最多 {maxReferenceImages}{" "}
+                    张；可从你的素材库直接选择，或上传本地图片。必须明确 1
+                    张首帧，其余标记为风格或主体参考。
                   </p>
                 </div>
                 <span className="text-xs text-slate-500">
                   {referenceImages.length} / {maxReferenceImages}
                 </span>
               </div>
-              <label
-                className={`mt-2 block rounded-xl border border-dashed border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-400 ${
-                  referenceImages.length >= maxReferenceImages ||
-                  preparingImages
-                    ? "cursor-not-allowed opacity-50"
-                    : "cursor-pointer hover:border-cyan-400/60"
-                }`}
-              >
-                <span>
-                  {preparingImages
-                    ? "正在压缩图片…"
-                    : referenceImages.length >= maxReferenceImages
-                      ? "已达到图片上限"
-                      : "选择一张或多张图片"}
-                </span>
-                <input
-                  type="file"
-                  multiple
-                  disabled={
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => setIsImageLibraryOpen((current) => !current)}
+                  className={`rounded-xl border px-4 py-3 text-left text-sm transition ${
+                    isImageLibraryOpen
+                      ? "border-cyan-300/60 bg-cyan-400/10 text-cyan-100"
+                      : "border-cyan-400/30 bg-cyan-400/5 text-cyan-200 hover:border-cyan-300/60"
+                  }`}
+                >
+                  <span className="block font-medium">从素材库选择</span>
+                  <span className="mt-0.5 block text-[10px] text-slate-500">
+                    当前账号的生成图片
+                  </span>
+                </button>
+                <label
+                  className={`rounded-xl border border-dashed border-slate-700 bg-slate-950 px-4 py-3 text-left text-sm text-slate-400 ${
                     referenceImages.length >= maxReferenceImages ||
                     preparingImages
-                  }
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={(event) => {
-                    const files = Array.from(event.target.files ?? []);
-                    event.currentTarget.value = "";
-                    void addReferenceImages(files);
-                  }}
-                  className="sr-only"
-                />
-              </label>
+                      ? "cursor-not-allowed opacity-50"
+                      : "cursor-pointer hover:border-cyan-400/60"
+                  }`}
+                >
+                  <span className="block font-medium">
+                    {preparingImages
+                      ? "正在压缩图片…"
+                      : referenceImages.length >= maxReferenceImages
+                        ? "已达到图片上限"
+                        : "上传本地图片"}
+                  </span>
+                  <span className="mt-0.5 block text-[10px] text-slate-600">
+                    大图自动压缩到 {maxReferenceImageMegabytes} MB 内
+                  </span>
+                  <input
+                    type="file"
+                    multiple
+                    disabled={
+                      referenceImages.length >= maxReferenceImages ||
+                      preparingImages
+                    }
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={(event) => {
+                      const files = Array.from(event.target.files ?? []);
+                      event.currentTarget.value = "";
+                      void addReferenceImages(files);
+                    }}
+                    className="sr-only"
+                  />
+                </label>
+              </div>
+              {isImageLibraryOpen && (
+                <div className="mt-3 rounded-xl border border-cyan-400/20 bg-slate-950/80 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-medium text-slate-200">
+                        你的图片素材
+                      </p>
+                      <p className="mt-0.5 text-[10px] text-slate-500">
+                        点击图片加入参考，再次点击可移除。
+                      </p>
+                    </div>
+                    <Link
+                      to="/images"
+                      className="shrink-0 text-[11px] text-violet-300 hover:text-violet-200"
+                    >
+                      管理素材 →
+                    </Link>
+                  </div>
+                  {imageLibraryQuery.isPending ? (
+                    <p className="py-8 text-center text-xs text-slate-500">
+                      正在读取素材库…
+                    </p>
+                  ) : (imageLibraryQuery.data?.assets.length ?? 0) === 0 ? (
+                    <div className="py-7 text-center">
+                      <p className="text-xs text-slate-400">素材库还是空的</p>
+                      <Link
+                        to="/images"
+                        className="mt-2 inline-flex text-xs text-violet-300 hover:text-violet-200"
+                      >
+                        去生成第一张图片 →
+                      </Link>
+                    </div>
+                  ) : (
+                    <div className="mt-3 grid max-h-80 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3">
+                      {(imageLibraryQuery.data?.assets ?? []).map((asset) => {
+                        const selected = referenceImages.some(
+                          (image) => image.asset?.id === asset.id,
+                        );
+                        const unavailable =
+                          !selected &&
+                          referenceImages.length >= maxReferenceImages;
+                        return (
+                          <button
+                            key={asset.id}
+                            type="button"
+                            disabled={unavailable}
+                            aria-pressed={selected}
+                            onClick={() => toggleLibraryImage(asset)}
+                            className={`group relative aspect-square overflow-hidden rounded-lg border text-left transition focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-35 ${
+                              selected
+                                ? "border-cyan-300 ring-1 ring-cyan-300/60"
+                                : "border-slate-800 hover:border-slate-600"
+                            }`}
+                          >
+                            <img
+                              src={asset.url}
+                              alt={asset.filename}
+                              loading="lazy"
+                              className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03] motion-reduce:transition-none"
+                            />
+                            <span className="absolute inset-x-0 bottom-0 truncate bg-slate-950/85 px-2 py-1.5 text-[10px] text-slate-300">
+                              {asset.filename}
+                            </span>
+                            {selected && (
+                              <span className="absolute top-1.5 right-1.5 rounded-full bg-cyan-300 px-2 py-1 text-[9px] font-semibold text-slate-950">
+                                已选择
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
               {referenceImages.length > 0 && (
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   {referenceImages.map((image, index) => (
@@ -1153,8 +1365,10 @@ function MediaHubDashboard({
                       <div className="space-y-2 p-3">
                         <div className="flex items-center justify-between gap-2">
                           <p className="min-w-0 flex-1 truncate text-xs text-slate-300">
-                            {image.file.name} ·{" "}
-                            {formatImageBytes(image.file.size)}
+                            {image.file?.name ?? image.asset?.name ?? "图片"} ·{" "}
+                            {formatImageBytes(
+                              image.file?.size ?? image.asset?.sizeBytes ?? 0,
+                            )}
                           </p>
                           <button
                             type="button"
@@ -2465,7 +2679,7 @@ function MediaHubDashboard({
           </section>
         </section>
       </div>
-      <aside className="fixed bottom-4 left-4 z-40 w-[min(26rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-cyan-400/25 bg-slate-950/95 shadow-[0_24px_80px_rgba(2,8,23,0.65)] backdrop-blur-xl">
+      <aside className="hidden">
         <button
           type="button"
           aria-expanded={isFloatingQueueOpen}

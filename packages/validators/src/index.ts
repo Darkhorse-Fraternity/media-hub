@@ -287,6 +287,17 @@ export const createMediaGenerationSchema = z.object({
   sourceImageContentType: z
     .enum(["image/jpeg", "image/png", "image/webp"])
     .optional(),
+  /** 用户素材库输入；服务端按 session user 解析，客户端不能提交 storage key。 */
+  sourceImageAssetId: z.string().min(1).optional(),
+  referenceImageAssets: z
+    .array(
+      z.object({
+        assetId: z.string().min(1),
+        role: z.enum(["style", "subject"]),
+      }),
+    )
+    .max(4, "最多选择 4 张素材库参考图")
+    .default([]),
   referenceImages: z
     .array(
       z.object({
@@ -303,6 +314,35 @@ export const createMediaGenerationSchema = z.object({
   scheduledAt: z.date().nullable().optional(),
   width: mediaH3DimensionSchema.default(960),
   height: mediaH3DimensionSchema.default(544),
+});
+
+export const mediaImageDimensionSchema = z
+  .number()
+  .int()
+  .min(64)
+  .max(4096)
+  .refine((value) => value % 32 === 0, "图片宽高必须是 32 的倍数");
+
+export const createMediaImageJobSchema = z.object({
+  title: z.string().trim().max(200).optional(),
+  prompt: z.string().trim().min(1, "请输入图片描述或修改指令").max(5000),
+  negativePrompt: z.string().trim().max(2000).default(""),
+  width: mediaImageDimensionSchema.default(1024),
+  height: mediaImageDimensionSchema.default(1024),
+  seed: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+  outputCount: z.number().int().min(1).max(4).default(1),
+  diversity: z.number().int().min(0).max(100).default(50),
+  inputAssetIds: z.array(z.string().min(1)).max(4).default([]),
+});
+
+export const mediaImageIdSchema = z.object({ id: z.string().min(1) });
+
+export const mediaImageListSchema = z.object({
+  limit: z.number().int().min(1).max(100).default(50),
+});
+
+export const prepareMediaImageVideoInputsSchema = z.object({
+  assetIds: z.array(z.string().min(1)).min(1).max(5),
 });
 
 const mediaVideoEditReferenceImageSchema = z.object({
@@ -428,6 +468,16 @@ export const optimizeMediaPromptSchema = z.object({
   title: z.string().trim().max(200).optional(),
   durationSeconds: z.number().int().min(5).max(60),
   hasReferenceImage: z.boolean().default(false),
+});
+
+export const optimizeMediaImagePromptSchema = z.object({
+  prompt: z.string().trim().min(1, "请先填写图片描述或修改指令").max(5000),
+  negativePrompt: z.string().trim().max(2000).optional(),
+  language: mediaContentLanguageEnum.default("en"),
+  title: z.string().trim().max(200).optional(),
+  width: mediaImageDimensionSchema,
+  height: mediaImageDimensionSchema,
+  referenceImageCount: z.number().int().min(0).max(4).default(0),
 });
 
 export const optimizeMediaPlatformDescriptionSchema = z.object({

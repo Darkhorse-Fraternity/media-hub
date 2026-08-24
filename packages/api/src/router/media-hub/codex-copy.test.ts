@@ -2,6 +2,7 @@ import http from "node:http";
 import { describe, expect, it } from "vitest";
 
 import {
+  buildImagePromptOptimizationPrompt,
   buildPlatformDescriptionPrompt,
   buildVideoPromptOptimizationPrompt,
   normalizeCodexCopy,
@@ -11,6 +12,41 @@ import {
 } from "./codex-copy";
 
 describe("Media Hub Codex copy prompts", () => {
+  it("builds a still-image HiDream generation prompt", () => {
+    const prompt = buildImagePromptOptimizationPrompt({
+      prompt: "生成一张美女图片",
+      title: "人物主视觉",
+      width: 768,
+      height: 1344,
+      referenceImageCount: 0,
+      language: "zh",
+    });
+
+    expect(prompt).toContain("HiDream image generation");
+    expect(prompt).toContain("Target canvas: 768 × 1344 pixels");
+    expect(prompt).toContain("still image");
+    expect(prompt).toContain("No reference image is supplied");
+    expect(prompt).toContain("生成一张美女图片");
+    expect(prompt).toContain("Simplified Chinese");
+  });
+
+  it("builds a reference-aware HiDream edit prompt", () => {
+    const prompt = buildImagePromptOptimizationPrompt({
+      prompt: "把背景改成雨夜东京",
+      negativePrompt: "文字，水印",
+      width: 1024,
+      height: 1024,
+      referenceImageCount: 2,
+      language: "en",
+    });
+
+    expect(prompt).toContain("HiDream image editing");
+    expect(prompt).toContain("2 reference images are supplied");
+    expect(prompt).toContain("preserving all unrequested");
+    expect(prompt).toContain("文字，水印");
+    expect(prompt).toContain("natural English");
+  });
+
   it("builds a duration-aware H3 optimization prompt", () => {
     const prompt = buildVideoPromptOptimizationPrompt({
       prompt: "一只机器人在客厅陪小狗玩",

@@ -1,10 +1,12 @@
 # Media Hub H3 Provider
 
 This directory contains a Provider implementation for a GPU host. It supports
-both the FL2VA generation profile and the Ref2VA editing profile.
+the FL2VA video profile, the Ref2VA video editing profile, and the HiDream-O1
+image generation/editing profile.
 
 - Provider source: `generated_media_comfyui_provider.py`
 - Ref2VA profile fragment: `ref2va-profile.json`
+- HiDream profile fragment: `hidream-profile.json`
 - GPU execution is serialized by the Provider's single-worker executor.
 - Switching between FL2VA and Ref2VA unloads the active ComfyUI model before the
   next transformer is loaded.

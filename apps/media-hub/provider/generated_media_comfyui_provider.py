@@ -31,11 +31,13 @@ CONFIG_CONTRACT = "generated_media_provider_config.v1"
 COMFYUI_WAN22_ADAPTER_KIND = "comfyui_wan22_i2v.v1"
 COMFYUI_H3_ADAPTER_KIND = "comfyui_minimax_h3_i2v.v1"
 COMFYUI_H3_REF2VA_ADAPTER_KIND = "comfyui_minimax_h3_ref2va.v1"
+COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND = "comfyui_hidream_o1_image.v1"
 INLINE_CORE_H3_ADAPTER_KIND = "inline_core_minimax_h3_i2v.v1"
 # Backward-compatible export used by existing callers and tests.
 ADAPTER_KIND = COMFYUI_WAN22_ADAPTER_KIND
 INLINE_CORE_H3_NODE_TYPE = "minimax/h3-image-to-video"
 SAMPLE_CONTRACT = "generated_video_sample.v1"
+IMAGE_SAMPLE_CONTRACT = "generated_image_sample.v1"
 ACTIVE_JOB_STATUSES = {"queued", "running", "canceling"}
 REQUIRED_NODES = (
     "UNETLoader",
@@ -73,6 +75,20 @@ H3_REQUIRED_NODES = (
     "VAEDecodeAudio",
     "CreateVideo",
     "SaveVideo",
+)
+HIDREAM_IMAGE_REQUIRED_NODES = (
+    "CheckpointLoaderSimple",
+    "CLIPTextEncode",
+    "ModelNoiseScale",
+    "HiDreamO1PatchSeamSmoothing",
+    "EmptyHiDreamO1LatentImage",
+    "HiDreamO1ReferenceImages",
+    "LoadImage",
+    "BasicScheduler",
+    "KSamplerSelect",
+    "SamplerCustom",
+    "VAEDecode",
+    "SaveImage",
 )
 COMFYUI_H3_ADAPTER_KINDS = {
     COMFYUI_H3_ADAPTER_KIND,
@@ -217,6 +233,7 @@ class ProviderProfile:
     audio_vae: str = ""
     processor: str = ""
     turbo_lora: str = ""
+    checkpoint: str = ""
 
     @classmethod
     def from_mapping(cls, name: str, value: Any) -> "ProviderProfile":
@@ -248,6 +265,7 @@ class ProviderProfile:
             COMFYUI_WAN22_ADAPTER_KIND,
             COMFYUI_H3_ADAPTER_KIND,
             COMFYUI_H3_REF2VA_ADAPTER_KIND,
+            COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
             INLINE_CORE_H3_ADAPTER_KIND,
         }:
             raise RuntimeError(f"unsupported generated-media adapter: {adapter}")
@@ -267,10 +285,12 @@ class ProviderProfile:
             required_model_keys = (
                 "transformer", "text_encoder", "video_vae", "audio_vae"
             )
-        else:
+        elif adapter == INLINE_CORE_H3_ADAPTER_KIND:
             required_model_keys = (
                 "transformer", "text_encoder", "video_vae", "audio_vae", "processor"
             )
+        else:
+            required_model_keys = ("checkpoint",)
         for key in required_model_keys:
             _required_config_string(models, key, name)
         return cls(
@@ -302,10 +322,13 @@ class ProviderProfile:
             audio_vae=model_value("audio_vae"),
             processor=model_value("processor"),
             turbo_lora=model_value("turbo_lora"),
+            checkpoint=model_value("checkpoint"),
         )
 
     @property
     def configured_models(self) -> dict[str, tuple[str, ...]]:
+        if self.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
+            return {"CheckpointLoaderSimple": (self.checkpoint,)}
         if self.adapter in COMFYUI_H3_ADAPTER_KINDS:
             models = {
                 "UNETLoader": (self.transformer,),
@@ -380,7 +403,11 @@ class ProviderConfig:
             "YDC_GENERATED_MEDIA_INLINE_CORE_URL", "http://127.0.0.1:8848"
         ).strip().rstrip("/")
         if any(
-            profile.adapter in {COMFYUI_WAN22_ADAPTER_KIND, *COMFYUI_H3_ADAPTER_KINDS}
+            profile.adapter in {
+                COMFYUI_WAN22_ADAPTER_KIND,
+                COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+                *COMFYUI_H3_ADAPTER_KINDS,
+            }
             for profile in profiles.values()
         ) and not comfyui_url.startswith(("http://", "https://")):
             raise RuntimeError("YDC_GENERATED_MEDIA_COMFYUI_URL is required")
@@ -553,6 +580,39 @@ class ComfyUiClient:
             "profiles": sorted(profiles),
             "nodes_verified": len(H3_REQUIRED_NODES),
             "backend": "comfyui_h3",
+        }
+
+    def healthcheck_hidream_image(
+        self, profiles: dict[str, ProviderProfile]
+    ) -> dict[str, Any]:
+        self._json("GET", "/system_stats")
+        node_payloads: dict[str, str] = {}
+        for node_name in HIDREAM_IMAGE_REQUIRED_NODES:
+            value = self._json("GET", f"/object_info/{quote(node_name, safe='')}")
+            if node_name not in value:
+                raise ProviderJobError(
+                    "comfyui_node_missing",
+                    "platform HiDream image workflow is not available",
+                )
+            node_payloads[node_name] = json.dumps(value, separators=(",", ":"))
+        for profile in profiles.values():
+            for node_name, models in profile.configured_models.items():
+                payload = node_payloads[node_name]
+                if any(model not in payload for model in models):
+                    raise ProviderJobError(
+                        "comfyui_model_missing",
+                        "platform HiDream image model is not available",
+                    )
+        return {
+            "status": "healthy",
+            "profiles": sorted(profiles),
+            "nodes_verified": len(HIDREAM_IMAGE_REQUIRED_NODES),
+            "backend": "comfyui_hidream_o1",
+            "capabilities": {
+                "modes": ["text_to_image", "reference_edit"],
+                "max_reference_images": 4,
+                "content_types": ["image/png"],
+            },
         }
 
     def upload_input(self, content: bytes, filename: str, subfolder: str) -> str:
@@ -1227,6 +1287,117 @@ def _build_comfyui_h3_ref2va_prompt(
     return nodes
 
 
+def _build_comfyui_hidream_o1_image_prompt(
+    profile: ProviderProfile,
+    *,
+    reference_image_refs: list[str],
+    positive: str,
+    negative: str,
+    width: int,
+    height: int,
+    seed: int,
+    filename_prefix: str,
+    steps: int,
+    cfg: float,
+) -> dict[str, Any]:
+    """Build the versioned HiDream-O1 graph verified on the 5090 ComfyUI host."""
+    nodes: dict[str, Any] = {
+        "1": {
+            "class_type": "CheckpointLoaderSimple",
+            "inputs": {"ckpt_name": profile.checkpoint},
+        },
+        "2": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"text": positive, "clip": ["1", 1]},
+        },
+        "3": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"text": negative, "clip": ["1", 1]},
+        },
+        "4": {
+            "class_type": "ModelNoiseScale",
+            "inputs": {"model": ["1", 0], "noise_scale": 8.0},
+        },
+        "5": {
+            "class_type": "HiDreamO1PatchSeamSmoothing",
+            "inputs": {
+                "model": ["4", 0],
+                "start_percent": 0.8,
+                "end_percent": 1.0,
+                "pattern": "single_shift",
+                "passes": "2",
+                "blend": "average",
+                "strength": 1.0,
+            },
+        },
+        "6": {
+            "class_type": "EmptyHiDreamO1LatentImage",
+            "inputs": {"width": width, "height": height, "batch_size": 1},
+        },
+        "7": {
+            "class_type": "BasicScheduler",
+            "inputs": {
+                "model": ["4", 0],
+                "scheduler": "normal",
+                "steps": steps,
+                "denoise": 1.0,
+            },
+        },
+        "8": {
+            "class_type": "KSamplerSelect",
+            "inputs": {"sampler_name": "dpmpp_2m_sde_gpu"},
+        },
+    }
+    positive_ref: list[Any] = ["2", 0]
+    negative_ref: list[Any] = ["3", 0]
+    if reference_image_refs:
+        image_inputs: dict[str, list[Any]] = {}
+        for index, image_ref in enumerate(reference_image_refs, start=1):
+            node_id = str(20 + index)
+            nodes[node_id] = {
+                "class_type": "LoadImage",
+                "inputs": {"image": image_ref},
+            }
+            image_inputs[f"image_{index}"] = [node_id, 0]
+        nodes["19"] = {
+            "class_type": "HiDreamO1ReferenceImages",
+            "inputs": {
+                "positive": ["2", 0],
+                "negative": ["3", 0],
+                "images": image_inputs,
+            },
+        }
+        positive_ref = ["19", 0]
+        negative_ref = ["19", 1]
+    nodes.update(
+        {
+            "9": {
+                "class_type": "SamplerCustom",
+                "inputs": {
+                    "model": ["5", 0],
+                    "add_noise": True,
+                    "noise_seed": seed,
+                    "cfg": cfg,
+                    "positive": positive_ref,
+                    "negative": negative_ref,
+                    "sampler": ["8", 0],
+                    "sigmas": ["7", 0],
+                    "latent_image": ["6", 0],
+                },
+            },
+            "10": {
+                "class_type": "VAEDecode",
+                "inputs": {"samples": ["9", 0], "vae": ["1", 2]},
+            },
+            "70": {
+                "class_type": "SaveImage",
+                "inputs": {"images": ["10", 0], "filename_prefix": filename_prefix},
+            },
+        }
+    )
+    return nodes
+
+
 class ProviderService:
     def __init__(
         self,
@@ -1275,6 +1446,10 @@ class ProviderService:
             name: profile for name, profile in self.config.profiles.items()
             if profile.adapter in COMFYUI_H3_ADAPTER_KINDS
         }
+        hidream_image_profiles = {
+            name: profile for name, profile in self.config.profiles.items()
+            if profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND
+        }
         values: list[dict[str, Any]] = []
         if wan_profiles:
             if self.comfyui is None:
@@ -1290,6 +1465,14 @@ class ProviderService:
                     "comfyui_unavailable", "platform H3 generation backend is unavailable"
                 )
             values.append(self.comfyui.healthcheck_h3(comfyui_h3_profiles))
+        if hidream_image_profiles:
+            if self.comfyui is None:
+                raise ProviderJobError(
+                    "comfyui_unavailable", "platform HiDream image backend is unavailable"
+                )
+            values.append(
+                self.comfyui.healthcheck_hidream_image(hidream_image_profiles)
+            )
         value = values[0] if len(values) == 1 else {
             "status": "healthy",
             "profiles": sorted(self.config.profiles),
@@ -1537,8 +1720,12 @@ class ProviderService:
         source_artifacts = payload.get("source_artifacts", [])
         if source_artifacts is None:
             source_artifacts = []
+        source_optional_adapters = {
+            COMFYUI_H3_ADAPTER_KIND,
+            COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+        }
         if not isinstance(source_artifacts, list) or (
-            not source_artifacts and profile.adapter != COMFYUI_H3_ADAPTER_KIND
+            not source_artifacts and profile.adapter not in source_optional_adapters
         ):
             raise ProviderJobError("source_artifacts_required", "source_artifacts are required")
         normalized_sources: list[dict[str, Any]] = []
@@ -1580,14 +1767,19 @@ class ProviderService:
             default_role = (
                 "source_video"
                 if profile.adapter == COMFYUI_H3_REF2VA_ADAPTER_KIND and is_video
-                else ("first_frame" if source_index == 0 else "subject")
+                else (
+                    "reference"
+                    if profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND
+                    else ("first_frame" if source_index == 0 else "subject")
+                )
             )
             role = str(source.get("role") or default_role).strip()
-            allowed_roles = (
-                {"source_video", "reference_video", "style", "subject"}
-                if profile.adapter == COMFYUI_H3_REF2VA_ADAPTER_KIND
-                else {"first_frame", "style", "subject"}
-            )
+            if profile.adapter == COMFYUI_H3_REF2VA_ADAPTER_KIND:
+                allowed_roles = {"source_video", "reference_video", "style", "subject"}
+            elif profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
+                allowed_roles = {"reference"}
+            else:
+                allowed_roles = {"first_frame", "style", "subject"}
             if role not in allowed_roles:
                 raise ProviderJobError(
                     "invalid_source_artifact",
@@ -1622,6 +1814,12 @@ class ProviderService:
                     "invalid_source_artifact",
                     "Ref2VA requires one source video and accepts up to three videos and nine images",
                 )
+        elif profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
+            if len(normalized_sources) > 4:
+                raise ProviderJobError(
+                    "invalid_source_artifact",
+                    "HiDream image editing accepts up to four reference images",
+                )
         else:
             first_frame_count = sum(
                 source["role"] == "first_frame" for source in normalized_sources
@@ -1636,31 +1834,36 @@ class ProviderService:
         normalized_parameters["behavior_prompts"] = normalized_prompts
         normalized_parameters["width"] = _bounded_int(parameters.get("width", profile.default_width), "width", 64, profile.max_width)
         normalized_parameters["height"] = _bounded_int(parameters.get("height", profile.default_height), "height", 64, profile.max_height)
-        if profile.adapter in H3_ADAPTER_KINDS and (
+        if profile.adapter in {
+            *H3_ADAPTER_KINDS,
+            COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+        } and (
             normalized_parameters["width"] % 32 != 0 or normalized_parameters["height"] % 32 != 0
         ):
-            raise ProviderJobError("invalid_generation_spec", "H3 width and height must be multiples of 32")
-        length_value = parameters.get("length", parameters.get("duration_frames", profile.default_length))
-        normalized_parameters["length"] = _bounded_int(length_value, "length", 5, profile.max_length)
-        normalized_parameters.pop("duration_frames", None)
-        if profile.adapter in COMFYUI_H3_ADAPTER_KINDS:
-            if (normalized_parameters["length"] - 5) % 17 != 0:
-                raise ProviderJobError(
-                    "invalid_generation_spec", "H3 length must use the 17n+5 frame grid"
-                )
-        elif (normalized_parameters["length"] - 1) % 4 != 0:
-            raise ProviderJobError("invalid_generation_spec", "length must be 4n+1")
-        normalized_parameters["fps"] = _bounded_float(parameters.get("fps", profile.default_fps), "fps", 1, 60)
+            raise ProviderJobError("invalid_generation_spec", "width and height must be multiples of 32")
+        if profile.adapter != COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
+            length_value = parameters.get("length", parameters.get("duration_frames", profile.default_length))
+            normalized_parameters["length"] = _bounded_int(length_value, "length", 5, profile.max_length)
+            normalized_parameters.pop("duration_frames", None)
+            if profile.adapter in COMFYUI_H3_ADAPTER_KINDS:
+                if (normalized_parameters["length"] - 5) % 17 != 0:
+                    raise ProviderJobError(
+                        "invalid_generation_spec", "H3 length must use the 17n+5 frame grid"
+                    )
+            elif (normalized_parameters["length"] - 1) % 4 != 0:
+                raise ProviderJobError("invalid_generation_spec", "length must be 4n+1")
+            normalized_parameters["fps"] = _bounded_float(parameters.get("fps", profile.default_fps), "fps", 1, 60)
         normalized_parameters["steps"] = _bounded_int(parameters.get("steps", profile.default_steps), "steps", 2, 100)
         normalized_parameters["cfg"] = _bounded_float(parameters.get("cfg", profile.default_cfg), "cfg", 0, 30)
         normalized_parameters["negative_prompt"] = str(parameters.get("negative_prompt", profile.default_negative_prompt))
-        preserve_source_audio = parameters.get("preserve_source_audio", True)
-        if not isinstance(preserve_source_audio, bool):
-            raise ProviderJobError(
-                "invalid_generation_spec",
-                "preserve_source_audio must be a boolean",
-            )
-        normalized_parameters["preserve_source_audio"] = preserve_source_audio
+        if profile.adapter != COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
+            preserve_source_audio = parameters.get("preserve_source_audio", True)
+            if not isinstance(preserve_source_audio, bool):
+                raise ProviderJobError(
+                    "invalid_generation_spec",
+                    "preserve_source_audio must be a boolean",
+                )
+            normalized_parameters["preserve_source_audio"] = preserve_source_audio
         if parameters.get("seed") is not None:
             normalized_parameters["seed"] = _bounded_int(
                 parameters["seed"],
@@ -1859,22 +2062,30 @@ class ProviderService:
         )
 
     def _ensure_comfyui_transformer(self, profile: ProviderProfile) -> None:
-        if profile.adapter not in COMFYUI_H3_ADAPTER_KINDS:
+        if profile.adapter not in {
+            *COMFYUI_H3_ADAPTER_KINDS,
+            COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+        }:
             return
         if self.comfyui is None:
             raise ProviderJobError(
                 "comfyui_unavailable",
-                "platform H3 generation backend is unavailable",
+                "platform ComfyUI generation backend is unavailable",
             )
-        if self._active_comfyui_transformer == profile.transformer:
+        active_model = (
+            profile.checkpoint
+            if profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND
+            else profile.transformer
+        )
+        if self._active_comfyui_transformer == active_model:
             return
         LOGGER.info(
-            "switching ComfyUI H3 transformer from %s to %s",
+            "switching ComfyUI managed model from %s to %s",
             self._active_comfyui_transformer or "unknown",
-            profile.transformer,
+            active_model,
         )
         self.comfyui.free_memory()
-        self._active_comfyui_transformer = profile.transformer
+        self._active_comfyui_transformer = active_model
 
     def _run_or_resume_comfyui_prompt(
         self,
@@ -1945,8 +2156,15 @@ class ProviderService:
             profile = self.config.profiles[str(generation_spec["profile"])]
             parameters = request.get("runtime_parameters") or generation_spec["parameters"]
             source_artifacts = request.get("source_artifacts") or []
-            if job.get("current_prompt_id") and profile.adapter in COMFYUI_H3_ADAPTER_KINDS:
-                self._active_comfyui_transformer = profile.transformer
+            if job.get("current_prompt_id") and profile.adapter in {
+                *COMFYUI_H3_ADAPTER_KINDS,
+                COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+            }:
+                self._active_comfyui_transformer = (
+                    profile.checkpoint
+                    if profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND
+                    else profile.transformer
+                )
             else:
                 self._ensure_comfyui_transformer(profile)
             source_path: Path | None = None
@@ -1973,10 +2191,19 @@ class ProviderService:
                 artifact_path = self._job_dir(job_id) / "inputs" / source_filename
                 artifact_path.parent.mkdir(parents=True, exist_ok=True)
                 artifact_path.write_bytes(source_content)
-                role = str(source.get("role") or ("first_frame" if source_index == 0 else "subject"))
+                default_role = (
+                    "reference"
+                    if profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND
+                    else ("first_frame" if source_index == 0 else "subject")
+                )
+                role = str(source.get("role") or default_role)
                 if role == "first_frame":
                     source_path = artifact_path
-                if profile.adapter in {COMFYUI_WAN22_ADAPTER_KIND, *COMFYUI_H3_ADAPTER_KINDS}:
+                if profile.adapter in {
+                    COMFYUI_WAN22_ADAPTER_KIND,
+                    COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+                    *COMFYUI_H3_ADAPTER_KINDS,
+                }:
                     if self.comfyui is None:
                         raise ProviderJobError(
                             "comfyui_unavailable",
@@ -2014,7 +2241,26 @@ class ProviderService:
                 sample_id = "gms_" + sample_hash[:32]
                 configured_seed = parameters.get("seed")
                 seed = int(configured_seed) + index if configured_seed is not None else int(sample_hash[:16], 16)
-                if profile.adapter == INLINE_CORE_H3_ADAPTER_KIND:
+                if profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
+                    if self.comfyui is None:
+                        raise ProviderJobError(
+                            "comfyui_unavailable",
+                            "platform HiDream image backend is unavailable",
+                        )
+                    prompt = _build_comfyui_hidream_o1_image_prompt(
+                        profile,
+                        reference_image_refs=reference_image_refs,
+                        positive=str(parameters["behavior_prompts"][label]),
+                        negative=str(parameters["negative_prompt"]),
+                        width=int(parameters["width"]),
+                        height=int(parameters["height"]),
+                        seed=seed,
+                        filename_prefix=f"ydc_generated_media/{job_id}/{sample_id}",
+                        steps=int(parameters["steps"]),
+                        cfg=float(parameters["cfg"]),
+                    )
+                    content = self._run_or_resume_comfyui_prompt(job_id, prompt)
+                elif profile.adapter == INLINE_CORE_H3_ADAPTER_KIND:
                     if self.inline_core is None:
                         raise ProviderJobError(
                             "inline_core_unavailable", "platform H3 generation backend is unavailable"
@@ -2113,7 +2359,13 @@ class ProviderService:
                         fps=float(parameters["fps"]),
                     )
                     content = self._run_or_resume_comfyui_prompt(job_id, prompt)
-                relative_path = f"samples/{sample_id}/{sample_id}.mp4"
+                is_image_output = (
+                    profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND
+                )
+                extension = "png" if is_image_output else "mp4"
+                content_type = "image/png" if is_image_output else "video/mp4"
+                contract = IMAGE_SAMPLE_CONTRACT if is_image_output else SAMPLE_CONTRACT
+                relative_path = f"samples/{sample_id}/{sample_id}.{extension}"
                 destination = self._job_dir(job_id) / relative_path
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(content)
@@ -2123,10 +2375,10 @@ class ProviderService:
                         {
                             "sample_id": sample_id,
                             "label": label,
-                            "filename": f"{sample_id}.mp4",
+                            "filename": f"{sample_id}.{extension}",
                             "checksum": _checksum(content),
-                            "content_type": "video/mp4",
-                            "contract": SAMPLE_CONTRACT,
+                            "content_type": content_type,
+                            "contract": contract,
                             "storage_path": relative_path,
                         }
                     )

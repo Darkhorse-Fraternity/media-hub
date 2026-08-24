@@ -14,6 +14,7 @@ import type { MediaHubAppRouter } from "@acme/api";
 import { themeDetectorScript, ThemeProvider } from "@acme/ui/theme";
 import { Toaster } from "@acme/ui/toast";
 
+import { FloatingMediaQueue } from "~/components/floating-media-queue";
 import appCss from "~/styles.css?url";
 
 export const Route = createRootRouteWithContext<{
@@ -60,6 +61,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       <body className="bg-background text-foreground min-h-screen font-sans antialiased">
         <ThemeProvider>
           {children}
+          <FloatingMediaQueue />
           <Toaster />
         </ThemeProvider>
         <TanStackRouterDevtools position="bottom-right" />

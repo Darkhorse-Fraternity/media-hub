@@ -5,12 +5,14 @@ import { eq } from "@acme/db";
 import { mediaGenerationJob, mediaPlatformAccount } from "@acme/db/schema";
 import { log } from "@acme/logger";
 import {
+  optimizeMediaImagePromptSchema,
   optimizeMediaPlatformDescriptionSchema,
   optimizeMediaPromptSchema,
 } from "@acme/validators";
 
 import { protectedProcedure } from "../../trpc";
 import {
+  buildImagePromptOptimizationPrompt,
   buildPlatformDescriptionPrompt,
   buildVideoPromptOptimizationPrompt,
   queryMediaHubCodex,
@@ -44,6 +46,21 @@ export const mediaAiRouter = {
         };
       } catch (error) {
         throw codexError(error, "优化提示词");
+      }
+    }),
+
+  optimizeImagePrompt: protectedProcedure
+    .input(optimizeMediaImagePromptSchema)
+    .mutation(async ({ input }) => {
+      try {
+        return {
+          text: await queryMediaHubCodex(
+            buildImagePromptOptimizationPrompt(input),
+            5000,
+          ),
+        };
+      } catch (error) {
+        throw codexError(error, "优化图片提示词");
       }
     }),
 

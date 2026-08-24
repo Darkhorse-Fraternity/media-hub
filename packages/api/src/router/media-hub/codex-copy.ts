@@ -21,6 +21,16 @@ interface VideoPromptInput {
   language: "zh" | "en";
 }
 
+interface ImagePromptInput {
+  prompt: string;
+  negativePrompt?: string;
+  title?: string;
+  width: number;
+  height: number;
+  referenceImageCount: number;
+  language: "zh" | "en";
+}
+
 interface PlatformDescriptionInput {
   videoJobId: string;
   prompt: string;
@@ -60,6 +70,32 @@ export function buildVideoPromptOptimizationPrompt(
     "Return only the optimized prompt as plain text, with no heading, quotes, markdown, or explanation.",
     input.title ? `Working title: ${input.title}` : undefined,
     "Original prompt:",
+    input.prompt,
+  ]);
+}
+
+export function buildImagePromptOptimizationPrompt(
+  input: ImagePromptInput,
+): string {
+  const isEdit = input.referenceImageCount > 0;
+  return compactLines([
+    `You are optimizing a production prompt for HiDream image ${isEdit ? "editing" : "generation"}.`,
+    "Do not inspect files, browse, or use tools. Work only from the content below.",
+    "Preserve the user's subject, intent, requested count, identity, and factual constraints.",
+    outputLanguageInstruction(input.language),
+    `Target canvas: ${input.width} × ${input.height} pixels. Use its aspect ratio to improve composition, but do not mention dimensions or aspect-ratio planning in the returned prompt unless the original prompt explicitly requests them.`,
+    isEdit
+      ? `${input.referenceImageCount} reference image${input.referenceImageCount === 1 ? " is" : "s are"} supplied. Clearly describe the requested change while preserving all unrequested identity, appearance, composition, and scene details.`
+      : "No reference image is supplied. Make the subject, environment, and spatial relationships visually explicit.",
+    "Improve the prompt with concrete subject details, composition, viewpoint and lens feel, lighting, materials and texture, color palette, environment, mood, and finish where they support the original intent.",
+    "This is a still image. Do not add video timing, camera movement, action arcs, cuts, transitions, timestamps, or production commentary.",
+    "Avoid contradictions, unsupported product claims, accidental text, logos, signatures, subtitles, and watermarks unless the original prompt explicitly requests them.",
+    input.negativePrompt
+      ? `The user separately excludes the following. Respect it without copying a negative-prompt list into the returned positive prompt: ${input.negativePrompt}`
+      : undefined,
+    "Return only the optimized positive prompt as plain text, with no heading, quotes, markdown, negative-prompt section, or explanation.",
+    input.title ? `Working title: ${input.title}` : undefined,
+    isEdit ? "Original edit instruction:" : "Original image prompt:",
     input.prompt,
   ]);
 }

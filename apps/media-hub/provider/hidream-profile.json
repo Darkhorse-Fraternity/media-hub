@@ -1,0 +1,24 @@
+{
+  "platform-hidream-o1-image-v1": {
+    "adapter": "comfyui_hidream_o1_image.v1",
+    "workflow_version": "comfyui-hidream-o1-bf16-20step-v1",
+    "model_version": "hidream-o1-image-bf16",
+    "models": {
+      "checkpoint": "hidream_o1_image_bf16.safetensors"
+    },
+    "defaults": {
+      "negative_prompt": "text, watermark, distorted anatomy, duplicate objects, low quality",
+      "width": 1024,
+      "height": 1024,
+      "length": 5,
+      "fps": 1,
+      "steps": 20,
+      "cfg": 5
+    },
+    "limits": {
+      "max_width": 4096,
+      "max_height": 4096,
+      "max_length": 5
+    }
+  }
+}

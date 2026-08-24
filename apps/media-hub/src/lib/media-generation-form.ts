@@ -6,7 +6,13 @@ export type ReferenceImageContentType =
 
 export interface ReferenceImageDraft {
   id: string;
-  file: File;
+  file?: File;
+  asset?: {
+    id: string;
+    name: string;
+    contentType: ReferenceImageContentType;
+    sizeBytes: number;
+  };
   previewUrl: string;
   role: ReferenceImageRole;
 }

@@ -1,9 +1,10 @@
 import type { TRPCRouterRecord } from "@trpc/server";
 import { TRPCError } from "@trpc/server";
 
-import { and, count, desc, eq, inArray, or } from "@acme/db";
+import { and, count, desc, eq, inArray, isNull, or } from "@acme/db";
 import {
   mediaGenerationJob,
+  mediaImageAsset,
   mediaPlatformAccount,
   mediaPublishTarget,
   mediaReviewLog,
@@ -94,6 +95,63 @@ export const mediaGenerationRouter = {
         });
       }
 
+      const requestedAssetIds = [
+        ...(input.sourceImageAssetId ? [input.sourceImageAssetId] : []),
+        ...input.referenceImageAssets.map((reference) => reference.assetId),
+      ];
+      if (new Set(requestedAssetIds).size !== requestedAssetIds.length) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "不能重复选择同一张素材库图片",
+        });
+      }
+      const selectedAssets = requestedAssetIds.length
+        ? await ctx.db.query.mediaImageAsset.findMany({
+            where: and(
+              inArray(mediaImageAsset.id, requestedAssetIds),
+              eq(mediaImageAsset.ownerUserId, ctx.session.user.id),
+              isNull(mediaImageAsset.deletedAt),
+            ),
+          })
+        : [];
+      if (selectedAssets.length !== requestedAssetIds.length) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "选择的图片素材不存在",
+        });
+      }
+      const selectedAssetById = new Map(
+        selectedAssets.map((asset) => [asset.id, asset]),
+      );
+      const sourceAsset = input.sourceImageAssetId
+        ? selectedAssetById.get(input.sourceImageAssetId)
+        : undefined;
+      const assetReferences = input.referenceImageAssets.map((reference) => {
+        const asset = selectedAssetById.get(reference.assetId);
+        if (!asset) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "选择的图片素材不存在",
+          });
+        }
+        return {
+          storageKey: asset.storageKey,
+          name: asset.filename,
+          contentType: asset.contentType as
+            | "image/jpeg"
+            | "image/png"
+            | "image/webp",
+          role: reference.role,
+        };
+      });
+      const referenceImages = [...input.referenceImages, ...assetReferences];
+      if (referenceImages.length > 4) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "最多选择 4 张风格或主体参考图",
+        });
+      }
+
       const id = crypto.randomUUID();
       const now = new Date();
       await ctx.db.insert(mediaGenerationJob).values({
@@ -101,10 +159,13 @@ export const mediaGenerationRouter = {
         prompt: input.prompt,
         title: input.title,
         language: input.language,
-        sourceImageStorageKey: input.sourceImageStorageKey,
-        sourceImageName: input.sourceImageName,
-        sourceImageContentType: input.sourceImageContentType,
-        referenceImages: input.referenceImages,
+        sourceImageStorageKey:
+          sourceAsset?.storageKey ?? input.sourceImageStorageKey,
+        sourceImageName: sourceAsset?.filename ?? input.sourceImageName,
+        sourceImageContentType:
+          sourceAsset?.contentType ?? input.sourceImageContentType,
+        referenceImages,
+        inputImageAssetIds: requestedAssetIds,
         durationSeconds: input.durationSeconds,
         fps: 24,
         width: input.width,

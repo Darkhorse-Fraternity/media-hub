@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PlatformsRouteImport } from './routes/platforms'
+import { Route as ImagesRouteImport } from './routes/images'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LegalTermsOfServiceRouteImport } from './routes/legal/terms-of-service'
 import { Route as LegalPrivacyPolicyRouteImport } from './routes/legal/privacy-policy'
@@ -29,6 +30,8 @@ import { Route as ApiV1UploadsPresignRouteImport } from './routes/api/v1/uploads
 import { Route as ApiV1PromptsOptimizeRouteImport } from './routes/api/v1/prompts/optimize'
 import { Route as ApiV1GenerationsJobIdRouteImport } from './routes/api/v1/generations/$jobId'
 import { Route as ApiMediaHubUploadsReferenceImageRouteImport } from './routes/api/media-hub/uploads/reference-image'
+import { Route as ApiMediaHubUploadsImageAssetRouteImport } from './routes/api/media-hub/uploads/image-asset'
+import { Route as ApiMediaHubImagesAssetIdRouteImport } from './routes/api/media-hub/images/$assetId'
 import { Route as ApiV1GenerationsJobIdVideoRouteImport } from './routes/api/v1/generations/$jobId/video'
 import { Route as ApiV1GenerationsJobIdRetryRouteImport } from './routes/api/v1/generations/$jobId/retry'
 import { Route as ApiV1GenerationsJobIdPublishRouteImport } from './routes/api/v1/generations/$jobId/publish'
@@ -44,6 +47,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const PlatformsRoute = PlatformsRouteImport.update({
   id: '/platforms',
   path: '/platforms',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ImagesRoute = ImagesRouteImport.update({
+  id: '/images',
+  path: '/images',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -137,6 +145,18 @@ const ApiMediaHubUploadsReferenceImageRoute =
     path: '/api/media-hub/uploads/reference-image',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiMediaHubUploadsImageAssetRoute =
+  ApiMediaHubUploadsImageAssetRouteImport.update({
+    id: '/api/media-hub/uploads/image-asset',
+    path: '/api/media-hub/uploads/image-asset',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiMediaHubImagesAssetIdRoute =
+  ApiMediaHubImagesAssetIdRouteImport.update({
+    id: '/api/media-hub/images/$assetId',
+    path: '/api/media-hub/images/$assetId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiV1GenerationsJobIdVideoRoute =
   ApiV1GenerationsJobIdVideoRouteImport.update({
     id: '/video',
@@ -176,6 +196,7 @@ const ApiMediaHubGenerationJobIdVideoRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/images': typeof ImagesRoute
   '/platforms': typeof PlatformsRoute
   '/settings': typeof SettingsRoute
   '/admin/users': typeof AdminUsersRoute
@@ -191,6 +212,8 @@ export interface FileRoutesByFullPath {
   '/generations/$jobId/edit': typeof GenerationsJobIdEditRoute
   '/oauth/instagram/callback': typeof OauthInstagramCallbackRoute
   '/oauth/youtube/callback': typeof OauthYoutubeCallbackRoute
+  '/api/media-hub/images/$assetId': typeof ApiMediaHubImagesAssetIdRoute
+  '/api/media-hub/uploads/image-asset': typeof ApiMediaHubUploadsImageAssetRoute
   '/api/media-hub/uploads/reference-image': typeof ApiMediaHubUploadsReferenceImageRoute
   '/api/v1/generations/$jobId': typeof ApiV1GenerationsJobIdRouteWithChildren
   '/api/v1/prompts/optimize': typeof ApiV1PromptsOptimizeRoute
@@ -204,6 +227,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/images': typeof ImagesRoute
   '/platforms': typeof PlatformsRoute
   '/settings': typeof SettingsRoute
   '/admin/users': typeof AdminUsersRoute
@@ -219,6 +243,8 @@ export interface FileRoutesByTo {
   '/generations/$jobId/edit': typeof GenerationsJobIdEditRoute
   '/oauth/instagram/callback': typeof OauthInstagramCallbackRoute
   '/oauth/youtube/callback': typeof OauthYoutubeCallbackRoute
+  '/api/media-hub/images/$assetId': typeof ApiMediaHubImagesAssetIdRoute
+  '/api/media-hub/uploads/image-asset': typeof ApiMediaHubUploadsImageAssetRoute
   '/api/media-hub/uploads/reference-image': typeof ApiMediaHubUploadsReferenceImageRoute
   '/api/v1/generations/$jobId': typeof ApiV1GenerationsJobIdRouteWithChildren
   '/api/v1/prompts/optimize': typeof ApiV1PromptsOptimizeRoute
@@ -233,6 +259,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/images': typeof ImagesRoute
   '/platforms': typeof PlatformsRoute
   '/settings': typeof SettingsRoute
   '/admin/users': typeof AdminUsersRoute
@@ -248,6 +275,8 @@ export interface FileRoutesById {
   '/generations/$jobId/edit': typeof GenerationsJobIdEditRoute
   '/oauth/instagram/callback': typeof OauthInstagramCallbackRoute
   '/oauth/youtube/callback': typeof OauthYoutubeCallbackRoute
+  '/api/media-hub/images/$assetId': typeof ApiMediaHubImagesAssetIdRoute
+  '/api/media-hub/uploads/image-asset': typeof ApiMediaHubUploadsImageAssetRoute
   '/api/media-hub/uploads/reference-image': typeof ApiMediaHubUploadsReferenceImageRoute
   '/api/v1/generations/$jobId': typeof ApiV1GenerationsJobIdRouteWithChildren
   '/api/v1/prompts/optimize': typeof ApiV1PromptsOptimizeRoute
@@ -263,6 +292,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/images'
     | '/platforms'
     | '/settings'
     | '/admin/users'
@@ -278,6 +308,8 @@ export interface FileRouteTypes {
     | '/generations/$jobId/edit'
     | '/oauth/instagram/callback'
     | '/oauth/youtube/callback'
+    | '/api/media-hub/images/$assetId'
+    | '/api/media-hub/uploads/image-asset'
     | '/api/media-hub/uploads/reference-image'
     | '/api/v1/generations/$jobId'
     | '/api/v1/prompts/optimize'
@@ -291,6 +323,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/images'
     | '/platforms'
     | '/settings'
     | '/admin/users'
@@ -306,6 +339,8 @@ export interface FileRouteTypes {
     | '/generations/$jobId/edit'
     | '/oauth/instagram/callback'
     | '/oauth/youtube/callback'
+    | '/api/media-hub/images/$assetId'
+    | '/api/media-hub/uploads/image-asset'
     | '/api/media-hub/uploads/reference-image'
     | '/api/v1/generations/$jobId'
     | '/api/v1/prompts/optimize'
@@ -319,6 +354,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/images'
     | '/platforms'
     | '/settings'
     | '/admin/users'
@@ -334,6 +370,8 @@ export interface FileRouteTypes {
     | '/generations/$jobId/edit'
     | '/oauth/instagram/callback'
     | '/oauth/youtube/callback'
+    | '/api/media-hub/images/$assetId'
+    | '/api/media-hub/uploads/image-asset'
     | '/api/media-hub/uploads/reference-image'
     | '/api/v1/generations/$jobId'
     | '/api/v1/prompts/optimize'
@@ -348,6 +386,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ImagesRoute: typeof ImagesRoute
   PlatformsRoute: typeof PlatformsRoute
   SettingsRoute: typeof SettingsRoute
   AdminUsersRoute: typeof AdminUsersRoute
@@ -363,6 +402,8 @@ export interface RootRouteChildren {
   GenerationsJobIdEditRoute: typeof GenerationsJobIdEditRoute
   OauthInstagramCallbackRoute: typeof OauthInstagramCallbackRoute
   OauthYoutubeCallbackRoute: typeof OauthYoutubeCallbackRoute
+  ApiMediaHubImagesAssetIdRoute: typeof ApiMediaHubImagesAssetIdRoute
+  ApiMediaHubUploadsImageAssetRoute: typeof ApiMediaHubUploadsImageAssetRoute
   ApiMediaHubUploadsReferenceImageRoute: typeof ApiMediaHubUploadsReferenceImageRoute
   ApiV1PromptsOptimizeRoute: typeof ApiV1PromptsOptimizeRoute
   ApiV1UploadsPresignRoute: typeof ApiV1UploadsPresignRoute
@@ -383,6 +424,13 @@ declare module '@tanstack/react-router' {
       path: '/platforms'
       fullPath: '/platforms'
       preLoaderRoute: typeof PlatformsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/images': {
+      id: '/images'
+      path: '/images'
+      fullPath: '/images'
+      preLoaderRoute: typeof ImagesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -511,6 +559,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiMediaHubUploadsReferenceImageRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/media-hub/uploads/image-asset': {
+      id: '/api/media-hub/uploads/image-asset'
+      path: '/api/media-hub/uploads/image-asset'
+      fullPath: '/api/media-hub/uploads/image-asset'
+      preLoaderRoute: typeof ApiMediaHubUploadsImageAssetRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/media-hub/images/$assetId': {
+      id: '/api/media-hub/images/$assetId'
+      path: '/api/media-hub/images/$assetId'
+      fullPath: '/api/media-hub/images/$assetId'
+      preLoaderRoute: typeof ApiMediaHubImagesAssetIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/v1/generations/$jobId/video': {
       id: '/api/v1/generations/$jobId/video'
       path: '/video'
@@ -590,6 +652,7 @@ const ApiV1GenerationsRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ImagesRoute: ImagesRoute,
   PlatformsRoute: PlatformsRoute,
   SettingsRoute: SettingsRoute,
   AdminUsersRoute: AdminUsersRoute,
@@ -605,6 +668,8 @@ const rootRouteChildren: RootRouteChildren = {
   GenerationsJobIdEditRoute: GenerationsJobIdEditRoute,
   OauthInstagramCallbackRoute: OauthInstagramCallbackRoute,
   OauthYoutubeCallbackRoute: OauthYoutubeCallbackRoute,
+  ApiMediaHubImagesAssetIdRoute: ApiMediaHubImagesAssetIdRoute,
+  ApiMediaHubUploadsImageAssetRoute: ApiMediaHubUploadsImageAssetRoute,
   ApiMediaHubUploadsReferenceImageRoute: ApiMediaHubUploadsReferenceImageRoute,
   ApiV1PromptsOptimizeRoute: ApiV1PromptsOptimizeRoute,
   ApiV1UploadsPresignRoute: ApiV1UploadsPresignRoute,

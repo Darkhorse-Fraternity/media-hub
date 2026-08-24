@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createMediaGenerationSchema,
+  optimizeMediaImagePromptSchema,
   optimizeMediaPromptSchema,
 } from "@acme/validators";
 
@@ -40,6 +41,13 @@ describe("content language preference", () => {
       optimizeMediaPromptSchema.parse({
         prompt: "A robot",
         durationSeconds: 30,
+      }).language,
+    ).toBe("en");
+    expect(
+      optimizeMediaImagePromptSchema.parse({
+        prompt: "A robot portrait",
+        width: 1024,
+        height: 1024,
       }).language,
     ).toBe("en");
   });

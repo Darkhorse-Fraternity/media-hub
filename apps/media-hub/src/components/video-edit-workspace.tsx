@@ -271,6 +271,7 @@ export function VideoEditWorkspace({
       for (const segment of ordered) {
         const referenceImages = [];
         for (const image of segment.referenceImages) {
+          if (!image.file) throw new Error("参考图片文件不可用");
           const uploaded = await uploadReferenceImage(image.file);
           referenceImages.push({
             storageKey: uploaded.key,
@@ -493,7 +494,7 @@ export function VideoEditWorkspace({
                       >
                         <img
                           src={image.previewUrl}
-                          alt={image.file.name}
+                          alt={image.file?.name ?? "参考图片"}
                           className="aspect-square w-full object-cover"
                         />
                         <div className="space-y-1 p-1.5">
