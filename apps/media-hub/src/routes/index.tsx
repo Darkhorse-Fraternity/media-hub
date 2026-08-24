@@ -45,7 +45,7 @@ const durationOptions = [15, 30, 45, 60] as const;
 type DurationSeconds = (typeof durationOptions)[number];
 
 const maxReferenceImages = 5;
-const historyPageSize = 10;
+const historyPageSize = 3;
 const activeGenerationStatuses = ["scheduled", "queued", "running"] as const;
 const historyGenerationStatuses = ["succeeded", "failed", "canceled"] as const;
 
