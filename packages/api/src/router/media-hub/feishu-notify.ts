@@ -7,6 +7,8 @@ import { Agent, FormData, fetch as undiciFetch } from "undici";
 
 import { log } from "@acme/logger";
 
+import { resolveMediaSystemSetting } from "./system-settings";
+
 /**
  * Media Hub 专属飞书通知出口。
  * 独立飞书应用（独立 App ID / Secret / Chat），与 alert-bot 完全隔离。
@@ -243,7 +245,7 @@ function normalizeUnknownError(error: unknown): Error {
 
 /** 直接向审核群发送任意卡片（供定时报告等场景使用） */
 export async function sendToReviewChat(cardJson: string): Promise<void> {
-  const chatId = process.env.MEDIA_HUB_REVIEW_CHAT_ID;
+  const { feishuReviewChatId: chatId } = await resolveMediaSystemSetting();
   if (!chatId) {
     throw new Error("MEDIA_HUB_REVIEW_CHAT_ID not set");
   }
@@ -263,7 +265,7 @@ interface GenerationCancellationAlertInput {
 export async function sendGenerationCancellationAlert(
   input: GenerationCancellationAlertInput,
 ): Promise<void> {
-  const chatId = process.env.MEDIA_HUB_REVIEW_CHAT_ID;
+  const { feishuReviewChatId: chatId } = await resolveMediaSystemSetting();
   if (!chatId) {
     log.warn("MEDIA_HUB_REVIEW_CHAT_ID not set, skipping cancel alert", {
       code: "MEDIA_GENERATION_CANCEL_ALERT_SKIPPED",
@@ -520,7 +522,7 @@ export function buildGenerationResultCard(input: GenerationResultCardInput) {
 export async function sendGenerationResultCard(
   input: GenerationResultCardInput,
 ): Promise<void> {
-  const chatId = process.env.MEDIA_HUB_REVIEW_CHAT_ID;
+  const { feishuReviewChatId: chatId } = await resolveMediaSystemSetting();
   if (!chatId) {
     log.warn("MEDIA_HUB_REVIEW_CHAT_ID not set, skipping generation result", {
       code: "MEDIA_GENERATION_RESULT_SKIPPED",
@@ -604,7 +606,7 @@ function formatPublishError(platform: string, errorMessage: string | null) {
 export async function sendPublishResultCard(
   input: PublishResultCardInput,
 ): Promise<void> {
-  const chatId = process.env.MEDIA_HUB_REVIEW_CHAT_ID;
+  const { feishuReviewChatId: chatId } = await resolveMediaSystemSetting();
   if (!chatId) {
     log.warn("MEDIA_HUB_REVIEW_CHAT_ID not set, skipping publish result", {
       code: "MEDIA_PUBLISH_RESULT_SKIPPED",

@@ -6,6 +6,7 @@ import { db } from "@acme/db/client";
 import { account, user } from "@acme/db/schema";
 
 function requiredEnv(name: string): string {
+  // eslint-disable-next-line no-restricted-properties -- The seed accepts a small, explicit set of dynamically named bootstrap variables.
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing ${name}`);
   return value;

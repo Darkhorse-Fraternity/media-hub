@@ -6,9 +6,7 @@ import { log } from "@acme/logger";
 import type { StatsFetchIssue } from "./stats-fetcher";
 import { sendToReviewChat } from "./feishu-notify";
 import { buildDailyReportSuggestionSystemPrompt } from "./growth-prompts";
-
-const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL;
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "qwen3-vl:32b";
+import { resolveMediaSystemSetting } from "./system-settings";
 
 function dateStr(daysAgo: number): string {
   const d = new Date();
@@ -191,14 +189,15 @@ function buildIssueElements(issues: StatsFetchIssue[]) {
 async function generateAiSuggestions(
   summaryText: string,
 ): Promise<string | null> {
-  if (!OLLAMA_BASE_URL) return null;
+  const settings = await resolveMediaSystemSetting();
+  if (!settings.ollamaBaseUrl) return null;
 
   try {
-    const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+    const res = await fetch(`${settings.ollamaBaseUrl}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: OLLAMA_MODEL,
+        model: settings.ollamaModel,
         stream: false,
         think: false,
         messages: [

@@ -96,6 +96,13 @@ interface StoredPublishPlan {
   };
 }
 
+interface PublishPreferenceDefaults {
+  youtubePrivacyStatus: YouTubePrivacyStatus;
+  youtubeCategoryId: string;
+  youtubeNotifySubscribers: boolean;
+  instagramShareToFeed: boolean;
+}
+
 const youtubeCategoryOptions = [
   { value: "22", label: "人物与博客" },
   { value: "24", label: "娱乐" },
@@ -121,6 +128,7 @@ function createPublishTargetDraft(
   description: string | null | undefined,
   plan: StoredPublishPlan | null | undefined,
   contentLanguage: ContentLanguage,
+  preferences?: PublishPreferenceDefaults,
 ): PublishTargetDraft {
   return {
     title: plan?.title ?? "",
@@ -130,14 +138,22 @@ function createPublishTargetDraft(
     scheduledAt: plan?.scheduledAt
       ? toDateTimeLocal(plan.scheduledAt)
       : defaultPublishDateTime(),
-    youtubePrivacyStatus: plan?.youtube.privacyStatus ?? "public",
-    youtubeCategoryId: plan?.youtube.categoryId ?? "22",
+    youtubePrivacyStatus:
+      plan?.youtube.privacyStatus ??
+      preferences?.youtubePrivacyStatus ??
+      "public",
+    youtubeCategoryId:
+      plan?.youtube.categoryId ?? preferences?.youtubeCategoryId ?? "22",
     youtubeLanguage:
       plan?.youtube.language ?? (contentLanguage === "en" ? "en" : "zh-Hans"),
     youtubeMadeForKids: plan?.youtube.madeForKids ?? false,
     youtubeContainsSyntheticMedia: plan?.youtube.containsSyntheticMedia ?? true,
-    youtubeNotifySubscribers: plan?.youtube.notifySubscribers ?? true,
-    instagramShareToFeed: plan?.instagram.shareToFeed ?? true,
+    youtubeNotifySubscribers:
+      plan?.youtube.notifySubscribers ??
+      preferences?.youtubeNotifySubscribers ??
+      true,
+    instagramShareToFeed:
+      plan?.instagram.shareToFeed ?? preferences?.instagramShareToFeed ?? true,
     instagramThumbOffsetSeconds:
       plan?.instagram.thumbOffsetMs === null ||
       plan?.instagram.thumbOffsetMs === undefined
@@ -206,6 +222,7 @@ function MediaHubDashboard({
 }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
+  const preferencesQuery = useQuery(trpc.mediaHub.settings.me.queryOptions());
   const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");
   const [contentLanguage, setContentLanguage] = useState<ContentLanguage>(
@@ -220,6 +237,7 @@ function MediaHubDashboard({
     [],
   );
   const referenceImagesRef = useRef<ReferenceImageDraft[]>([]);
+  const preferencesAppliedForUserRef = useRef<string | null>(null);
   const [preparingImages, setPreparingImages] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -263,6 +281,20 @@ function MediaHubDashboard({
     );
     setContentLanguage(parseContentLanguage(savedLanguage));
   }, [currentUser.id]);
+
+  useEffect(() => {
+    const preferences = preferencesQuery.data;
+    if (!preferences || preferencesAppliedForUserRef.current === currentUser.id)
+      return;
+    setContentLanguage(preferences.contentLanguage);
+    setDurationSeconds(preferences.durationSeconds);
+    setResolutionValue(preferences.resolution);
+    window.localStorage.setItem(
+      contentLanguageStorageKey(currentUser.id),
+      preferences.contentLanguage,
+    );
+    preferencesAppliedForUserRef.current = currentUser.id;
+  }, [currentUser.id, preferencesQuery.data]);
 
   useEffect(
     () => () => {
@@ -906,6 +938,12 @@ function MediaHubDashboard({
                 用户管理
               </button>
             )}
+            <Link
+              to="/settings"
+              className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-cyan-400/40 hover:text-cyan-200 focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:outline-none"
+            >
+              设置
+            </Link>
             <button
               type="button"
               onClick={() => {
@@ -1313,6 +1351,7 @@ function MediaHubDashboard({
                             | null
                             | undefined,
                           job.language === "en" ? "en" : "zh",
+                          preferencesQuery.data,
                         )
                       );
                     },
@@ -1805,6 +1844,7 @@ function MediaHubDashboard({
                                         | null
                                         | undefined,
                                       job.language === "en" ? "en" : "zh",
+                                      preferencesQuery.data,
                                     );
                                   const publishDraft =
                                     publishDraftsByJob[job.id]?.[account.id] ??
@@ -2329,6 +2369,7 @@ function MediaHubDashboard({
                                               | null
                                               | undefined,
                                             job.language === "en" ? "en" : "zh",
+                                            preferencesQuery.data,
                                           );
                                         const draft =
                                           publishDraftsByJob[job.id]?.[

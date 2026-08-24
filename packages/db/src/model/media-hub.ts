@@ -27,6 +27,47 @@ export interface MediaVideoEditSegment {
   referenceImages: MediaGenerationReferenceImage[];
 }
 
+/** 当前用户在 Media Hub 中跨设备同步的默认操作偏好。 */
+export const mediaUserPreference = pgTable("media_user_preference", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  contentLanguage: text("content_language").notNull().default("en"),
+  durationSeconds: integer("duration_seconds").notNull().default(30),
+  resolution: text("resolution").notNull().default("960x544"),
+  youtubePrivacyStatus: text("youtube_privacy_status")
+    .notNull()
+    .default("public"),
+  youtubeCategoryId: text("youtube_category_id").notNull().default("22"),
+  youtubeNotifySubscribers: boolean("youtube_notify_subscribers")
+    .notNull()
+    .default(true),
+  instagramShareToFeed: boolean("instagram_share_to_feed")
+    .notNull()
+    .default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+/**
+ * 可在线修改的部署策略。这里只保存允许热更新的非根密钥配置；数据库、
+ * 身份认证、对象存储和 OAuth 应用密钥仍由部署环境负责。
+ */
+export const mediaSystemSetting = pgTable("media_system_setting", {
+  id: text("id").primaryKey(),
+  codexWorkerUrl: text("codex_worker_url"),
+  codexWorkerSource: text("codex_worker_source"),
+  codexTimeoutMs: integer("codex_timeout_ms").notNull().default(180000),
+  ollamaBaseUrl: text("ollama_base_url"),
+  ollamaModel: text("ollama_model").notNull().default("qwen3-vl:32b"),
+  feishuReviewChatId: text("feishu_review_chat_id"),
+  updatedBy: text("updated_by").references(() => user.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 /**
  * 平台账号（OAuth 凭证）
  * 一个平台可以有多个账号（未来扩展）；access/refresh token 加密后再写入。

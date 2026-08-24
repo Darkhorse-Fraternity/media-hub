@@ -1,6 +1,8 @@
 import http from "node:http";
 import https from "node:https";
 
+import { resolveMediaSystemSetting } from "./system-settings";
+
 interface CodexWorkerResponse {
   result?: string;
   error?: string;
@@ -329,14 +331,14 @@ export async function queryMediaHubCodex(
   prompt: string,
   maxLength: number,
 ): Promise<string> {
-  const configuredBaseUrl = process.env.CODEX_WORKER_URL?.trim();
+  const settings = await resolveMediaSystemSetting();
+  const configuredBaseUrl = settings.codexWorkerUrl;
   if (!configuredBaseUrl) {
     throw new Error("Missing CODEX_WORKER_URL");
   }
   const baseUrl = configuredBaseUrl.replace(/\/$/, "");
-  const configuredSource = process.env.CODEX_WORKER_SOURCE?.trim();
-  const source = configuredSource?.length ? configuredSource : "knowledge-bot";
-  const timeoutMs = positiveTimeout(process.env.CODEX_TIMEOUT_MS, 180_000);
+  const source = settings.codexWorkerSource;
+  const timeoutMs = positiveTimeout(String(settings.codexTimeoutMs), 180_000);
   return queryCodexWorker(
     `${baseUrl}/query`,
     prompt,

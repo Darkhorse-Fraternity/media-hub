@@ -1,0 +1,1 @@
+ALTER TABLE "media_user_preference" ALTER COLUMN "content_language" SET DEFAULT 'en';

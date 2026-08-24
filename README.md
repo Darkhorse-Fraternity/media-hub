@@ -40,6 +40,16 @@ pnpm db:seed      # 创建或同步环境变量中配置的管理员账号
 
 `pnpm db:seed` 是幂等的：管理员不存在时创建，已存在时同步姓名、管理员权限和密码。必须先在本地 `.env` 中配置 `MEDIA_HUB_SEED_ADMIN_NAME`、`MEDIA_HUB_SEED_ADMIN_EMAIL` 和 `MEDIA_HUB_SEED_ADMIN_PASSWORD`；不要把真实密码写入 Git。
 
+## 配置分层
+
+登录后可从首页进入“设置”：
+
+- 每个用户可保存内容语言、默认时长、分辨率以及 YouTube / Instagram 发布偏好。
+- 管理员可在线覆盖 Codex Worker、Ollama 和飞书审核群配置；留空的连接配置继续使用 `.env` 默认值。
+- 数据库连接、认证与加密根密钥、可信来源、对象存储密钥、OAuth Client Secret、FFmpeg 路径和网络代理始终由部署环境管理，不会通过网页读取或修改。
+
+配置优先级为：任务参数 > 用户偏好 > 管理员配置 > 环境变量默认值。管理员配置保存后会对后续请求立即生效。
+
 ## Docker
 
 ```bash
