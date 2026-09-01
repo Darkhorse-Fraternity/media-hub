@@ -19,7 +19,15 @@ const userPreferenceSchema = z.object({
     z.literal(45),
     z.literal(60),
   ]),
-  resolution: z.enum(["960x544", "544x960", "768x768", "1280x704", "704x1280"]),
+  resolution: z.enum([
+    "1344x768",
+    "768x1344",
+    "960x544",
+    "544x960",
+    "768x768",
+    "1280x704",
+    "704x1280",
+  ]),
   youtubePrivacyStatus: z.enum(["public", "unlisted", "private"]),
   youtubeCategoryId: z.string().trim().min(1).max(10),
   youtubeNotifySubscribers: z.boolean(),
@@ -47,7 +55,7 @@ const systemSettingSchema = z.object({
 const defaultUserPreference = {
   contentLanguage: "en" as const,
   durationSeconds: 30 as const,
-  resolution: "960x544" as const,
+  resolution: "1344x768" as const,
   youtubePrivacyStatus: "public" as const,
   youtubeCategoryId: "22",
   youtubeNotifySubscribers: true,
@@ -68,6 +76,8 @@ export const mediaSettingsRouter = {
           contentLanguage: stored.contentLanguage as "zh" | "en",
           durationSeconds: stored.durationSeconds as 15 | 30 | 45 | 60,
           resolution: stored.resolution as
+            | "1344x768"
+            | "768x1344"
             | "960x544"
             | "544x960"
             | "768x768"

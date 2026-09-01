@@ -35,7 +35,7 @@ export const mediaUserPreference = pgTable("media_user_preference", {
     .references(() => user.id, { onDelete: "cascade" }),
   contentLanguage: text("content_language").notNull().default("en"),
   durationSeconds: integer("duration_seconds").notNull().default(30),
-  resolution: text("resolution").notNull().default("960x544"),
+  resolution: text("resolution").notNull().default("1344x768"),
   youtubePrivacyStatus: text("youtube_privacy_status")
     .notNull()
     .default("public"),
@@ -168,8 +168,16 @@ export const mediaGenerationJob = pgTable("media_generation_job", {
   /** 目标时长；H3 单段最长约 15 秒，后台会拼接多段达到目标时长。 */
   durationSeconds: integer("duration_seconds").notNull().default(30),
   fps: integer("fps").notNull().default(24),
-  width: integer("width").notNull().default(960),
-  height: integer("height").notNull().default(544),
+  width: integer("width").notNull().default(1344),
+  height: integer("height").notNull().default(768),
+  /** fast=4 steps, balanced=6 steps, quality=8 steps; edit jobs use edit. */
+  qualityPreset: text("quality_preset").notNull().default("balanced"),
+  steps: integer("steps").notNull().default(6),
+  /** Reproducible base seed; later H3 segments increment this value. */
+  seed: bigint("seed", { mode: "number" }),
+  profile: text("profile").notNull().default("platform-h3-i2v-inline-v1"),
+  workflowVersion: text("workflow_version"),
+  modelVersion: text("model_version"),
   /** scheduled|queued|running|succeeded|failed|canceled */
   status: text("status").notNull().default("queued"),
   scheduledAt: timestamp("scheduled_at"),

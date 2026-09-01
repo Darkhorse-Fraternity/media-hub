@@ -348,6 +348,12 @@ export interface GenerationResultCardInput {
   fps: number;
   width: number;
   height: number;
+  qualityPreset?: string;
+  steps?: number;
+  seed?: number | null;
+  profile?: string;
+  modelVersion?: string | null;
+  workflowVersion?: string | null;
   referenceImageCount: number;
   hasFirstFrame: boolean;
   scheduledAt?: Date | null;
@@ -424,6 +430,17 @@ export function buildGenerationResultCard(input: GenerationResultCardInput) {
             content: `**分辨率 / 帧率**\n${input.width} × ${input.height} · ${input.fps} FPS`,
           },
         },
+        ...(input.steps
+          ? [
+              {
+                is_short: true,
+                text: {
+                  tag: "lark_md",
+                  content: `**质量 / Seed**\n${input.qualityPreset ?? "custom"} · ${input.steps} 步 · ${input.seed ?? "—"}`,
+                },
+              },
+            ]
+          : []),
         {
           is_short: true,
           text: {
@@ -449,6 +466,17 @@ export function buildGenerationResultCard(input: GenerationResultCardInput) {
                 text: {
                   tag: "lark_md",
                   content: `**模型 / Provider Job**\nMiniMax H3 · ${input.providerJobId}`,
+                },
+              },
+            ]
+          : []),
+        ...(input.modelVersion || input.profile
+          ? [
+              {
+                is_short: false,
+                text: {
+                  tag: "lark_md",
+                  content: `**实际模型 / 工作流**\n${input.modelVersion ?? input.profile}${input.workflowVersion ? ` · ${input.workflowVersion}` : ""}`,
                 },
               },
             ]

@@ -24,7 +24,14 @@ const youtubeCategoryOptions = [
 interface PreferenceDraft {
   contentLanguage: "zh" | "en";
   durationSeconds: 15 | 30 | 45 | 60;
-  resolution: "960x544" | "544x960" | "768x768" | "1280x704" | "704x1280";
+  resolution:
+    | "1344x768"
+    | "768x1344"
+    | "960x544"
+    | "544x960"
+    | "768x768"
+    | "1280x704"
+    | "704x1280";
   youtubePrivacyStatus: "public" | "unlisted" | "private";
   youtubeCategoryId: string;
   youtubeNotifySubscribers: boolean;

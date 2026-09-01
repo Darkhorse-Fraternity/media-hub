@@ -11,13 +11,15 @@ import {
 } from "~/lib/agent-api";
 
 const createGenerationBody = z.object({
-  prompt: z.string().trim().min(1).max(5000),
+  prompt: z.string().trim().min(1).max(16000),
   language: z.enum(["zh", "en"]).default("en"),
   title: z.string().trim().max(200).optional(),
   duration_seconds: z.number().int().min(5).max(60).default(30),
+  quality_preset: z.enum(["fast", "balanced", "quality"]).default("balanced"),
+  seed: z.number().int().min(0).max(2_147_483_643).optional(),
   scheduled_at: z.iso.datetime().nullable().optional(),
-  width: mediaH3DimensionSchema.default(960),
-  height: mediaH3DimensionSchema.default(544),
+  width: mediaH3DimensionSchema.default(1344),
+  height: mediaH3DimensionSchema.default(768),
   first_frame: z
     .object({
       storage_key: z.string().min(1),
@@ -77,6 +79,8 @@ async function handlePost(request: Request): Promise<Response> {
       language: input.language,
       title: input.title,
       durationSeconds: input.duration_seconds,
+      qualityPreset: input.quality_preset,
+      seed: input.seed,
       scheduledAt: input.scheduled_at ? new Date(input.scheduled_at) : null,
       width: input.width,
       height: input.height,

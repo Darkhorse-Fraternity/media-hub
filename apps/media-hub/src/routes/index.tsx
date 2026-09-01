@@ -53,6 +53,20 @@ export const Route = createFileRoute("/")({
 
 const durationOptions = [15, 30, 45, 60] as const;
 type DurationSeconds = (typeof durationOptions)[number];
+const qualityOptions = [
+  { value: "fast", label: "快速 · 4 步", description: "预览构图和动作" },
+  {
+    value: "balanced",
+    label: "均衡 · 6 步",
+    description: "推荐，匹配 Turbo 工作流",
+  },
+  {
+    value: "quality",
+    label: "高质量 · 8 步",
+    description: "细节和运动稳定性优先",
+  },
+] as const;
+type QualityPreset = (typeof qualityOptions)[number]["value"];
 
 const maxReferenceImages = 5;
 const historyPageSize = 3;
@@ -65,6 +79,7 @@ interface GenerationEditDraft {
   title: string;
   language: ContentLanguage;
   durationSeconds: DurationSeconds;
+  qualityPreset: QualityPreset;
   scheduleDay: string;
   scheduleTime: string;
 }
@@ -264,8 +279,9 @@ function MediaHubDashboard({
     defaultContentLanguage,
   );
   const [durationSeconds, setDurationSeconds] = useState<DurationSeconds>(30);
+  const [qualityPreset, setQualityPreset] = useState<QualityPreset>("balanced");
   const [resolutionValue, setResolutionValue] =
-    useState<ResolutionValue>("960x544");
+    useState<ResolutionValue>("1344x768");
   const [scheduleDay, setScheduleDay] = useState("now");
   const [scheduleTime, setScheduleTime] = useState("09:00");
   const [referenceImages, setReferenceImages] = useState<ReferenceImageDraft[]>(
@@ -575,6 +591,7 @@ function MediaHubDashboard({
         setPrompt("");
         setTitle("");
         setDurationSeconds(30);
+        setQualityPreset("balanced");
         setScheduleDay("now");
         setScheduleTime("09:00");
         clearReferenceImages();
@@ -809,6 +826,7 @@ function MediaHubDashboard({
         referenceImages: uploadedReferences,
         referenceImageAssets: assetReferences,
         durationSeconds,
+        qualityPreset,
         scheduledAt,
         width: resolution.width,
         height: resolution.height,
@@ -851,6 +869,11 @@ function MediaHubDashboard({
       title: job.title ?? "",
       language: job.language === "en" ? "en" : "zh",
       durationSeconds: job.durationSeconds as DurationSeconds,
+      qualityPreset: (["fast", "balanced", "quality"] as const).includes(
+        job.qualityPreset as QualityPreset,
+      )
+        ? (job.qualityPreset as QualityPreset)
+        : "balanced",
       ...schedule,
     });
   };
@@ -874,6 +897,7 @@ function MediaHubDashboard({
       language: editingJob.language,
       title: editingJob.title.trim() || null,
       durationSeconds: editingJob.durationSeconds,
+      qualityPreset: editingJob.qualityPreset,
       scheduledAt,
     });
   };
@@ -1126,6 +1150,22 @@ function MediaHubDashboard({
                 </select>
               </label>
               <label className="block text-sm text-slate-300 sm:col-span-2">
+                生成质量
+                <select
+                  value={qualityPreset}
+                  onChange={(event) =>
+                    setQualityPreset(event.target.value as QualityPreset)
+                  }
+                  className="mt-2 w-full cursor-pointer rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm outline-none focus:border-cyan-400"
+                >
+                  {qualityOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label} · {option.description}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block text-sm text-slate-300 sm:col-span-2">
                 分辨率 / 画幅
                 <select
                   value={resolutionValue}
@@ -1141,7 +1181,7 @@ function MediaHubDashboard({
                   ))}
                 </select>
                 <span className="mt-2 block text-xs leading-5 text-slate-500">
-                  高清档生成更慢，也会占用更多显存。
+                  H3 官方基准使用 768 短边；低分辨率档更快，但细节会减少。
                 </span>
               </label>
             </div>
@@ -1575,6 +1615,9 @@ function MediaHubDashboard({
                               : new Date(job.createdAt).toLocaleString()}
                             {` · ${job.kind === "edit" ? "Ref2VA 修改" : "H3 生成"}`}
                             {` · 视频 ${job.durationSeconds} 秒`}
+                            {` · ${job.steps} 步`}
+                            {job.kind === "generate" &&
+                              ` · ${qualityOptions.find((option) => option.value === job.qualityPreset)?.label.split(" · ")[0] ?? job.qualityPreset}`}
                             {` · ${job.language === "en" ? "English" : "中文"}`}
                             {(job.sourceImageStorageKey
                               ? true
@@ -1596,6 +1639,13 @@ function MediaHubDashboard({
                             {job.creator
                               ? `${job.creator.name} · ${job.creator.email}`
                               : job.createdBy}
+                          </p>
+                          <p className="mt-1 font-mono text-[10px] break-all text-slate-700">
+                            {job.width}×{job.height} · seed {job.seed ?? "—"} ·{" "}
+                            {job.modelVersion ?? job.profile}
+                            {job.workflowVersion
+                              ? ` · ${job.workflowVersion}`
+                              : ""}
                           </p>
                         </div>
                         <div className="flex shrink-0 flex-col items-end gap-2">
@@ -2836,6 +2886,10 @@ function MediaHubDashboard({
                             ? `正在生成${queueElapsed ? ` · ${queueElapsed}` : ""}`
                             : "等待 GPU 队列执行"}
                       </p>
+                      <p className="mt-1 text-[10px] text-slate-600">
+                        {job.width}×{job.height} · {job.steps} 步 · seed{" "}
+                        {job.seed ?? "—"}
+                      </p>
                     </div>
                     <StatusBadge status={job.status} />
                   </div>
@@ -2957,6 +3011,30 @@ function MediaHubDashboard({
                           ))}
                         </select>
                       </div>
+                      {job.kind === "generate" && (
+                        <select
+                          aria-label="生成质量"
+                          value={currentQueueEdit.qualityPreset}
+                          onChange={(event) =>
+                            setEditingJob((current) =>
+                              current?.id === job.id
+                                ? {
+                                    ...current,
+                                    qualityPreset: event.target
+                                      .value as QualityPreset,
+                                  }
+                                : current,
+                            )
+                          }
+                          className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs"
+                        >
+                          {qualityOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label} · {option.description}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                       <div className="grid grid-cols-2 gap-2">
                         <select
                           aria-label="执行日期"

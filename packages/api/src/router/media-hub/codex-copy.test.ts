@@ -58,11 +58,21 @@ describe("Media Hub Codex copy prompts", () => {
 
     expect(prompt).toContain("MiniMax H3");
     expect(prompt).toContain("Target duration: 30 seconds");
-    expect(prompt).toContain("Do not mention the duration");
-    expect(prompt).toContain("reference image is supplied");
+    expect(prompt).toContain("=== SEGMENT 1/2 ===");
+    expect(prompt).toContain("integrated_multimodal_description");
+    expect(prompt).toContain("overall_soundscape");
+    expect(prompt).toContain("non_diegetic_music");
+    expect(prompt).toContain("A first-frame reference image is supplied");
+    expect(prompt).toContain(
+      "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.",
+    );
+    expect(prompt).toContain("[Shot N] At 00:SS.mmm");
     expect(prompt).toContain("一只机器人在客厅陪小狗玩");
-    expect(prompt).toContain("Return only the optimized prompt");
-    expect(prompt).toContain("Simplified Chinese");
+    expect(prompt).toContain("Return only the optimized prompt text");
+    expect(prompt).toContain(
+      "Requested dialogue and visible-text language: Simplified Chinese",
+    );
+    expect(prompt).toContain("production direction in precise natural English");
   });
 
   it("removes a generated duration label without changing action timing", () => {

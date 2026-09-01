@@ -16,7 +16,6 @@ import {
   buildPlatformDescriptionPrompt,
   buildVideoPromptOptimizationPrompt,
   queryMediaHubCodex,
-  removeGeneratedDurationLead,
 } from "./codex-copy";
 import { canManageMediaGenerationJob } from "./generation-access";
 import { canManageMediaPlatformAccount } from "./platform-account-access";
@@ -40,10 +39,8 @@ export const mediaAiRouter = {
     .mutation(async ({ input }) => {
       try {
         const prompt = buildVideoPromptOptimizationPrompt(input);
-        const text = await queryMediaHubCodex(prompt, 5000);
-        return {
-          text: removeGeneratedDurationLead(text, input.durationSeconds),
-        };
+        const text = await queryMediaHubCodex(prompt, 16000);
+        return { text };
       } catch (error) {
         throw codexError(error, "优化提示词");
       }

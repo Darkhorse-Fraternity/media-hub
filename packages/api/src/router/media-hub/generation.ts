@@ -13,6 +13,14 @@ import { getMediaHubObject, putMediaHubObject } from "@acme/storage";
 
 import { sendGenerationResultCard } from "./feishu-notify";
 import {
+  H3_FPS,
+  H3_I2VA_ALIGNMENT,
+  H3_PROFILE,
+  H3_SEGMENT_FRAMES,
+  h3SegmentCount,
+  h3SegmentPrompts,
+} from "./h3-generation-config";
+import {
   checksumProviderValue,
   providerOrchestrationRunId,
 } from "./provider-contract";
@@ -20,11 +28,7 @@ import { requestGenerationProvider } from "./provider-request";
 
 const execFileAsync = promisify(execFile);
 const PROVIDER_CONTRACT = "ydc_generated_media_provider_request.v1";
-const DEFAULT_PROFILE = "platform-h3-i2v-inline-v1";
 const EDIT_PROFILE = "platform-h3-ref2va-edit-v1";
-const H3_FPS = 24;
-const H3_SEGMENT_FRAMES = 362;
-const H3_SEGMENT_SECONDS = H3_SEGMENT_FRAMES / H3_FPS;
 const FEISHU_VIDEO_MAX_BYTES = 29_000_000;
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 let recoveryStarted = false;
@@ -51,6 +55,8 @@ interface ProviderJob {
   job_id: string;
   status: string;
   error_message?: string;
+  model_version?: string;
+  workflow_version?: string;
   samples?: ProviderSample[];
 }
 
@@ -124,8 +130,8 @@ export async function getMediaGenerationProviderHealth(
         `H3 Provider 协议不匹配：${health.contract ?? "unknown"}`,
       );
     }
-    if (!health.profiles?.includes(DEFAULT_PROFILE)) {
-      throw new Error(`H3 Provider 未启用 ${DEFAULT_PROFILE}`);
+    if (!health.profiles?.includes(H3_PROFILE)) {
+      throw new Error(`H3 Provider 未启用 ${H3_PROFILE}`);
     }
     value = {
       status: "healthy",
@@ -153,28 +159,51 @@ function checksumBytes(value: Buffer): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
-function segmentCount(durationSeconds: number): number {
-  return Math.max(1, Math.ceil(durationSeconds / H3_SEGMENT_SECONDS));
-}
-
 function h3FrameCount(durationSeconds: number): number {
   const requestedFrames = Math.ceil(durationSeconds * H3_FPS);
   const aligned = Math.ceil((Math.max(5, requestedFrames) - 5) / 17) * 17 + 5;
   return Math.min(H3_SEGMENT_FRAMES, Math.max(56, aligned));
 }
 
-async function createProviderJob(job: typeof mediaGenerationJob.$inferSelect) {
+function fallbackJobSeed(job: typeof mediaGenerationJob.$inferSelect): number {
+  return Number.parseInt(
+    createHash("sha256").update(job.id).digest("hex").slice(0, 7),
+    16,
+  );
+}
+
+async function createProviderJob(
+  job: typeof mediaGenerationJob.$inferSelect,
+  segmentPrompt: string,
+  segmentIndex: number,
+  continuationFrame?: Buffer,
+) {
   let sourceArtifacts: Record<string, string>[] = [];
-  if (job.sourceImageStorageKey) {
-    const content = await getMediaHubObject(job.sourceImageStorageKey);
+  let firstFrame:
+    | { content: Buffer; name: string; contentType: string }
+    | undefined;
+  if (continuationFrame) {
+    firstFrame = {
+      content: continuationFrame,
+      name: `segment-${segmentIndex}-continuity.png`,
+      contentType: "image/png",
+    };
+  } else if (job.sourceImageStorageKey) {
+    firstFrame = {
+      content: await getMediaHubObject(job.sourceImageStorageKey),
+      name: job.sourceImageName ?? "source.png",
+      contentType: job.sourceImageContentType ?? "image/png",
+    };
+  }
+  if (firstFrame) {
     sourceArtifacts = [
       {
-        name: job.sourceImageName ?? "source.png",
-        content_type: job.sourceImageContentType ?? "image/png",
-        checksum: checksumBytes(content),
+        name: firstFrame.name,
+        content_type: firstFrame.contentType,
+        checksum: checksumBytes(firstFrame.content),
         contract: "generated_media_source.v1",
         role: "first_frame",
-        content_base64: content.toString("base64"),
+        content_base64: firstFrame.content.toString("base64"),
       },
     ];
   }
@@ -193,30 +222,37 @@ async function createProviderJob(job: typeof mediaGenerationJob.$inferSelect) {
   );
   sourceArtifacts = [...sourceArtifacts, ...referenceArtifacts];
 
+  const segmentDurationSeconds =
+    job.durationSeconds / h3SegmentCount(job.durationSeconds);
+  const effectivePrompt =
+    firstFrame && !segmentPrompt.includes(H3_I2VA_ALIGNMENT)
+      ? `${H3_I2VA_ALIGNMENT}\n\n${segmentPrompt}`
+      : segmentPrompt;
   const generationSpec = {
-    profile: DEFAULT_PROFILE,
+    profile: job.profile,
     parameters: {
-      behavior_prompts: { main: job.prompt },
+      behavior_prompts: { main: effectivePrompt },
       negative_prompt:
-        "blurry, distorted, flicker, duplicate objects, text, watermark",
+        "low quality, blurry, distorted anatomy, temporal flicker, duplicate objects, watermark",
       width: job.width,
       height: job.height,
-      length: H3_SEGMENT_FRAMES,
+      length: h3FrameCount(segmentDurationSeconds),
       fps: H3_FPS,
-      steps: 4,
+      steps: job.steps,
       cfg: 1,
+      seed: (job.seed ?? fallbackJobSeed(job)) + segmentIndex,
     },
   };
   const payload = {
     schema_version: PROVIDER_CONTRACT,
-    orchestration_run_id: providerOrchestrationRunId(
+    orchestration_run_id: `${providerOrchestrationRunId(
       job.id,
       job.startedAt ?? job.createdAt,
-    ),
+    )}:segment:${segmentIndex + 1}`,
     project_id: "pumpkii-media-hub",
     attempt: 1,
-    deficits: { main: segmentCount(job.durationSeconds) },
-    max_outputs: segmentCount(job.durationSeconds),
+    deficits: { main: 1 },
+    max_outputs: 1,
     generation_spec: generationSpec,
     generation_spec_checksum: checksumProviderValue(generationSpec),
     source_artifacts: sourceArtifacts,
@@ -356,6 +392,113 @@ async function joinVideoSamples(samples: ProviderSample[]): Promise<Buffer> {
   }
 }
 
+async function extractLastFrame(video: Buffer): Promise<Buffer> {
+  const dir = await mkdtemp(join(tmpdir(), "media-hub-h3-frame-"));
+  try {
+    const inputPath = join(dir, "segment.mp4");
+    const outputPath = join(dir, "last-frame.png");
+    await writeFile(inputPath, video);
+    const ffmpeg = process.env.FFMPEG_PATH ?? "ffmpeg";
+    await execFileAsync(ffmpeg, [
+      "-sseof",
+      "-0.1",
+      "-i",
+      inputPath,
+      "-frames:v",
+      "1",
+      "-f",
+      "image2",
+      outputPath,
+      "-y",
+      "-loglevel",
+      "error",
+    ]);
+    return await readFile(outputPath);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+interface GenerationPipelineResult {
+  video: Buffer;
+  providerJobIds: string[];
+  modelVersion: string | null;
+  workflowVersion: string | null;
+}
+
+async function runVideoGenerationPipeline(
+  job: typeof mediaGenerationJob.$inferSelect,
+): Promise<GenerationPipelineResult> {
+  const totalSegments = h3SegmentCount(job.durationSeconds);
+  const prompts = h3SegmentPrompts(job.prompt, totalSegments);
+  const providerJobIds: string[] = [];
+  const samples: ProviderSample[] = [];
+  let continuationFrame: Buffer | undefined;
+  let modelVersion: string | null = null;
+  let workflowVersion: string | null = null;
+
+  for (const [segmentIndex, segmentPrompt] of prompts.entries()) {
+    const current = await db.query.mediaGenerationJob.findFirst({
+      where: eq(mediaGenerationJob.id, job.id),
+      columns: { status: true },
+    });
+    if (current?.status !== "running") {
+      throw new Error(`生成任务已停止（${current?.status ?? "missing"}）`);
+    }
+    const submitted = await createProviderJob(
+      job,
+      segmentPrompt,
+      segmentIndex,
+      continuationFrame,
+    );
+    providerJobIds.push(submitted.job_id);
+    const [runningUpdate] = await db
+      .update(mediaGenerationJob)
+      .set({
+        providerJobId: submitted.job_id,
+        providerJobIds: [...providerJobIds],
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(mediaGenerationJob.id, job.id),
+          eq(mediaGenerationJob.status, "running"),
+        ),
+      )
+      .returning({ id: mediaGenerationJob.id });
+    if (!runningUpdate) {
+      try {
+        await providerRequest(
+          `/v1/generated-media/jobs/${encodeURIComponent(submitted.job_id)}:cancel`,
+          { method: "POST", body: "{}" },
+        );
+      } catch {
+        // The local canceled state remains authoritative.
+      }
+      throw new Error("生成任务已停止");
+    }
+
+    const completed = await waitForProviderJob(submitted.job_id);
+    modelVersion = completed.model_version ?? modelVersion;
+    workflowVersion = completed.workflow_version ?? workflowVersion;
+    const segmentVideo = await joinVideoSamples(completed.samples ?? []);
+    samples.push({
+      content_base64: segmentVideo.toString("base64"),
+      content_type: "video/mp4",
+    });
+    if (segmentIndex + 1 < totalSegments) {
+      continuationFrame = await extractLastFrame(segmentVideo);
+    }
+  }
+
+  return {
+    video: await joinVideoSamples(samples),
+    providerJobIds,
+    modelVersion,
+    workflowVersion,
+  };
+}
+
 async function extractEditSourceClip(
   sourcePath: string,
   outputPath: string,
@@ -470,7 +613,7 @@ async function mergeEditedSegments(
 
 async function runVideoEditPipeline(
   job: typeof mediaGenerationJob.$inferSelect,
-): Promise<{ video: Buffer; providerJobIds: string[] }> {
+): Promise<GenerationPipelineResult> {
   const sourceJob = job.sourceGenerationJobId
     ? await db.query.mediaGenerationJob.findFirst({
         where: eq(mediaGenerationJob.id, job.sourceGenerationJobId),
@@ -483,6 +626,8 @@ async function runVideoEditPipeline(
 
   const dir = await mkdtemp(join(tmpdir(), "media-hub-ref2va-"));
   const providerJobIds: string[] = [];
+  let modelVersion: string | null = null;
+  let workflowVersion: string | null = null;
   try {
     const sourcePath = join(dir, "source.mp4");
     const outputPath = join(dir, "edited.mp4");
@@ -492,6 +637,13 @@ async function runVideoEditPipeline(
     );
     const editedPaths: string[] = [];
     for (const [index, segment] of job.editSegments.entries()) {
+      const current = await db.query.mediaGenerationJob.findFirst({
+        where: eq(mediaGenerationJob.id, job.id),
+        columns: { status: true },
+      });
+      if (current?.status !== "running") {
+        throw new Error(`编辑任务已停止（${current?.status ?? "missing"}）`);
+      }
       const clipPath = join(dir, `source-segment-${index}.mp4`);
       const editedPath = join(dir, `edited-segment-${index}.mp4`);
       await extractEditSourceClip(
@@ -517,6 +669,8 @@ async function runVideoEditPipeline(
         })
         .where(eq(mediaGenerationJob.id, job.id));
       const completed = await waitForProviderJob(submitted.job_id);
+      modelVersion = completed.model_version ?? modelVersion;
+      workflowVersion = completed.workflow_version ?? workflowVersion;
       await writeFile(
         editedPath,
         await joinVideoSamples(completed.samples ?? []),
@@ -532,7 +686,12 @@ async function runVideoEditPipeline(
       job.width,
       job.height,
     );
-    return { video: await readFile(outputPath), providerJobIds };
+    return {
+      video: await readFile(outputPath),
+      providerJobIds,
+      modelVersion,
+      workflowVersion,
+    };
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -608,6 +767,11 @@ async function createDraftFromGeneration(
       prompt: job.prompt,
       durationSeconds: job.durationSeconds,
       language: job.language,
+      qualityPreset: job.qualityPreset,
+      steps: job.steps,
+      seed: job.seed ?? fallbackJobSeed(job),
+      profile: job.profile,
+      resolution: `${job.width}x${job.height}`,
     },
     status: "draft",
     createdBy: job.createdBy,
@@ -634,6 +798,13 @@ async function runGenerationJob(jobId: string): Promise<void> {
     )
     .returning();
   if (!job) return;
+  if (job.seed === null) {
+    job.seed = fallbackJobSeed(job);
+    await db
+      .update(mediaGenerationJob)
+      .set({ seed: job.seed, updatedAt: new Date() })
+      .where(eq(mediaGenerationJob.id, job.id));
+  }
 
   const notifyResult = async (
     status: "succeeded" | "failed",
@@ -641,6 +812,8 @@ async function runGenerationJob(jobId: string): Promise<void> {
     errorMessage?: string,
     video?: Buffer,
     providerJobId?: string,
+    modelVersion?: string | null,
+    workflowVersion?: string | null,
   ) => {
     const creator = await db.query.user.findFirst({
       where: eq(User.id, job.createdBy),
@@ -660,6 +833,12 @@ async function runGenerationJob(jobId: string): Promise<void> {
       fps: job.fps,
       width: job.width,
       height: job.height,
+      qualityPreset: job.qualityPreset,
+      steps: job.steps,
+      seed: job.seed,
+      profile: job.profile,
+      modelVersion,
+      workflowVersion,
       referenceImageCount:
         job.referenceImages.length +
         job.editSegments.reduce(
@@ -684,42 +863,41 @@ async function runGenerationJob(jobId: string): Promise<void> {
     if (providerHealth.status !== "healthy") {
       throw new Error(`H3 生成链路安全检查失败：${providerHealth.message}`);
     }
-    let video: Buffer;
-    let providerJobIds: string[];
-    if (job.kind === "edit") {
-      const result = await runVideoEditPipeline(job);
-      video = result.video;
-      providerJobIds = result.providerJobIds;
-    } else {
-      const submitted = await createProviderJob(job);
-      providerJobIds = [submitted.job_id];
-      await db
-        .update(mediaGenerationJob)
-        .set({
-          providerJobId: submitted.job_id,
-          providerJobIds,
-          updatedAt: new Date(),
-        })
-        .where(eq(mediaGenerationJob.id, jobId));
-      const completed = await waitForProviderJob(submitted.job_id);
-      video = await joinVideoSamples(completed.samples ?? []);
-    }
+    const result =
+      job.kind === "edit"
+        ? await runVideoEditPipeline(job)
+        : await runVideoGenerationPipeline(job);
+    const { video, providerJobIds, modelVersion, workflowVersion } = result;
+    const currentBeforeFinalize = await db.query.mediaGenerationJob.findFirst({
+      where: eq(mediaGenerationJob.id, jobId),
+      columns: { status: true },
+    });
+    if (currentBeforeFinalize?.status !== "running") return;
     const finishedAt = new Date();
     const outputStorageKey = `media-hub/${job.kind === "edit" ? "edited" : "generated"}/${job.createdBy}/${job.id}.mp4`;
     await putMediaHubObject(outputStorageKey, video, "video/mp4");
     const mediaTaskId = await createDraftFromGeneration(job, outputStorageKey);
 
-    await db
+    const [completedUpdate] = await db
       .update(mediaGenerationJob)
       .set({
         status: "succeeded",
         outputStorageKey,
         mediaTaskId,
         providerJobIds,
+        modelVersion,
+        workflowVersion,
         finishedAt,
         updatedAt: finishedAt,
       })
-      .where(eq(mediaGenerationJob.id, jobId));
+      .where(
+        and(
+          eq(mediaGenerationJob.id, jobId),
+          eq(mediaGenerationJob.status, "running"),
+        ),
+      )
+      .returning({ id: mediaGenerationJob.id });
+    if (!completedUpdate) return;
     try {
       const feishuVideo = await prepareFeishuVideo(video);
       await notifyResult(
@@ -728,6 +906,8 @@ async function runGenerationJob(jobId: string): Promise<void> {
         undefined,
         feishuVideo,
         providerJobIds.join(", "),
+        modelVersion,
+        workflowVersion,
       );
     } catch (notificationError) {
       log.error("Media generation success notification failed", {
@@ -741,6 +921,11 @@ async function runGenerationJob(jobId: string): Promise<void> {
       });
     }
   } catch (error) {
+    const current = await db.query.mediaGenerationJob.findFirst({
+      where: eq(mediaGenerationJob.id, jobId),
+      columns: { status: true },
+    });
+    if (current?.status === "canceled") return;
     const errorMessage = (
       error instanceof Error ? error.message : String(error)
     ).slice(0, 1000);

@@ -1,6 +1,7 @@
 import http from "node:http";
 import https from "node:https";
 
+import { H3_I2VA_ALIGNMENT, h3SegmentCount } from "./h3-generation-config";
 import { resolveMediaSystemSetting } from "./system-settings";
 
 interface CodexWorkerResponse {
@@ -55,19 +56,29 @@ function compactLines(lines: (string | undefined)[]): string {
 export function buildVideoPromptOptimizationPrompt(
   input: VideoPromptInput,
 ): string {
+  const segmentCount = h3SegmentCount(input.durationSeconds);
+  const preservedLanguage =
+    input.language === "zh" ? "Simplified Chinese" : "English";
   return compactLines([
-    "You are optimizing a production prompt for MiniMax H3 video generation.",
+    "You are optimizing a production prompt for MiniMax H3 (Hailuo 3) video generation.",
     "Do not inspect files, browse, or use tools. Work only from the content below.",
-    "Preserve the user's subject, intent, and factual constraints.",
-    outputLanguageInstruction(input.language),
+    "Preserve the user's subject, intent, identity, requested dialogue, visible text, and factual constraints. Do not invent plot events, speech, lyrics, products, or extra subjects.",
+    "Write all structural keys and production direction in precise natural English. Preserve requested dialogue, lyrics, signs, and other visible text verbatim in the user's requested language.",
+    `Requested dialogue and visible-text language: ${preservedLanguage}.`,
     `Target duration: ${input.durationSeconds} seconds.`,
-    "Use the target duration only to plan pacing. Do not mention the duration, seconds, timestamps, segment counts, or planning notes in the returned prompt unless the original prompt explicitly requests them.",
     input.hasReferenceImage
-      ? "A reference image is supplied. Preserve its subject identity, appearance, and scene continuity."
-      : "No reference image is supplied. Make the subject and environment visually explicit.",
-    "Improve the prompt with a coherent timed action arc, camera movement, framing, lighting, motion continuity, and a clear ending.",
-    "Avoid contradictory directions, unsupported product claims, on-screen text, logos, subtitles, watermarks, and prompt commentary.",
-    "Return only the optimized prompt as plain text, with no heading, quotes, markdown, or explanation.",
+      ? `A first-frame reference image is supplied. Begin every returned segment prompt with this exact line, followed by one blank line: ${H3_I2VA_ALIGNMENT}`
+      : segmentCount > 1
+        ? `No user reference image is supplied. Segment 1 is T2VA and begins directly with the core fields. Media Hub supplies each prior segment's final frame to every later segment; begin segments 2–${segmentCount} with this exact line, followed by one blank line: ${H3_I2VA_ALIGNMENT}`
+        : "No reference image is supplied. This is T2VA: begin directly with the core fields and make the subject and environment visually explicit.",
+    "Each generated segment is at most 15 seconds. Build a concrete chronological shot timeline. Start with [Shot 1] and no timestamp. Introduce every later shot as [Shot N] At 00:SS.mmm, the camera cuts to ... using a strictly increasing timestamp. For each shot specify composition, subjects, environment, actions, camera type/amplitude/speed, synchronized diegetic sound, transition, and ending composition.",
+    "Every segment prompt must use these top-level fields in this exact order: integrated_multimodal_description, overall_soundscape, non_diegetic_music.",
+    "Put dialogue and synchronized diegetic sound in integrated_multimodal_description. Format requested speech as <d>[Language] exact dialogue</d> with a stable speaker ID such as (S1). In overall_soundscape, summarize ambience, physical-action sounds, and non-verbal human sounds without repeating dialogue or singing. In non_diegetic_music, specify instrumentation, tempo/rhythm, and dynamic development; use N/A when there is no audience-only score.",
+    segmentCount > 1
+      ? `Return exactly ${segmentCount} self-contained prompts. Mark them exactly as === SEGMENT 1/${segmentCount} === through === SEGMENT ${segmentCount}/${segmentCount} ===. Repeat stable identity and style constraints in later prompts, start each later segment from the prior ending composition, and continue action and motion without a reset.`
+      : "Return one self-contained prompt without a segment marker.",
+    "Avoid contradictory or physically impossible directions, vague camera language, accidental on-screen text, logos, subtitles, watermarks, and prompt commentary.",
+    "Return only the optimized prompt text as plain text, with no Markdown fence, quotes, title, preface, or explanation.",
     input.title ? `Working title: ${input.title}` : undefined,
     "Original prompt:",
     input.prompt,

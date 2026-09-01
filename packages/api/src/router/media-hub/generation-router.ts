@@ -1,3 +1,4 @@
+import { randomInt } from "node:crypto";
 import type { TRPCRouterRecord } from "@trpc/server";
 import { TRPCError } from "@trpc/server";
 
@@ -49,6 +50,7 @@ import {
   isProtectedMediaTaskStatus,
   isRetryableMediaGenerationStatus,
 } from "./generation-access";
+import { H3_PROFILE, h3StepsForPreset } from "./h3-generation-config";
 import { canManageMediaPlatformAccount } from "./platform-account-access";
 import {
   normalizeMediaPublishPlan,
@@ -170,6 +172,10 @@ export const mediaGenerationRouter = {
         fps: 24,
         width: input.width,
         height: input.height,
+        qualityPreset: input.qualityPreset,
+        steps: h3StepsForPreset(input.qualityPreset),
+        seed: input.seed ?? randomInt(0, 2_147_483_643),
+        profile: H3_PROFILE,
         status: scheduledAt ? "scheduled" : "queued",
         scheduledAt,
         createdBy: ctx.session.user.id,
@@ -250,6 +256,10 @@ export const mediaGenerationRouter = {
         fps: sourceJob.fps,
         width: sourceJob.width,
         height: sourceJob.height,
+        qualityPreset: "quality",
+        steps: 20,
+        seed: randomInt(0, 2_147_483_643),
+        profile: "platform-h3-ref2va-edit-v1",
         status: scheduledAt ? "scheduled" : "queued",
         scheduledAt,
         createdBy: ctx.session.user.id,
@@ -472,6 +482,12 @@ export const mediaGenerationRouter = {
           title: trimmedTitle ?? null,
           language: input.language,
           durationSeconds: input.durationSeconds,
+          ...(job.kind === "generate"
+            ? {
+                qualityPreset: input.qualityPreset,
+                steps: h3StepsForPreset(input.qualityPreset),
+              }
+            : {}),
           scheduledAt: input.scheduledAt,
           status: nextStatus,
           updatedAt: new Date(),
@@ -589,6 +605,12 @@ export const mediaGenerationRouter = {
         fps: job.fps,
         width: job.width,
         height: job.height,
+        qualityPreset: job.qualityPreset,
+        steps: job.steps,
+        seed: job.seed,
+        profile: job.profile,
+        modelVersion: job.modelVersion,
+        workflowVersion: job.workflowVersion,
         referenceImageCount:
           job.referenceImages.length +
           job.editSegments.reduce(
@@ -945,6 +967,8 @@ export const mediaGenerationRouter = {
           outputStorageKey: null,
           mediaTaskId: null,
           errorMessage: null,
+          workflowVersion: null,
+          modelVersion: null,
           startedAt: null,
           finishedAt: null,
           updatedAt: now,

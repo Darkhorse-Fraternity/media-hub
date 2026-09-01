@@ -9,10 +9,11 @@ import {
 } from "~/lib/agent-api";
 
 const updateGenerationBody = z.object({
-  prompt: z.string().trim().min(1).max(5000).optional(),
+  prompt: z.string().trim().min(1).max(16000).optional(),
   language: z.enum(["zh", "en"]).optional(),
   title: z.string().trim().max(200).nullable().optional(),
   duration_seconds: z.number().int().min(5).max(60).optional(),
+  quality_preset: z.enum(["fast", "balanced", "quality"]).optional(),
   scheduled_at: z.iso.datetime().nullable().optional(),
 });
 
@@ -36,6 +37,11 @@ async function handlePatch(request: Request, jobId: string): Promise<Response> {
       language: patch.language ?? (current.language === "en" ? "en" : "zh"),
       title: patch.title === undefined ? current.title : patch.title,
       durationSeconds: patch.duration_seconds ?? current.durationSeconds,
+      qualityPreset:
+        patch.quality_preset ??
+        (current.qualityPreset === "fast" || current.qualityPreset === "quality"
+          ? current.qualityPreset
+          : "balanced"),
       scheduledAt:
         patch.scheduled_at === undefined
           ? current.scheduledAt

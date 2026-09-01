@@ -270,6 +270,7 @@ export const mediaGenerationStatusEnum = z.enum([
 ]);
 
 export const mediaContentLanguageEnum = z.enum(["zh", "en"]);
+export const mediaH3QualityPresetEnum = z.enum(["fast", "balanced", "quality"]);
 
 export const mediaH3DimensionSchema = z
   .number()
@@ -280,7 +281,7 @@ export const mediaH3DimensionSchema = z
 
 /** 创建一个 MiniMax H3 图片/文字视频生成任务。 */
 export const createMediaGenerationSchema = z.object({
-  prompt: z.string().trim().min(1, "请输入视频描述").max(5000),
+  prompt: z.string().trim().min(1, "请输入视频描述").max(16000),
   language: mediaContentLanguageEnum.default("en"),
   sourceImageStorageKey: z.string().min(1).optional(),
   sourceImageName: z.string().max(255).optional(),
@@ -311,9 +312,11 @@ export const createMediaGenerationSchema = z.object({
     .default([]),
   title: z.string().trim().max(200).optional(),
   durationSeconds: z.number().int().min(5).max(60).default(30),
+  qualityPreset: mediaH3QualityPresetEnum.default("balanced"),
+  seed: z.number().int().min(0).max(2_147_483_643).optional(),
   scheduledAt: z.date().nullable().optional(),
-  width: mediaH3DimensionSchema.default(960),
-  height: mediaH3DimensionSchema.default(544),
+  width: mediaH3DimensionSchema.default(1344),
+  height: mediaH3DimensionSchema.default(768),
 });
 
 export const mediaImageDimensionSchema = z
@@ -414,10 +417,11 @@ export const mediaGenerationIdSchema = z.object({
 /** 编辑尚未开始执行的 MiniMax H3 生成任务。 */
 export const updateMediaGenerationSchema = z.object({
   id: z.string().min(1),
-  prompt: z.string().trim().min(1, "请输入视频描述").max(5000),
+  prompt: z.string().trim().min(1, "请输入视频描述").max(16000),
   language: mediaContentLanguageEnum,
   title: z.string().trim().max(200).nullable().optional(),
   durationSeconds: z.number().int().min(5).max(60),
+  qualityPreset: mediaH3QualityPresetEnum,
   scheduledAt: z.date().nullable(),
 });
 
