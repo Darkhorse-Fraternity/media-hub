@@ -209,7 +209,7 @@ function SettingsWorkspace({
                 <div className="grid gap-4 sm:grid-cols-2">
                   <SettingField
                     label="内容语言"
-                    hint="提示词和发布文案的默认语言"
+                    hint="用于对白、画面文字和发布文案；AI 优化提示词固定为英文"
                   >
                     <select
                       value={preferenceDraft.contentLanguage}

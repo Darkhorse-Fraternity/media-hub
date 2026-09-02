@@ -335,7 +335,7 @@ export function VideoEditWorkspace({
             />
           </label>
           <label className="text-xs text-slate-400">
-            提示词语言
+            内容语言
             <select
               value={language}
               onChange={(event) =>
@@ -346,6 +346,9 @@ export function VideoEditWorkspace({
               <option value="en">English</option>
               <option value="zh">中文</option>
             </select>
+            <span className="mt-1.5 block text-[10px] leading-4 text-slate-500">
+              AI 优化固定输出英文；此项用于对白和画面文字。
+            </span>
           </label>
         </div>
 

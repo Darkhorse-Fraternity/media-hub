@@ -27,7 +27,13 @@ describe("Media Hub Codex copy prompts", () => {
     expect(prompt).toContain("still image");
     expect(prompt).toContain("No reference image is supplied");
     expect(prompt).toContain("生成一张美女图片");
-    expect(prompt).toContain("Simplified Chinese");
+    expect(prompt).toContain("entire optimized production prompt in English");
+    expect(prompt).toContain(
+      "Requested visible-text language: Simplified Chinese",
+    );
+    expect(prompt).not.toContain(
+      "entire returned content in natural Simplified Chinese",
+    );
   });
 
   it("builds a reference-aware HiDream edit prompt", () => {
@@ -73,6 +79,12 @@ describe("Media Hub Codex copy prompts", () => {
       "Requested dialogue and visible-text language: Simplified Chinese",
     );
     expect(prompt).toContain("production direction in precise natural English");
+    expect(prompt).toContain(
+      "even when the original prompt is written in another language",
+    );
+    expect(prompt).not.toContain(
+      "entire returned content in natural Simplified Chinese",
+    );
   });
 
   it("removes a generated duration label without changing action timing", () => {

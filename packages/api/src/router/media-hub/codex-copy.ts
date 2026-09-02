@@ -49,6 +49,10 @@ function outputLanguageInstruction(language: "zh" | "en"): string {
     : "Write the entire returned content in natural English. Translate source material when needed, while preserving proper nouns and factual meaning.";
 }
 
+function requestedTextLanguage(language: "zh" | "en"): string {
+  return language === "zh" ? "Simplified Chinese" : "English";
+}
+
 function compactLines(lines: (string | undefined)[]): string {
   return lines.filter((line): line is string => Boolean(line)).join("\n");
 }
@@ -57,13 +61,12 @@ export function buildVideoPromptOptimizationPrompt(
   input: VideoPromptInput,
 ): string {
   const segmentCount = h3SegmentCount(input.durationSeconds);
-  const preservedLanguage =
-    input.language === "zh" ? "Simplified Chinese" : "English";
+  const preservedLanguage = requestedTextLanguage(input.language);
   return compactLines([
     "You are optimizing a production prompt for MiniMax H3 (Hailuo 3) video generation.",
     "Do not inspect files, browse, or use tools. Work only from the content below.",
     "Preserve the user's subject, intent, identity, requested dialogue, visible text, and factual constraints. Do not invent plot events, speech, lyrics, products, or extra subjects.",
-    "Write all structural keys and production direction in precise natural English. Preserve requested dialogue, lyrics, signs, and other visible text verbatim in the user's requested language.",
+    "Translate the user's descriptive prose into English. Write all structural keys and production direction in precise natural English, even when the original prompt is written in another language. The only non-English content allowed is dialogue, lyrics, signs, and other visible text explicitly requested by the user; preserve those verbatim in the requested language.",
     `Requested dialogue and visible-text language: ${preservedLanguage}.`,
     `Target duration: ${input.durationSeconds} seconds.`,
     input.hasReferenceImage
@@ -89,11 +92,13 @@ export function buildImagePromptOptimizationPrompt(
   input: ImagePromptInput,
 ): string {
   const isEdit = input.referenceImageCount > 0;
+  const preservedLanguage = requestedTextLanguage(input.language);
   return compactLines([
     `You are optimizing a production prompt for HiDream image ${isEdit ? "editing" : "generation"}.`,
     "Do not inspect files, browse, or use tools. Work only from the content below.",
     "Preserve the user's subject, intent, requested count, identity, and factual constraints.",
-    outputLanguageInstruction(input.language),
+    "Translate the user's descriptive prose into precise natural English and return the entire optimized production prompt in English. The only non-English content allowed is text explicitly requested to appear inside the image; preserve that visible text verbatim in the requested language.",
+    `Requested visible-text language: ${preservedLanguage}.`,
     `Target canvas: ${input.width} × ${input.height} pixels. Use its aspect ratio to improve composition, but do not mention dimensions or aspect-ratio planning in the returned prompt unless the original prompt explicitly requests them.`,
     isEdit
       ? `${input.referenceImageCount} reference image${input.referenceImageCount === 1 ? " is" : "s are"} supplied. Clearly describe the requested change while preserving all unrequested identity, appearance, composition, and scene details.`

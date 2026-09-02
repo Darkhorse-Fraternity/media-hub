@@ -1214,7 +1214,8 @@ function MediaHubDashboard({
                 className="mt-2 w-full resize-y rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm transition outline-none focus:border-cyan-400"
               />
               <p className="mt-2 text-xs text-slate-500">
-                Codex Worker 会保留原意，并补全镜头、动作节奏和场景连续性。
+                AI 优化固定输出英文 H3
+                生产提示词，并补全镜头、动作节奏和场景连续性；明确要求的对白与画面文字保留所选内容语言。
               </p>
             </div>
             <fieldset className="mt-4 rounded-xl border border-slate-800 bg-slate-950/40 p-4">

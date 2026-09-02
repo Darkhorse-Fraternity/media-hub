@@ -38,7 +38,7 @@ function openApiDocument(request: Request) {
               enum: ["zh", "en"],
               default: "en",
               description:
-                "Output language for the video prompt and AI-generated platform descriptions.",
+                "Language for requested dialogue, visible text, and AI-generated platform descriptions. Optimized production prompts are always returned in English.",
             },
             title: { type: "string", maxLength: 200 },
             duration_seconds: {
@@ -101,6 +101,8 @@ function openApiDocument(request: Request) {
               type: "string",
               enum: ["zh", "en"],
               default: "en",
+              description:
+                "Language for requested dialogue and visible text. Optimized edit prompts are always returned in English.",
             },
             scheduled_at: { type: ["string", "null"], format: "date-time" },
             segments: {

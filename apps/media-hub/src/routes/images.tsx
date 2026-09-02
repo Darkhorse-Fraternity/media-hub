@@ -415,8 +415,8 @@ function AuthenticatedImageStudio({
                   />
                   <span className="mt-2 block text-xs leading-5 text-slate-500">
                     {editAssetIds.length > 0
-                      ? "会明确保留参考图中的主体与未要求修改的细节，并补全修改后的光线、材质和环境。"
-                      : "会保留原意，并补全主体、构图、光线、材质和画面风格。"}
+                      ? "AI 优化固定输出英文提示词；会保留参考图主体与未要求修改的细节，并补全修改后的光线、材质和环境。"
+                      : "AI 优化固定输出英文提示词，并补全主体、构图、光线、材质和画面风格；明确要求的画面文字保留所选内容语言。"}
                   </span>
                 </div>
                 <label className="block text-sm text-slate-300">
