@@ -25,14 +25,7 @@ import {
   GenerationSpeechValidationError,
   validateGeneratedDialogue,
 } from "./generation-speech-validation";
-import {
-  acquireGenerationGpuLease,
-  cancelGenerationGpuRequest,
-  generationGpuRequestId,
-  GpuBrokerError,
-  releaseGenerationGpuLease,
-  startGenerationGpuHeartbeat,
-} from "./gpu-resource-broker";
+import { cancelGenerationGpuRequest } from "./gpu-resource-broker";
 import {
   H3_FPS,
   H3_I2VA_ALIGNMENT,
@@ -170,8 +163,7 @@ function structuredGenerationFailure(error: unknown): {
   if (
     error instanceof GenerationProviderJobError ||
     error instanceof GenerationOutputValidationError ||
-    error instanceof GenerationSpeechValidationError ||
-    error instanceof GpuBrokerError
+    error instanceof GenerationSpeechValidationError
   ) {
     return {
       code: error.code,
@@ -471,14 +463,40 @@ async function createEditProviderJob(
 
 async function waitForProviderJob(
   providerJobId: string,
-  assertLeaseHealthy: () => void = () => undefined,
+  mediaJobId: string,
 ): Promise<ProviderJob> {
   const deadline = Date.now() + 60 * 60 * 1000;
   while (Date.now() < deadline) {
-    assertLeaseHealthy();
     const current = await providerRequest<ProviderJob>(
       `/v1/generated-media/jobs/${encodeURIComponent(providerJobId)}`,
     );
+    const localStatus = await db.query.mediaGenerationJob.findFirst({
+      where: eq(mediaGenerationJob.id, mediaJobId),
+      columns: { status: true },
+    });
+    if (
+      !localStatus ||
+      !["running", "waiting_for_gpu"].includes(localStatus.status)
+    ) {
+      throw new Error(`生成任务已停止（${localStatus?.status ?? "missing"}）`);
+    }
+    // The Provider owns the only GPU Broker lease. Mirror its queue phase so
+    // Media Hub does not claim the GPU itself or label queue time as inference.
+    const nextStatus =
+      current.status === "queued" ? "waiting_for_gpu" : "running";
+    if (localStatus.status !== nextStatus) {
+      const [updated] = await db
+        .update(mediaGenerationJob)
+        .set({ status: nextStatus, updatedAt: new Date() })
+        .where(
+          and(
+            eq(mediaGenerationJob.id, mediaJobId),
+            inArray(mediaGenerationJob.status, ["running", "waiting_for_gpu"]),
+          ),
+        )
+        .returning({ id: mediaGenerationJob.id });
+      if (!updated) throw new Error("生成任务已停止");
+    }
     if (["succeeded", "failed", "canceled"].includes(current.status)) {
       if (current.status !== "succeeded") {
         throw new GenerationProviderJobError(current);
@@ -545,7 +563,6 @@ interface GenerationPipelineResult {
 
 async function runVideoGenerationPipeline(
   job: typeof mediaGenerationJob.$inferSelect,
-  assertLeaseHealthy: () => void,
 ): Promise<GenerationPipelineResult> {
   const totalSegments = h3SegmentCount(job.durationSeconds);
   const prompts = h3SegmentPrompts(job.prompt, totalSegments);
@@ -556,12 +573,11 @@ async function runVideoGenerationPipeline(
   let workflowVersion: string | null = null;
 
   for (const [segmentIndex, segmentPrompt] of prompts.entries()) {
-    assertLeaseHealthy();
     const current = await db.query.mediaGenerationJob.findFirst({
       where: eq(mediaGenerationJob.id, job.id),
       columns: { status: true },
     });
-    if (current?.status !== "running") {
+    if (!current || !["running", "waiting_for_gpu"].includes(current.status)) {
       throw new Error(`生成任务已停止（${current?.status ?? "missing"}）`);
     }
     const submitted = await createProviderJob(
@@ -597,10 +613,7 @@ async function runVideoGenerationPipeline(
       throw new Error("生成任务已停止");
     }
 
-    const completed = await waitForProviderJob(
-      submitted.job_id,
-      assertLeaseHealthy,
-    );
+    const completed = await waitForProviderJob(submitted.job_id, job.id);
     modelVersion = completed.model_version ?? modelVersion;
     workflowVersion = completed.workflow_version ?? workflowVersion;
     const segmentVideo = await joinVideoSamples(completed.samples ?? []);
@@ -735,7 +748,6 @@ async function mergeEditedSegments(
 
 async function runVideoEditPipeline(
   job: typeof mediaGenerationJob.$inferSelect,
-  assertLeaseHealthy: () => void,
 ): Promise<GenerationPipelineResult> {
   const sourceJob = job.sourceGenerationJobId
     ? await db.query.mediaGenerationJob.findFirst({
@@ -760,12 +772,14 @@ async function runVideoEditPipeline(
     );
     const editedPaths: string[] = [];
     for (const [index, segment] of job.editSegments.entries()) {
-      assertLeaseHealthy();
       const current = await db.query.mediaGenerationJob.findFirst({
         where: eq(mediaGenerationJob.id, job.id),
         columns: { status: true },
       });
-      if (current?.status !== "running") {
+      if (
+        !current ||
+        !["running", "waiting_for_gpu"].includes(current.status)
+      ) {
         throw new Error(`编辑任务已停止（${current?.status ?? "missing"}）`);
       }
       const clipPath = join(dir, `source-segment-${index}.mp4`);
@@ -792,10 +806,7 @@ async function runVideoEditPipeline(
           updatedAt: new Date(),
         })
         .where(eq(mediaGenerationJob.id, job.id));
-      const completed = await waitForProviderJob(
-        submitted.job_id,
-        assertLeaseHealthy,
-      );
+      const completed = await waitForProviderJob(submitted.job_id, job.id);
       modelVersion = completed.model_version ?? modelVersion;
       workflowVersion = completed.workflow_version ?? workflowVersion;
       await writeFile(
@@ -869,12 +880,12 @@ function eightyChars(value: string): number {
 
 async function runGenerationJob(jobId: string): Promise<void> {
   const claimedAt = new Date();
-  const brokerRequestId = generationGpuRequestId(jobId);
   const [job] = await db
     .update(mediaGenerationJob)
     .set({
-      status: "waiting_for_gpu",
-      gpuBrokerRequestId: brokerRequestId,
+      status: "running",
+      startedAt: claimedAt,
+      gpuBrokerRequestId: null,
       gpuBrokerLeaseId: null,
       updatedAt: claimedAt,
     })
@@ -886,7 +897,7 @@ async function runGenerationJob(jobId: string): Promise<void> {
     )
     .returning();
   if (!job) return;
-  let startedAt = job.startedAt ?? claimedAt;
+  const startedAt = job.startedAt ?? claimedAt;
   if (job.seed === null) {
     job.seed = fallbackJobSeed(job);
     await db
@@ -959,70 +970,8 @@ async function runGenerationJob(jobId: string): Promise<void> {
     });
   };
 
-  let gpuLease: Awaited<ReturnType<typeof acquireGenerationGpuLease>> = null;
-  let gpuHeartbeat: ReturnType<typeof startGenerationGpuHeartbeat> | null =
-    null;
-  const releaseGpuLease = async () => {
-    await gpuHeartbeat?.stop();
-    gpuHeartbeat = null;
-    const lease = gpuLease;
-    gpuLease = null;
-    if (!lease) return;
-    try {
-      await releaseGenerationGpuLease(lease);
-    } catch (error) {
-      log.error("GPU Broker lease release failed", {
-        code: "GPU_BROKER_RELEASE_FAILED",
-        job_id: job.id,
-        lease_id: lease.leaseId,
-        err: error instanceof Error ? error : new Error(String(error)),
-      });
-    }
-    await db
-      .update(mediaGenerationJob)
-      .set({ gpuBrokerLeaseId: null, updatedAt: new Date() })
-      .where(eq(mediaGenerationJob.id, job.id));
-  };
   try {
-    gpuLease = await acquireGenerationGpuLease({
-      jobId: job.id,
-      kind: job.kind,
-      durationSeconds: job.durationSeconds,
-      isStillWaiting: async () => {
-        const current = await db.query.mediaGenerationJob.findFirst({
-          where: eq(mediaGenerationJob.id, job.id),
-          columns: { status: true },
-        });
-        return current?.status === "waiting_for_gpu";
-      },
-    });
-    const currentAfterWait = await db.query.mediaGenerationJob.findFirst({
-      where: eq(mediaGenerationJob.id, job.id),
-      columns: { status: true },
-    });
-    if (currentAfterWait?.status !== "waiting_for_gpu") return;
-
-    startedAt = job.startedAt ?? new Date();
     job.startedAt = startedAt;
-    const [runningUpdate] = await db
-      .update(mediaGenerationJob)
-      .set({
-        status: "running",
-        startedAt,
-        gpuBrokerLeaseId: gpuLease?.leaseId ?? null,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(mediaGenerationJob.id, job.id),
-          eq(mediaGenerationJob.status, "waiting_for_gpu"),
-        ),
-      )
-      .returning({ id: mediaGenerationJob.id });
-    if (!runningUpdate) return;
-    if (gpuLease) gpuHeartbeat = startGenerationGpuHeartbeat(gpuLease);
-    const assertLeaseHealthy = () => gpuHeartbeat?.assertHealthy();
-
     const providerHealth = await getMediaGenerationProviderHealth(true);
     if (providerHealth.status !== "healthy") {
       throw new Error(`H3 生成链路安全检查失败：${providerHealth.message}`);
@@ -1041,10 +990,9 @@ async function runGenerationJob(jobId: string): Promise<void> {
     }
     const result =
       job.kind === "edit"
-        ? await runVideoEditPipeline(job, assertLeaseHealthy)
-        : await runVideoGenerationPipeline(job, assertLeaseHealthy);
+        ? await runVideoEditPipeline(job)
+        : await runVideoGenerationPipeline(job);
     const { video, providerJobIds, modelVersion, workflowVersion } = result;
-    assertLeaseHealthy();
     await validateGeneratedVideoOutput(video, {
       durationSeconds: job.durationSeconds,
       width: job.width,
@@ -1056,10 +1004,6 @@ async function runGenerationJob(jobId: string): Promise<void> {
       job.prompt,
       job.language,
     );
-    assertLeaseHealthy();
-    // The H3 and validation stages are complete. Do not hold the shared GPU
-    // while storing the file, creating a draft, or sending notifications.
-    await releaseGpuLease();
     const currentBeforeFinalize = await db.query.mediaGenerationJob.findFirst({
       where: eq(mediaGenerationJob.id, jobId),
       columns: { status: true },
@@ -1159,8 +1103,6 @@ async function runGenerationJob(jobId: string): Promise<void> {
             : new Error(String(notificationError)),
       });
     }
-  } finally {
-    await releaseGpuLease();
   }
 }
 
@@ -1214,9 +1156,32 @@ export function startMediaGenerationScheduler(): void {
     .then(async (jobs) => {
       for (const job of jobs) {
         if (["waiting_for_gpu", "running"].includes(job.status)) {
+          if (job.providerJobId) {
+            try {
+              await providerRequest(
+                `/v1/generated-media/jobs/${encodeURIComponent(job.providerJobId)}:cancel`,
+                { method: "POST", body: "{}" },
+              );
+            } catch {
+              // Recovery must continue if an old Provider job is already gone.
+            }
+          }
+          if (job.gpuBrokerRequestId) {
+            try {
+              await cancelGenerationGpuRequest(job.gpuBrokerRequestId);
+            } catch {
+              // Legacy outer leases expire when the old worker stops heartbeating.
+            }
+          }
           await db
             .update(mediaGenerationJob)
-            .set({ status: "queued", updatedAt: new Date() })
+            .set({
+              status: "queued",
+              providerJobId: null,
+              gpuBrokerRequestId: null,
+              gpuBrokerLeaseId: null,
+              updatedAt: new Date(),
+            })
             .where(eq(mediaGenerationJob.id, job.id));
         }
         scheduleMediaGenerationJob(
@@ -1258,12 +1223,12 @@ export async function cancelMediaGenerationJob(jobId: string): Promise<void> {
       ),
     )
     .returning({ gpuBrokerRequestId: mediaGenerationJob.gpuBrokerRequestId });
-  if (job.status === "waiting_for_gpu" && canceledJob?.gpuBrokerRequestId) {
+  if (canceledJob?.gpuBrokerRequestId) {
     try {
       await cancelGenerationGpuRequest(canceledJob.gpuBrokerRequestId);
     } catch {
-      // The request may have been granted concurrently; runGenerationJob's
-      // finally block will release that lease after observing canceled state.
+      // Only pre-fix jobs own an outer Broker request. Its lease expires after
+      // the old worker stops heartbeating even if explicit cancellation fails.
     }
   }
 }

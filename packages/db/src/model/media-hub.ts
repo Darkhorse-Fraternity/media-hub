@@ -281,7 +281,7 @@ export const mediaGenerationJob = pgTable(
     failureStage: text("failure_stage"),
     /** 是否适合在资源或链路恢复后原参数重试。 */
     errorRetryable: boolean("error_retryable"),
-    /** gpu-resource-broker 的幂等请求与当前租约，用于重启续跑和审计。 */
+    /** 兼容旧任务的外层 Broker 信息；新任务统一由 Provider 持有租约。 */
     gpuBrokerRequestId: text("gpu_broker_request_id"),
     gpuBrokerLeaseId: text("gpu_broker_lease_id"),
     /** H3 原始音轨的只读 ASR 验收结果；不会替换原声音轨。 */

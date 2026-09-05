@@ -1036,6 +1036,7 @@ export const mediaGenerationRouter = {
           errorCode: null,
           failureStage: null,
           errorRetryable: null,
+          gpuBrokerRequestId: null,
           gpuBrokerLeaseId: null,
           asrTranscript: null,
           asrMatchPercent: null,
