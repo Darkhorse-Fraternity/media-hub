@@ -40,7 +40,7 @@ export async function handlePost(
   try {
     const { caller } = await createAgentApiCaller(request);
     const input = createVideoEditBody.parse(await readAgentJson(request));
-    const result = await caller.mediaHub.generation.createEdit({
+    const result = (await caller.mediaHub.generation.createEdit({
       sourceGenerationJobId: sourceJobId,
       title: input.title,
       language: input.language,
@@ -58,8 +58,23 @@ export async function handlePost(
           role: image.role,
         })),
       })),
-    });
-    return agentJson(result, 201);
+    })) as {
+      id: string;
+      status: "queued" | "scheduled";
+      sourceGenerationJobId: string;
+      scriptId: string | null;
+      scriptShotId: string | null;
+    };
+    return agentJson(
+      {
+        id: result.id,
+        status: result.status,
+        source_generation_job_id: result.sourceGenerationJobId,
+        script_id: result.scriptId,
+        script_shot_id: result.scriptShotId,
+      },
+      201,
+    );
   } catch (error) {
     return handleAgentApiError(error);
   }

@@ -22,7 +22,7 @@ function openApiDocument(request: Request) {
     openapi: "3.1.0",
     info: {
       title: "Pumpkii Media Hub Agent API",
-      version: "1.3.0",
+      version: "1.3.1",
       description:
         "Bearer-token API for agents to optimize prompts, create and manage MiniMax H3 generation jobs, retrieve videos, and publish to configured platform accounts.",
     },
@@ -715,6 +715,10 @@ function openApiDocument(request: Request) {
                       minimum: 5,
                       maximum: 60,
                     },
+                    quality_preset: {
+                      type: "string",
+                      enum: ["fast", "balanced", "quality"],
+                    },
                     scheduled_at: {
                       type: ["string", "null"],
                       format: "date-time",
@@ -786,7 +790,28 @@ function openApiDocument(request: Request) {
             },
           },
           responses: {
-            "201": { description: "Video edit job created" },
+            "201": {
+              description:
+                "Video edit job created. Script-linked source jobs retain their script and shot association.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    required: ["id", "status", "source_generation_job_id"],
+                    properties: {
+                      id: { type: "string" },
+                      status: {
+                        type: "string",
+                        enum: ["queued", "scheduled"],
+                      },
+                      source_generation_job_id: { type: "string" },
+                      script_id: { type: ["string", "null"] },
+                      script_shot_id: { type: ["string", "null"] },
+                    },
+                  },
+                },
+              },
+            },
             ...errorResponses,
           },
         },

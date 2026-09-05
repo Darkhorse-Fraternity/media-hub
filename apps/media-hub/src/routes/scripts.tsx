@@ -1,5 +1,5 @@
 import type { FormEvent } from "react";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 
@@ -16,10 +16,18 @@ import { useTRPC } from "~/lib/trpc";
 
 export const Route = createFileRoute("/scripts")({
   component: VideoScriptStudioPage,
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): VideoScriptStudioSearch => ({
+    scriptId: typeof search.scriptId === "string" ? search.scriptId : undefined,
+  }),
 });
 
 type ScriptLanguage = "zh" | "en";
 type QualityPreset = "fast" | "balanced" | "quality";
+interface VideoScriptStudioSearch {
+  scriptId?: string;
+}
 
 const EMPTY_CONTINUITY_BIBLE: MediaVideoScriptContinuityBible = {
   characters: "",
@@ -90,7 +98,11 @@ function AuthenticatedVideoScriptStudio({
 }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
-  const [selectedScriptId, setSelectedScriptId] = useState<string | null>(null);
+  const { scriptId: linkedScriptId } = Route.useSearch();
+  const [selectedScriptId, setSelectedScriptId] = useState<string | null>(
+    linkedScriptId ?? null,
+  );
+  const hydratedScriptIdRef = useRef<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
   const [newBrief, setNewBrief] = useState("");
   const [targetDuration, setTargetDuration] = useState(30);
@@ -135,29 +147,53 @@ function AuthenticatedVideoScriptStudio({
     trpc.mediaHub.image.list.queryOptions({ limit: 100 }),
   );
 
-  const applyScript = (script: {
-    title: string;
-    brief: string;
-    language: string;
-    width: number;
-    height: number;
-    defaultProfile: string | null;
-    continuityBible: MediaVideoScriptContinuityBible;
-    shots: MediaVideoScriptShot[];
-    version: number;
-  }) => {
-    setTitle(script.title);
-    setBrief(script.brief);
-    setLanguage(script.language === "en" ? "en" : "zh");
-    setWidth(script.width);
-    setHeight(script.height);
-    setDefaultProfile(script.defaultProfile ?? "");
-    setContinuityBible(script.continuityBible);
-    setShots(script.shots);
-    setVersion(script.version);
-    setDirty(false);
-    setSelectedShotIds([]);
-  };
+  const applyScript = useCallback(
+    (script: {
+      title: string;
+      brief: string;
+      language: string;
+      width: number;
+      height: number;
+      defaultProfile: string | null;
+      continuityBible: MediaVideoScriptContinuityBible;
+      shots: MediaVideoScriptShot[];
+      version: number;
+    }) => {
+      setTitle(script.title);
+      setBrief(script.brief);
+      setLanguage(script.language === "en" ? "en" : "zh");
+      setWidth(script.width);
+      setHeight(script.height);
+      setDefaultProfile(script.defaultProfile ?? "");
+      setContinuityBible(script.continuityBible);
+      setShots(script.shots);
+      setVersion(script.version);
+      setDirty(false);
+      setSelectedShotIds([]);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!linkedScriptId || hydratedScriptIdRef.current === linkedScriptId) {
+      return;
+    }
+    let canceled = false;
+    void queryClient
+      .fetchQuery(trpc.mediaHub.script.get.queryOptions({ id: linkedScriptId }))
+      .then((script) => {
+        if (canceled) return;
+        applyScript(script);
+        hydratedScriptIdRef.current = script.id;
+      })
+      .catch((error: unknown) => {
+        if (canceled) return;
+        setMessage(error instanceof Error ? error.message : "读取脚本失败");
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [applyScript, linkedScriptId, queryClient, trpc]);
 
   const openScript = async (id: string) => {
     if (dirty && !window.confirm("当前修改尚未保存，仍要切换脚本吗？")) {
@@ -168,6 +204,7 @@ function AuthenticatedVideoScriptStudio({
         trpc.mediaHub.script.get.queryOptions({ id }),
       );
       applyScript(script);
+      hydratedScriptIdRef.current = id;
       setSelectedScriptId(id);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "读取脚本失败");
@@ -283,6 +320,7 @@ function AuthenticatedVideoScriptStudio({
       });
       setSelectedScriptId(script.id);
       applyScript(script);
+      hydratedScriptIdRef.current = script.id;
       setNewTitle("");
       setNewBrief("");
       await refreshScripts(script.id);
@@ -314,6 +352,7 @@ function AuthenticatedVideoScriptStudio({
       });
       setSelectedScriptId(script.id);
       applyScript(script);
+      hydratedScriptIdRef.current = script.id;
       setNewTitle("");
       setNewBrief("");
       await refreshScripts(script.id);
@@ -384,6 +423,7 @@ function AuthenticatedVideoScriptStudio({
     try {
       await deleteMutation.mutateAsync({ id: selectedScriptId });
       setSelectedScriptId(null);
+      hydratedScriptIdRef.current = null;
       setDirty(false);
       await refreshScripts();
       setMessage("脚本已删除。");
@@ -650,8 +690,18 @@ function AuthenticatedVideoScriptStudio({
                             <span
                               className={`border px-2 py-1 text-[10px] ${latestJob.status === "succeeded" ? "border-emerald-400/30 text-emerald-300" : latestJob.status === "failed" ? "border-rose-400/30 text-rose-300" : "border-cyan-400/30 text-cyan-300"}`}
                             >
+                              {latestJob.kind === "edit" ? "修改" : "生成"} ·{" "}
                               {latestJob.status}
                             </span>
+                          )}
+                          {latestJob?.status === "succeeded" && (
+                            <Link
+                              to="/generations/$jobId/edit"
+                              params={{ jobId: latestJob.id }}
+                              className="border border-violet-300/30 px-2 py-1 text-[10px] text-violet-200 hover:bg-violet-300/10"
+                            >
+                              修改视频
+                            </Link>
                           )}
                           {latestJob?.status === "succeeded" &&
                             index < shots.length - 1 && (

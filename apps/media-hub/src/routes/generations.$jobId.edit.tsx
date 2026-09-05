@@ -100,13 +100,24 @@ function AuthenticatedVideoEditPage() {
       <div className="relative mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <header className="mb-6 flex flex-wrap items-start justify-between gap-4 border-b border-slate-800/80 pb-5">
           <div>
-            <Link
-              to="/"
-              className="inline-flex items-center gap-2 text-xs text-cyan-300 transition hover:text-cyan-200"
-            >
-              <span aria-hidden="true">←</span>
-              返回生成队列
-            </Link>
+            {job.scriptId ? (
+              <Link
+                to="/scripts"
+                search={{ scriptId: job.scriptId }}
+                className="inline-flex items-center gap-2 text-xs text-cyan-300 transition hover:text-cyan-200"
+              >
+                <span aria-hidden="true">←</span>
+                返回脚本镜头
+              </Link>
+            ) : (
+              <Link
+                to="/"
+                className="inline-flex items-center gap-2 text-xs text-cyan-300 transition hover:text-cyan-200"
+              >
+                <span aria-hidden="true">←</span>
+                返回生成队列
+              </Link>
+            )}
             <p className="mt-5 text-[11px] font-semibold tracking-[0.2em] text-slate-500 uppercase">
               Pumpkii Media Hub / Ref2VA
             </p>
@@ -180,12 +191,19 @@ function AuthenticatedVideoEditPage() {
             sourceTitle={sourceTitle}
             durationSeconds={job.durationSeconds}
             initialLanguage={job.language as ContentLanguage}
-            onCreated={(newJobId) =>
+            onCreated={(newJobId) => {
+              if (job.scriptId) {
+                void navigate({
+                  to: "/scripts",
+                  search: { scriptId: job.scriptId },
+                });
+                return;
+              }
               void navigate({
                 to: "/",
                 hash: `generation-job-${newJobId}`,
-              })
-            }
+              });
+            }}
           />
         </div>
       </div>

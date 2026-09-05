@@ -39,12 +39,12 @@ import {
 } from "./h3-generation-config";
 import { requireH3Profile } from "./h3-profile";
 import { resolveMediaSystemSetting } from "./system-settings";
+import { extractMediaGenerationLastFrame } from "./video-frame";
 import {
   buildVideoScriptDraftPrompt,
   compileVideoScriptShotPrompt,
   parseVideoScriptDraft,
 } from "./video-script-core";
-import { extractMediaGenerationLastFrame } from "./video-frame";
 
 type MediaHubDb = typeof mediaHubDb;
 
@@ -140,6 +140,8 @@ export const mediaVideoScriptRouter = {
         shotJobs: jobs.map((job) => ({
           id: job.id,
           scriptShotId: job.scriptShotId,
+          kind: job.kind,
+          sourceGenerationJobId: job.sourceGenerationJobId,
           title: job.title,
           status: job.status,
           profile: job.profile,

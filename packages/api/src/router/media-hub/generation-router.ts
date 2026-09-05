@@ -288,6 +288,8 @@ export const mediaGenerationRouter = {
         .join("\n");
       await ctx.db.insert(mediaGenerationJob).values({
         id,
+        scriptId: sourceJob.scriptId,
+        scriptShotId: sourceJob.scriptShotId,
         kind: "edit",
         sourceGenerationJobId: sourceJob.id,
         editSegments: orderedSegments,
@@ -313,7 +315,13 @@ export const mediaGenerationRouter = {
       });
 
       scheduleMediaGenerationJob(id, scheduledAt);
-      return { id, status: scheduledAt ? "scheduled" : "queued" };
+      return {
+        id,
+        status: scheduledAt ? "scheduled" : "queued",
+        sourceGenerationJobId: sourceJob.id,
+        scriptId: sourceJob.scriptId,
+        scriptShotId: sourceJob.scriptShotId,
+      };
     }),
 
   list: protectedProcedure

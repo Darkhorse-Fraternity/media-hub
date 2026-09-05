@@ -1,19 +1,28 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import type { StartedPostgreSqlContainer } from "@testcontainers/postgresql";
+import type { Server } from "node:http";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { db as applicationDb } from "@acme/db/client";
 import { and, count, eq } from "@acme/db";
-import { mediaApiToken, mediaGenerationJob, user } from "@acme/db/schema";
+import {
+  mediaApiToken,
+  mediaGenerationJob,
+  mediaVideoScript,
+  user,
+} from "@acme/db/schema";
 
 const migrationsFolder = fileURLToPath(
   new URL("../../../../packages/db/drizzle", import.meta.url),
 );
 const ownerId = "integration-video-owner";
+const scriptId = "integration-video-script";
+const scriptShotId = "integration-video-shot";
 const sourceJobId = "integration-source-video";
 const agentToken = "mh_agent_integration_video_edit_token";
 const postgresImage = process.env.TEST_POSTGRES_IMAGE ?? "postgres:17";
@@ -24,6 +33,7 @@ type HandlePost = (request: Request, sourceJobId: string) => Promise<Response>;
 let container: StartedPostgreSqlContainer;
 let database: Database;
 let handlePost: HandlePost;
+let providerServer: Server;
 let createdEditJobId: string | null = null;
 
 function configureDockerHostFromCurrentContext(): void {
@@ -93,6 +103,39 @@ describe("POST /api/v1/generations/:jobId/edits", () => {
     process.env.AUTH_SECRET = "media-hub-integration-test-secret";
     process.env.AUTH_USE_SECURE_COOKIES = "false";
     process.env.MEDIA_HUB_CRYPTO_KEY = Buffer.alloc(32, 7).toString("base64");
+    providerServer = createServer((request, response) => {
+      if (request.url !== "/healthz") {
+        response.writeHead(404).end();
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          status: "healthy",
+          contract: "ydc_generated_media_provider_request.v1",
+          profiles: ["platform-h3-ref2va-edit-v1"],
+          profile_details: [
+            {
+              id: "platform-h3-ref2va-edit-v1",
+              kind: "edit",
+              minimum_steps: 20,
+              max_reference_images: 4,
+            },
+          ],
+          provider_version: "integration-test",
+        }),
+      );
+    });
+    await new Promise<void>((resolve, reject) => {
+      providerServer.once("error", reject);
+      providerServer.listen(0, "127.0.0.1", resolve);
+    });
+    const providerAddress = providerServer.address();
+    if (!providerAddress || typeof providerAddress === "string") {
+      throw new Error("Integration provider did not expose a TCP port");
+    }
+    process.env.MEDIA_HUB_GENERATION_PROVIDER_URL = `http://127.0.0.1:${providerAddress.port}`;
+    process.env.MEDIA_HUB_GENERATION_PROVIDER_TOKEN = "integration-token";
 
     const clientModule = await import("@acme/db/client");
     database = clientModule.db;
@@ -122,8 +165,19 @@ describe("POST /api/v1/generations/:jobId/edits", () => {
       createdAt: now,
       updatedAt: now,
     });
+    await database.insert(mediaVideoScript).values({
+      id: scriptId,
+      title: "Integration video script",
+      brief: "Verify that Ref2VA versions stay attached to their source shot",
+      shots: [],
+      createdBy: ownerId,
+      createdAt: now,
+      updatedAt: now,
+    });
     await database.insert(mediaGenerationJob).values({
       id: sourceJobId,
+      scriptId,
+      scriptShotId,
       prompt: "A completed source video used only inside integration tests",
       title: "Integration source video",
       language: "en",
@@ -144,6 +198,9 @@ describe("POST /api/v1/generations/:jobId/edits", () => {
       const { cancelMediaGenerationJob } = await import("@acme/api");
       await cancelMediaGenerationJob(createdEditJobId);
     }
+    await new Promise<void>((resolve, reject) => {
+      providerServer?.close((error) => (error ? reject(error) : resolve()));
+    });
     await container?.stop();
   }, 30_000);
 
@@ -164,11 +221,22 @@ describe("POST /api/v1/generations/:jobId/edits", () => {
       createEditRequest(validEditBody()),
       sourceJobId,
     );
-    const result = (await response.json()) as { id: string; status: string };
+    const result = (await response.json()) as {
+      id: string;
+      status: string;
+      source_generation_job_id: string;
+      script_id: string | null;
+      script_shot_id: string | null;
+    };
     createdEditJobId = result.id;
 
     expect(response.status).toBe(201);
     expect(result.status).toBe("scheduled");
+    expect(result).toMatchObject({
+      source_generation_job_id: sourceJobId,
+      script_id: scriptId,
+      script_shot_id: scriptShotId,
+    });
 
     const savedJob = await database.query.mediaGenerationJob.findFirst({
       where: eq(mediaGenerationJob.id, result.id),
@@ -176,6 +244,8 @@ describe("POST /api/v1/generations/:jobId/edits", () => {
     expect(savedJob).toMatchObject({
       id: result.id,
       kind: "edit",
+      scriptId,
+      scriptShotId,
       sourceGenerationJobId: sourceJobId,
       title: "修改：接口集成测试",
       language: "zh",
