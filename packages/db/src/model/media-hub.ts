@@ -76,6 +76,11 @@ export const mediaUserPreference = pgTable("media_user_preference", {
     .default(true),
   /** 该用户的通知地址；留空时不发送任何飞书通知。 */
   feishuWebhookUrl: text("feishu_webhook_url"),
+  /**
+   * 该用户的飞书接收群；配置后由 Media Hub 应用机器人向此群发送可播放视频和卡片。
+   * 必须保持用户级，禁止回退到任何全局群。
+   */
+  feishuChatId: text("feishu_chat_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

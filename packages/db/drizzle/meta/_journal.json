@@ -169,6 +169,13 @@
       "when": 1788619198849,
       "tag": "0023_mushy_jazinda",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1788619944677,
+      "tag": "0024_glorious_silhouette",
+      "breakpoints": true
     }
   ]
 }

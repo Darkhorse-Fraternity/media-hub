@@ -46,6 +46,14 @@ const userPreferenceSchema = z.object({
         ),
       "请输入有效的飞书机器人 Webhook 地址",
     ),
+  feishuChatId: z
+    .string()
+    .trim()
+    .max(100)
+    .refine(
+      (value) => value === "" || /^oc_[A-Za-z0-9]+$/.test(value),
+      "请输入有效的飞书群 Chat ID（oc_...）",
+    ),
 });
 
 const httpUrlOrEmpty = z
@@ -76,6 +84,7 @@ const defaultUserPreference = {
   youtubeNotifySubscribers: true,
   instagramShareToFeed: true,
   feishuWebhookUrl: "",
+  feishuChatId: "",
 };
 
 function nullable(value: string): string | null {
@@ -107,6 +116,7 @@ export const mediaSettingsRouter = {
           youtubeNotifySubscribers: stored.youtubeNotifySubscribers,
           instagramShareToFeed: stored.instagramShareToFeed,
           feishuWebhookUrl: stored.feishuWebhookUrl ?? "",
+          feishuChatId: stored.feishuChatId ?? "",
         }
       : defaultUserPreference;
   }),
@@ -121,6 +131,7 @@ export const mediaSettingsRouter = {
           userId: ctx.session.user.id,
           ...input,
           feishuWebhookUrl: nullable(input.feishuWebhookUrl),
+          feishuChatId: nullable(input.feishuChatId),
           createdAt: now,
           updatedAt: now,
         })
@@ -129,6 +140,7 @@ export const mediaSettingsRouter = {
           set: {
             ...input,
             feishuWebhookUrl: nullable(input.feishuWebhookUrl),
+            feishuChatId: nullable(input.feishuChatId),
             updatedAt: now,
           },
         });

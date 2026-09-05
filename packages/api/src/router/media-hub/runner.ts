@@ -186,7 +186,7 @@ async function aggregateTaskStatus(taskId: string) {
         }),
         db.query.mediaUserPreference.findFirst({
           where: eq(mediaUserPreference.userId, task.createdBy),
-          columns: { feishuWebhookUrl: true },
+          columns: { feishuWebhookUrl: true, feishuChatId: true },
         }),
       ]);
       const accountIds = [
@@ -211,6 +211,7 @@ async function aggregateTaskStatus(taskId: string) {
           height: generation?.height,
           providerJobId: generation?.providerJobId,
           recipientWebhookUrl: recipientPreference?.feishuWebhookUrl,
+          recipientChatId: recipientPreference?.feishuChatId,
           targets: targets.map((t) => ({
             platform: t.platform,
             accountLabel: accountLabelById.get(t.accountId) ?? null,

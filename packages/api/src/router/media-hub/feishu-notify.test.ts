@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildFeishuVideoContent,
   buildGenerationResultCard,
+  prepareFeishuNotificationVideo,
   resolveGenerationNotificationDestination,
 } from "./feishu-notify";
 
@@ -73,15 +75,33 @@ describe("buildGenerationResultCard", () => {
   it("uses only a user Webhook and otherwise disables notification", () => {
     expect(
       resolveGenerationNotificationDestination(
+        "",
         "https://open.feishu.cn/open-apis/bot/v2/hook/user-hook",
       ),
     ).toEqual({
       kind: "user_webhook",
       webhookUrl: "https://open.feishu.cn/open-apis/bot/v2/hook/user-hook",
     });
-    expect(resolveGenerationNotificationDestination("")).toEqual({
+    expect(resolveGenerationNotificationDestination("", "")).toEqual({
       kind: "disabled",
     });
+  });
+
+  it("prefers a user-scoped app chat so playable video and card stay together", () => {
+    expect(
+      resolveGenerationNotificationDestination(
+        "oc_user_target",
+        "https://open.feishu.cn/open-apis/bot/v2/hook/user-hook",
+      ),
+    ).toEqual({ kind: "app_chat", chatId: "oc_user_target" });
+    expect(buildFeishuVideoContent("file_video", "img_cover")).toBe(
+      '{"file_key":"file_video","image_key":"img_cover"}',
+    );
+  });
+
+  it("does not transcode a notification video already below the Feishu limit", async () => {
+    const video = Buffer.from("small mp4 fixture");
+    await expect(prepareFeishuNotificationVideo(video)).resolves.toBe(video);
   });
 
   it("labels assembled script videos distinctly from H3 generation", () => {

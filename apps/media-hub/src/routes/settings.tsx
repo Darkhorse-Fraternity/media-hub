@@ -37,6 +37,7 @@ interface PreferenceDraft {
   youtubeNotifySubscribers: boolean;
   instagramShareToFeed: boolean;
   feishuWebhookUrl: string;
+  feishuChatId: string;
 }
 
 interface SystemDraft {
@@ -359,7 +360,7 @@ function SettingsWorkspace({
                 </div>
                 <SettingField
                   label="飞书通知 Webhook"
-                  hint="仅用于当前账号的生成、取消和发布结果；留空时不发送。"
+                  hint="兼容卡片通知；只配置 Webhook 时不支持直接播放视频。"
                 >
                   <input
                     type="url"
@@ -371,6 +372,23 @@ function SettingsWorkspace({
                       })
                     }
                     placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."
+                    autoComplete="off"
+                    className={controlClass}
+                  />
+                </SettingField>
+                <SettingField
+                  label="飞书接收群 Chat ID"
+                  hint="可播放视频通知使用；请先把 Pumpkii Media Hub 应用机器人加入同一群。配置后视频和卡片都只发到这个群。"
+                >
+                  <input
+                    value={preferenceDraft.feishuChatId}
+                    onChange={(event) =>
+                      setPreferenceDraft({
+                        ...preferenceDraft,
+                        feishuChatId: event.target.value,
+                      })
+                    }
+                    placeholder="oc_..."
                     autoComplete="off"
                     className={controlClass}
                   />

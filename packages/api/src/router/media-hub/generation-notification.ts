@@ -6,8 +6,12 @@ import {
   user as User,
 } from "@acme/db/schema";
 import { log } from "@acme/logger";
+import { getMediaHubObject } from "@acme/storage";
 
-import { sendGenerationResultCard } from "./feishu-notify";
+import {
+  prepareFeishuNotificationVideo,
+  sendGenerationResultCard,
+} from "./feishu-notify";
 import { generationNotificationRetryDelayMs } from "./generation-notification-core";
 
 const NOTIFICATION_SWEEP_INTERVAL_MS = 30_000;
@@ -49,11 +53,12 @@ export async function deliverGenerationResultNotification(
       }),
       db.query.mediaUserPreference.findFirst({
         where: eq(mediaUserPreference.userId, job.createdBy),
-        columns: { feishuWebhookUrl: true },
+        columns: { feishuWebhookUrl: true, feishuChatId: true },
       }),
     ]);
     const recipientWebhookUrl = recipientPreference?.feishuWebhookUrl?.trim();
-    if (!recipientWebhookUrl) {
+    const recipientChatId = recipientPreference?.feishuChatId?.trim();
+    if (!recipientWebhookUrl && !recipientChatId) {
       await db
         .update(mediaGenerationJob)
         .set({
@@ -72,6 +77,13 @@ export async function deliverGenerationResultNotification(
     }
 
     const appUrl = process.env.APP_URL?.replace(/\/$/, "");
+    const storedVideo =
+      job.status === "succeeded" && recipientChatId && job.outputStorageKey
+        ? await getMediaHubObject(job.outputStorageKey)
+        : undefined;
+    const video = storedVideo
+      ? await prepareFeishuNotificationVideo(storedVideo)
+      : undefined;
     await sendGenerationResultCard({
       jobId: job.id,
       title: job.title,
@@ -118,11 +130,14 @@ export async function deliverGenerationResultNotification(
       errorCode: job.errorCode,
       failureStage: job.failureStage,
       errorRetryable: job.errorRetryable,
+      video,
+      videoBytes: video?.length,
       videoUrl:
         job.status === "succeeded" && appUrl
           ? `${appUrl}/#generation-job-${job.id}`
           : undefined,
       recipientWebhookUrl,
+      recipientChatId,
     });
     const deliveredAt = new Date();
     await db

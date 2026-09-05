@@ -1,0 +1,1 @@
+ALTER TABLE "media_user_preference" ADD COLUMN "feishu_chat_id" text;

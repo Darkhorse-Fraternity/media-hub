@@ -1082,7 +1082,7 @@ export const mediaGenerationRouter = {
         }),
         ctx.db.query.mediaUserPreference.findFirst({
           where: eq(mediaUserPreference.userId, job.createdBy),
-          columns: { feishuWebhookUrl: true },
+          columns: { feishuWebhookUrl: true, feishuChatId: true },
         }),
       ]);
       const creatorLabel = creator
@@ -1104,6 +1104,7 @@ export const mediaGenerationRouter = {
         createdByLabel: creatorLabel,
         canceledByLabel,
         recipientWebhookUrl: recipientPreference?.feishuWebhookUrl,
+        recipientChatId: recipientPreference?.feishuChatId,
       }).catch((error: unknown) => {
         log.error("Media generation cancel alert failed", {
           code: "MEDIA_GENERATION_CANCEL_ALERT_FAILED",
