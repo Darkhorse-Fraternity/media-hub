@@ -7,7 +7,11 @@ import type {
   MediaVideoScriptContinuityBible,
   MediaVideoScriptShot,
 } from "@acme/validators";
-import { analyzeMediaVideoScriptShots } from "@acme/validators";
+import {
+  analyzeMediaVideoScriptShots,
+  MEDIA_H3_SCRIPT_SHOT_SECONDS,
+  MEDIA_H3_SCRIPT_TARGET_DURATIONS,
+} from "@acme/validators";
 
 import { authClient } from "~/auth/client";
 import { MediaHubAccountMenu } from "~/components/media-hub-account-menu";
@@ -21,6 +25,7 @@ export const Route = createFileRoute("/scripts")({
 type ScriptLanguage = "zh" | "en";
 type QualityPreset = "fast" | "balanced" | "quality";
 type CopyStatus = "draft" | "approved";
+type ScriptTargetDuration = (typeof MEDIA_H3_SCRIPT_TARGET_DURATIONS)[number];
 
 const EMPTY_CONTINUITY_BIBLE: MediaVideoScriptContinuityBible = {
   characters: "",
@@ -33,7 +38,7 @@ function emptyShot(position: number): MediaVideoScriptShot {
   return {
     id: crypto.randomUUID(),
     title: `镜头 ${position}`,
-    durationSeconds: 10,
+    durationSeconds: MEDIA_H3_SCRIPT_SHOT_SECONDS,
     visualDescription: "",
     cameraDirection: "",
     continuity: "",
@@ -105,7 +110,8 @@ function AuthenticatedVideoScriptStudio({
   const hydratedScriptIdRef = useRef<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
   const [newBrief, setNewBrief] = useState("");
-  const [targetDuration, setTargetDuration] = useState(30);
+  const [targetDuration, setTargetDuration] =
+    useState<ScriptTargetDuration>(30);
   const [language, setLanguage] = useState<ScriptLanguage>("zh");
   const [title, setTitle] = useState("");
   const [brief, setBrief] = useState("");
@@ -564,8 +570,9 @@ function AuthenticatedVideoScriptStudio({
               先把故事拍明白，再让 GPU 开机。
             </h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
-              每个镜头都是 5–15
-              秒的独立生成单元。确认画面、台词和连续性后，再逐镜进入 H3 队列。
+              默认按 15 秒拆成独立 H3
+              生成单元，仅最后一个尾镜头可按剩余时长缩短。
+              确认画面、台词和连续性后，再逐镜进入 H3 队列。
             </p>
           </div>
           <nav className="flex flex-wrap gap-2" aria-label="创作工具">
@@ -642,17 +649,21 @@ function AuthenticatedVideoScriptStudio({
                   />
                   <label className="block text-xs text-slate-400">
                     目标时长 · {targetDuration} 秒
-                    <input
-                      type="range"
-                      min={10}
-                      max={120}
-                      step={5}
+                    <select
                       value={targetDuration}
                       onChange={(event) =>
-                        setTargetDuration(Number(event.target.value))
+                        setTargetDuration(
+                          Number(event.target.value) as ScriptTargetDuration,
+                        )
                       }
-                      className="mt-2 w-full accent-amber-300"
-                    />
+                      className="mt-2 w-full border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 outline-none focus:border-amber-300"
+                    >
+                      {MEDIA_H3_SCRIPT_TARGET_DURATIONS.map((duration) => (
+                        <option key={duration} value={duration}>
+                          {duration} 秒 · {duration / 15} 镜
+                        </option>
+                      ))}
+                    </select>
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     <button
@@ -889,6 +900,24 @@ function AuthenticatedVideoScriptStudio({
                             className="min-w-44 flex-1 bg-transparent font-medium outline-none"
                             aria-label={`镜头 ${index + 1} 标题`}
                           />
+                          <label className="flex items-center gap-2 text-xs text-slate-500">
+                            时长
+                            <input
+                              type="number"
+                              min={5}
+                              max={MEDIA_H3_SCRIPT_SHOT_SECONDS}
+                              step={1}
+                              value={shot.durationSeconds}
+                              onChange={(event) =>
+                                updateShot(shot.id, {
+                                  durationSeconds: Number(event.target.value),
+                                })
+                              }
+                              className="w-16 border border-slate-800 bg-slate-900 px-2 py-1 text-right font-mono text-xs text-slate-300 outline-none focus:border-amber-300"
+                              aria-label={`镜头 ${index + 1} 时长`}
+                            />
+                            秒
+                          </label>
                           {latestJob && (
                             <span
                               className={`border px-2 py-1 text-[10px] ${latestJob.status === "succeeded" ? "border-emerald-400/30 text-emerald-300" : latestJob.status === "failed" ? "border-rose-400/30 text-rose-300" : "border-cyan-400/30 text-cyan-300"}`}

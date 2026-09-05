@@ -3,6 +3,7 @@ import type {
   MediaVideoScriptShot,
 } from "@acme/validators";
 import {
+  MEDIA_H3_SCRIPT_SHOT_SECONDS,
   mediaVideoScriptContinuityBibleSchema,
   mediaVideoScriptDraftShotSchema,
 } from "@acme/validators";
@@ -29,25 +30,44 @@ export function resolveVideoScriptCopyStatus(
   return previousCopy === nextCopy ? requestedStatus : "draft";
 }
 
+export function preferredH3ScriptShotDurations(
+  targetDurationSeconds: number,
+): number[] {
+  const durations: number[] = [];
+  let remaining = targetDurationSeconds;
+  while (remaining > MEDIA_H3_SCRIPT_SHOT_SECONDS) {
+    durations.push(MEDIA_H3_SCRIPT_SHOT_SECONDS);
+    remaining -= MEDIA_H3_SCRIPT_SHOT_SECONDS;
+  }
+  if (remaining > 0 && remaining < 5 && durations.length > 0) {
+    const borrowedSeconds = 5 - remaining;
+    const previousIndex = durations.length - 1;
+    const previousDuration = durations[previousIndex];
+    if (previousDuration !== undefined) {
+      durations[previousIndex] = previousDuration - borrowedSeconds;
+    }
+    remaining = 5;
+  }
+  if (remaining > 0) durations.push(remaining);
+  return durations;
+}
+
 export function buildVideoScriptDraftPrompt(
   input: VideoScriptDraftInput,
 ): string {
+  const preferredDurations = preferredH3ScriptShotDurations(
+    input.targetDurationSeconds,
+  );
   const suggestedShotCount =
-    input.shotCount ??
-    Math.min(
-      12,
-      Math.max(
-        1,
-        input.targetDurationSeconds <= 15
-          ? 1
-          : Math.round(input.targetDurationSeconds / 9),
-      ),
-    );
+    input.shotCount ?? Math.min(12, Math.max(1, preferredDurations.length));
+  const durationPlan = input.shotCount
+    ? `The caller explicitly requested ${input.shotCount} shots. Distribute the target duration across that exact count, keeping every shot between 5 and ${MEDIA_H3_SCRIPT_SHOT_SECONDS} seconds.`
+    : `Use this exact duration schedule: ${preferredDurations.join(" + ")} seconds. Use full ${MEDIA_H3_SCRIPT_SHOT_SECONDS}-second H3 generation units wherever the target duration allows; only the tail of the schedule may be shorter.`;
   return [
     "You are a production script planner for MiniMax H3 native-audio video generation.",
     "Do not inspect files, browse, or use tools. Work only from the supplied brief.",
     "Return one valid JSON object and nothing else. Do not use a Markdown fence.",
-    `Create exactly ${suggestedShotCount} shots totaling approximately ${input.targetDurationSeconds} seconds. Prefer 8–10 seconds per shot. Use 5–7 seconds for a simple close-up or reaction, and 11–15 seconds only for one uncomplicated action that genuinely needs the time. Every shot must be independently generatable and no longer than 15 seconds.`,
+    `Create exactly ${suggestedShotCount} shots totaling ${input.targetDurationSeconds} seconds. ${durationPlan} Every shot must be independently generatable and no longer than ${MEDIA_H3_SCRIPT_SHOT_SECONDS} seconds.`,
     "Preserve the requested story, facts, characters, products, visible text, and dialogue. Do not invent unrelated characters, claims, speech, lyrics, or plot events.",
     "First write a concise production copy in the requested authoring language. It must express the complete story, intended pacing, and every supplied line of dialogue before the shot breakdown.",
     "Write shot titles in the requested authoring language. Write visualDescription, cameraDirection, continuity, soundscape, and music in precise natural English for H3.",
@@ -57,7 +77,7 @@ export function buildVideoScriptDraftPrompt(
     "Create a concise continuityBible for the entire script. Treat it as fixed production truth shared by every shot.",
     "For each spoken line, choose a stable speakerId S1–S4 and an atSeconds value within that shot. Omit dialogue when the brief does not provide exact words; never invent placeholder or unintelligible speech.",
     "Use N/A for music when no audience-only score was requested.",
-    'JSON shape: {"title":"...","copy":"complete production copy in the requested language","continuityBible":{"characters":"...","wardrobeAndProps":"...","locationsAndLighting":"...","visualRules":"..."},"shots":[{"title":"...","durationSeconds":10,"visualDescription":"...","cameraDirection":"...","continuity":"...","soundscape":"...","music":"N/A","dialogues":[{"atSeconds":1.5,"speakerId":"S1","language":"zh","text":"..."}]}]}',
+    'JSON shape: {"title":"...","copy":"complete production copy in the requested language","continuityBible":{"characters":"...","wardrobeAndProps":"...","locationsAndLighting":"...","visualRules":"..."},"shots":[{"title":"...","durationSeconds":15,"visualDescription":"...","cameraDirection":"...","continuity":"...","soundscape":"...","music":"N/A","dialogues":[{"atSeconds":1.5,"speakerId":"S1","language":"zh","text":"..."}]}]}',
     input.title ? `Working title: ${input.title}` : "",
     "Creative brief:",
     input.brief,

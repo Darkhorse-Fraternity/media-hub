@@ -1,5 +1,7 @@
 import { z } from "zod/v4";
 
+import { mediaH3ScriptTargetDurationSchema } from "@acme/validators";
+
 const dialogueBody = z.object({
   id: z.string().trim().min(1).max(100).optional(),
   at_seconds: z.number().min(0).max(15),
@@ -67,7 +69,7 @@ export const draftScriptBody = z.object({
   title: z.string().trim().max(200).optional(),
   brief: z.string().trim().min(1).max(10_000),
   language: z.enum(["zh", "en"]).default("zh"),
-  target_duration_seconds: z.number().int().min(5).max(180).default(30),
+  target_duration_seconds: mediaH3ScriptTargetDurationSchema.default(30),
   shot_count: z.number().int().min(1).max(12).optional(),
 });
 

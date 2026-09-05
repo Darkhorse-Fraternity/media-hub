@@ -278,7 +278,17 @@ export const MEDIA_H3_PROMPT_MAX_LENGTH = 16_000;
 export const MEDIA_H3_DEFAULT_WIDTH = 1344;
 export const MEDIA_H3_DEFAULT_HEIGHT = 768;
 export const MEDIA_H3_DEFAULT_DURATION_SECONDS = 30;
+/** H3 脚本拆镜的标准单镜时长；不足部分仅留给最后一个镜头。 */
+export const MEDIA_H3_SCRIPT_SHOT_SECONDS = 15;
+export const MEDIA_H3_SCRIPT_TARGET_DURATIONS = [15, 30, 45, 60] as const;
 export const MEDIA_H3_DEFAULT_QUALITY_PRESET = "balanced" as const;
+
+export const mediaH3ScriptTargetDurationSchema = z.union([
+  z.literal(MEDIA_H3_SCRIPT_TARGET_DURATIONS[0]),
+  z.literal(MEDIA_H3_SCRIPT_TARGET_DURATIONS[1]),
+  z.literal(MEDIA_H3_SCRIPT_TARGET_DURATIONS[2]),
+  z.literal(MEDIA_H3_SCRIPT_TARGET_DURATIONS[3]),
+]);
 
 export const mediaH3DimensionSchema = z
   .number()
@@ -381,7 +391,7 @@ export const mediaVideoScriptContinuityBibleSchema = z
 
 const mediaVideoScriptShotFields = {
   title: z.string().trim().min(1).max(120),
-  durationSeconds: z.number().int().min(5).max(15),
+  durationSeconds: z.number().int().min(5).max(MEDIA_H3_SCRIPT_SHOT_SECONDS),
   visualDescription: z.string().trim().min(1).max(5000),
   cameraDirection: z.string().trim().max(1000).default(""),
   continuity: z.string().trim().max(1000).default(""),
@@ -449,13 +459,29 @@ export const mediaVideoScriptListSchema = z.object({
   pageSize: z.number().int().min(1).max(100).default(30),
 });
 
-export const draftMediaVideoScriptSchema = z.object({
-  title: z.string().trim().max(200).optional(),
-  brief: z.string().trim().min(1).max(10_000),
-  language: mediaContentLanguageEnum.default("zh"),
-  targetDurationSeconds: z.number().int().min(5).max(180).default(30),
-  shotCount: z.number().int().min(1).max(12).optional(),
-});
+export const draftMediaVideoScriptSchema = z
+  .object({
+    title: z.string().trim().max(200).optional(),
+    brief: z.string().trim().min(1).max(10_000),
+    language: mediaContentLanguageEnum.default("zh"),
+    targetDurationSeconds: mediaH3ScriptTargetDurationSchema.default(30),
+    shotCount: z.number().int().min(1).max(12).optional(),
+  })
+  .superRefine((value, context) => {
+    if (!value.shotCount) return;
+    const minimumDuration = value.shotCount * 5;
+    const maximumDuration = value.shotCount * MEDIA_H3_SCRIPT_SHOT_SECONDS;
+    if (
+      value.targetDurationSeconds < minimumDuration ||
+      value.targetDurationSeconds > maximumDuration
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: `${value.shotCount} 个镜头只能承载 ${minimumDuration}–${maximumDuration} 秒`,
+        path: ["shotCount"],
+      });
+    }
+  });
 
 export const generateMediaVideoScriptSchema = z.object({
   id: z.string().trim().min(1),
@@ -503,7 +529,7 @@ export type MediaVideoScriptContinuityBible = z.infer<
 export type MediaVideoScriptShot = z.infer<typeof mediaVideoScriptShotSchema>;
 
 export interface MediaVideoScriptIssue {
-  code: "long_shot" | "dialogue_too_fast";
+  code: "dialogue_too_fast";
   shotId: string;
   dialogueId?: string;
   message: string;
@@ -523,14 +549,6 @@ export function analyzeMediaVideoScriptShots(
 ): MediaVideoScriptIssue[] {
   const issues: MediaVideoScriptIssue[] = [];
   for (const shot of shots) {
-    if (shot.durationSeconds > 10) {
-      issues.push({
-        code: "long_shot",
-        shotId: shot.id,
-        message: `${shot.durationSeconds} 秒长镜头只适合单一动作；复杂动作或多人互动建议拆镜。`,
-        suggestedSplitCount: 2,
-      });
-    }
     const dialogues = [...shot.dialogues].sort(
       (left, right) => left.atSeconds - right.atSeconds,
     );

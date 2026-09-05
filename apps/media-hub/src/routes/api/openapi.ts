@@ -6,6 +6,8 @@ import {
   MEDIA_H3_DEFAULT_QUALITY_PRESET,
   MEDIA_H3_DEFAULT_WIDTH,
   MEDIA_H3_PROMPT_MAX_LENGTH,
+  MEDIA_H3_SCRIPT_SHOT_SECONDS,
+  MEDIA_H3_SCRIPT_TARGET_DURATIONS,
 } from "@acme/validators";
 
 function openApiDocument(request: Request) {
@@ -199,7 +201,10 @@ function openApiDocument(request: Request) {
             duration_seconds: {
               type: "integer",
               minimum: 5,
-              maximum: 15,
+              maximum: MEDIA_H3_SCRIPT_SHOT_SECONDS,
+              default: MEDIA_H3_SCRIPT_SHOT_SECONDS,
+              description:
+                "Prefer a full 15-second H3 unit. Only the final remainder shot should normally be shorter.",
             },
             visual_description: { type: "string", maxLength: 5000 },
             camera_direction: { type: "string", maxLength: 1000 },
@@ -299,9 +304,10 @@ function openApiDocument(request: Request) {
             language: { type: "string", enum: ["zh", "en"], default: "zh" },
             target_duration_seconds: {
               type: "integer",
-              minimum: 5,
-              maximum: 180,
+              enum: [...MEDIA_H3_SCRIPT_TARGET_DURATIONS],
               default: 30,
+              description:
+                "Choose 15, 30, 45, or 60 seconds. When shot_count is omitted, the draft uses one 15-second H3 shot per segment.",
             },
             shot_count: { type: "integer", minimum: 1, maximum: 12 },
           },

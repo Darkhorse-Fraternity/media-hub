@@ -8,6 +8,7 @@ import {
   buildVideoScriptFirstFramePrompt,
   compileVideoScriptShotPrompt,
   parseVideoScriptDraft,
+  preferredH3ScriptShotDurations,
   resolveVideoScriptCopyStatus,
 } from "./video-script-core";
 
@@ -18,10 +19,18 @@ describe("video script core", () => {
       language: "zh",
       targetDurationSeconds: 30,
     });
-    expect(prompt).toContain("exactly 3 shots");
-    expect(prompt).toContain("Prefer 8–10 seconds");
+    expect(prompt).toContain("exactly 2 shots");
+    expect(prompt).toContain("15 + 15 seconds");
+    expect(prompt).toContain("full 15-second H3 generation units");
     expect(prompt).toContain("stable speakerId");
     expect(prompt).toContain("continuityBible");
+  });
+
+  it("plans the four supported durations as full 15-second H3 shots", () => {
+    expect(preferredH3ScriptShotDurations(15)).toEqual([15]);
+    expect(preferredH3ScriptShotDurations(30)).toEqual([15, 15]);
+    expect(preferredH3ScriptShotDurations(45)).toEqual([15, 15, 15]);
+    expect(preferredH3ScriptShotDurations(60)).toEqual([15, 15, 15, 15]);
   });
 
   it("parses a structured draft and supplies stable ids", () => {
