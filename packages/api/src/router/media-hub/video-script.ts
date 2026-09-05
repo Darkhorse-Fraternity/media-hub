@@ -46,6 +46,10 @@ import { queueMediaImageJob } from "./image-job-service";
 import { resolveMediaSystemSetting } from "./system-settings";
 import { extractMediaGenerationLastFrame } from "./video-frame";
 import {
+  assembleCompletedVideoScript,
+  VideoScriptAssemblyNotReadyError,
+} from "./video-script-assembly";
+import {
   buildVideoScriptDraftPrompt,
   buildVideoScriptFirstFramePrompt,
   compileVideoScriptShotPrompt,
@@ -210,19 +214,39 @@ export const mediaVideoScriptRouter = {
       return {
         ...scriptSummary(script),
         shotFrameCandidates,
-        shotJobs: jobs.map((job) => ({
-          id: job.id,
-          scriptShotId: job.scriptShotId,
-          kind: job.kind,
-          sourceGenerationJobId: job.sourceGenerationJobId,
-          title: job.title,
-          status: job.status,
-          profile: job.profile,
-          errorMessage: job.errorMessage,
-          outputStorageKey: job.outputStorageKey,
-          createdAt: job.createdAt,
-          finishedAt: job.finishedAt,
-        })),
+        assembledJob:
+          jobs
+            .filter((job) => job.kind === "assemble")
+            .map((job) => ({
+              id: job.id,
+              title: job.title,
+              status: job.status,
+              errorMessage: job.errorMessage,
+              outputStorageKey: job.outputStorageKey,
+              mediaTaskId: job.mediaTaskId,
+              sourceJobIds: job.providerJobIds,
+              createdAt: job.createdAt,
+              finishedAt: job.finishedAt,
+              videoUrl:
+                job.status === "succeeded"
+                  ? `/api/media-hub/generation/${encodeURIComponent(job.id)}/video`
+                  : null,
+            }))[0] ?? null,
+        shotJobs: jobs
+          .filter((job) => job.kind !== "assemble")
+          .map((job) => ({
+            id: job.id,
+            scriptShotId: job.scriptShotId,
+            kind: job.kind,
+            sourceGenerationJobId: job.sourceGenerationJobId,
+            title: job.title,
+            status: job.status,
+            profile: job.profile,
+            errorMessage: job.errorMessage,
+            outputStorageKey: job.outputStorageKey,
+            createdAt: job.createdAt,
+            finishedAt: job.finishedAt,
+          })),
       };
     }),
 
@@ -699,5 +723,36 @@ export const mediaVideoScriptRouter = {
           status: row.status,
         })),
       };
+    }),
+
+  assemble: protectedProcedure
+    .input(mediaVideoScriptIdSchema)
+    .mutation(async ({ ctx, input }) => {
+      await requireOwnedScript(ctx.db, ctx.session.user.id, input.id);
+      try {
+        const result = await assembleCompletedVideoScript({
+          scriptId: input.id,
+          userId: ctx.session.user.id,
+          requireReady: true,
+        });
+        if (!result) {
+          throw new VideoScriptAssemblyNotReadyError("暂时无法创建完整成片");
+        }
+        return {
+          ...result,
+          videoUrl:
+            result.status === "succeeded"
+              ? `/api/v1/generations/${encodeURIComponent(result.jobId)}/video`
+              : null,
+        };
+      } catch (error) {
+        if (error instanceof VideoScriptAssemblyNotReadyError) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: error.message,
+          });
+        }
+        throw error;
+      }
     }),
 } satisfies TRPCRouterRecord;

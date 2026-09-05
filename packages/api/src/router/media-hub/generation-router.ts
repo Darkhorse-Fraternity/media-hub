@@ -1014,6 +1014,12 @@ export const mediaGenerationRouter = {
           message: "只有生成失败的任务可以重试",
         });
       }
+      if (job.kind === "assemble") {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "脚本合成失败请回到脚本详情页重新合成",
+        });
+      }
 
       const providerHealth = await getMediaGenerationProviderHealth(true);
       if (providerHealth.status !== "healthy") {

@@ -218,7 +218,7 @@ export const mediaGenerationJob = pgTable(
     }),
     /** 脚本文档内的稳定镜头 ID；任务 Prompt 本身仍是不可变快照。 */
     scriptShotId: text("script_shot_id"),
-    /** generate | edit；编辑任务和生成任务共用同一个可见队列。 */
+    /** generate | edit | assemble；脚本合成任务复用成片读取和发布能力。 */
     kind: text("kind").notNull().default("generate"),
     /** 编辑任务的源成片任务 ID；源文件仍通过源任务的 MinIO key 获取。 */
     sourceGenerationJobId: text("source_generation_job_id"),
@@ -227,7 +227,7 @@ export const mediaGenerationJob = pgTable(
       .$type<MediaVideoEditSegment[]>()
       .notNull()
       .default([]),
-    /** 多片段编辑会产生多个 Provider 子任务。 */
+    /** Provider 子任务；assemble 时保存按镜头顺序排列的源任务 ID。 */
     providerJobIds: jsonb("provider_job_ids")
       .$type<string[]>()
       .notNull()

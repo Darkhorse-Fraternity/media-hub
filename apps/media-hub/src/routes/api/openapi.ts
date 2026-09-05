@@ -24,7 +24,7 @@ function openApiDocument(request: Request) {
     openapi: "3.1.0",
     info: {
       title: "Pumpkii Media Hub Agent API",
-      version: "1.4.0",
+      version: "1.5.0",
       description:
         "Bearer-token API for agents to optimize prompts, create and manage MiniMax H3 generation jobs, retrieve videos, and publish to configured platform accounts.",
     },
@@ -623,7 +623,8 @@ function openApiDocument(request: Request) {
       "/api/v1/scripts/{scriptId}/generate": {
         post: {
           operationId: "generateVideoScriptShots",
-          summary: "Queue selected or all script shots as independent H3 jobs",
+          summary:
+            "Queue script shots as H3 jobs; when every latest shot succeeds, Media Hub automatically assembles the final MP4",
           parameters: [
             {
               name: "scriptId",
@@ -642,6 +643,28 @@ function openApiDocument(request: Request) {
           },
           responses: {
             "201": { description: "Shot generation jobs queued" },
+            ...errorResponses,
+          },
+        },
+      },
+      "/api/v1/scripts/{scriptId}/assemble": {
+        post: {
+          operationId: "assembleVideoScript",
+          summary:
+            "Concatenate the latest successful video for every script shot into one publishable MP4",
+          parameters: [
+            {
+              name: "scriptId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          responses: {
+            "201": {
+              description:
+                "Assembly job and publishable draft. The same source shot set is idempotent.",
+            },
             ...errorResponses,
           },
         },

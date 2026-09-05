@@ -43,6 +43,7 @@ import { Route as ApiMediaHubUploadsReferenceImageRouteImport } from './routes/a
 import { Route as ApiMediaHubUploadsImageAssetRouteImport } from './routes/api/media-hub/uploads/image-asset'
 import { Route as ApiMediaHubImagesAssetIdRouteImport } from './routes/api/media-hub/images/$assetId'
 import { Route as ApiV1ScriptsScriptIdGenerateRouteImport } from './routes/api/v1/scripts/$scriptId/generate'
+import { Route as ApiV1ScriptsScriptIdAssembleRouteImport } from './routes/api/v1/scripts/$scriptId/assemble'
 import { Route as ApiV1GenerationsJobIdVideoRouteImport } from './routes/api/v1/generations/$jobId/video'
 import { Route as ApiV1GenerationsJobIdRetryRouteImport } from './routes/api/v1/generations/$jobId/retry'
 import { Route as ApiV1GenerationsJobIdPublishRouteImport } from './routes/api/v1/generations/$jobId/publish'
@@ -227,6 +228,12 @@ const ApiV1ScriptsScriptIdGenerateRoute =
     path: '/generate',
     getParentRoute: () => ApiV1ScriptsScriptIdRoute,
   } as any)
+const ApiV1ScriptsScriptIdAssembleRoute =
+  ApiV1ScriptsScriptIdAssembleRouteImport.update({
+    id: '/assemble',
+    path: '/assemble',
+    getParentRoute: () => ApiV1ScriptsScriptIdRoute,
+  } as any)
 const ApiV1GenerationsJobIdVideoRoute =
   ApiV1GenerationsJobIdVideoRouteImport.update({
     id: '/video',
@@ -322,6 +329,7 @@ export interface FileRoutesByFullPath {
   '/api/v1/generations/$jobId/publish': typeof ApiV1GenerationsJobIdPublishRoute
   '/api/v1/generations/$jobId/retry': typeof ApiV1GenerationsJobIdRetryRoute
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
+  '/api/v1/scripts/$scriptId/assemble': typeof ApiV1ScriptsScriptIdAssembleRoute
   '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/frames': typeof ApiV1ScriptsScriptIdShotsShotIdFramesRouteWithChildren
@@ -367,6 +375,7 @@ export interface FileRoutesByTo {
   '/api/v1/generations/$jobId/publish': typeof ApiV1GenerationsJobIdPublishRoute
   '/api/v1/generations/$jobId/retry': typeof ApiV1GenerationsJobIdRetryRoute
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
+  '/api/v1/scripts/$scriptId/assemble': typeof ApiV1ScriptsScriptIdAssembleRoute
   '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/frames': typeof ApiV1ScriptsScriptIdShotsShotIdFramesRouteWithChildren
@@ -413,6 +422,7 @@ export interface FileRoutesById {
   '/api/v1/generations/$jobId/publish': typeof ApiV1GenerationsJobIdPublishRoute
   '/api/v1/generations/$jobId/retry': typeof ApiV1GenerationsJobIdRetryRoute
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
+  '/api/v1/scripts/$scriptId/assemble': typeof ApiV1ScriptsScriptIdAssembleRoute
   '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/frames': typeof ApiV1ScriptsScriptIdShotsShotIdFramesRouteWithChildren
@@ -460,6 +470,7 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/publish'
     | '/api/v1/generations/$jobId/retry'
     | '/api/v1/generations/$jobId/video'
+    | '/api/v1/scripts/$scriptId/assemble'
     | '/api/v1/scripts/$scriptId/generate'
     | '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
     | '/api/v1/scripts/$scriptId/shots/$shotId/frames'
@@ -505,6 +516,7 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/publish'
     | '/api/v1/generations/$jobId/retry'
     | '/api/v1/generations/$jobId/video'
+    | '/api/v1/scripts/$scriptId/assemble'
     | '/api/v1/scripts/$scriptId/generate'
     | '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
     | '/api/v1/scripts/$scriptId/shots/$shotId/frames'
@@ -550,6 +562,7 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/publish'
     | '/api/v1/generations/$jobId/retry'
     | '/api/v1/generations/$jobId/video'
+    | '/api/v1/scripts/$scriptId/assemble'
     | '/api/v1/scripts/$scriptId/generate'
     | '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
     | '/api/v1/scripts/$scriptId/shots/$shotId/frames'
@@ -829,6 +842,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiV1ScriptsScriptIdGenerateRouteImport
       parentRoute: typeof ApiV1ScriptsScriptIdRoute
     }
+    '/api/v1/scripts/$scriptId/assemble': {
+      id: '/api/v1/scripts/$scriptId/assemble'
+      path: '/assemble'
+      fullPath: '/api/v1/scripts/$scriptId/assemble'
+      preLoaderRoute: typeof ApiV1ScriptsScriptIdAssembleRouteImport
+      parentRoute: typeof ApiV1ScriptsScriptIdRoute
+    }
     '/api/v1/generations/$jobId/video': {
       id: '/api/v1/generations/$jobId/video'
       path: '/video'
@@ -943,12 +963,14 @@ const ApiV1ScriptsScriptIdShotsShotIdFramesRouteWithChildren =
   )
 
 interface ApiV1ScriptsScriptIdRouteChildren {
+  ApiV1ScriptsScriptIdAssembleRoute: typeof ApiV1ScriptsScriptIdAssembleRoute
   ApiV1ScriptsScriptIdGenerateRoute: typeof ApiV1ScriptsScriptIdGenerateRoute
   ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute: typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
   ApiV1ScriptsScriptIdShotsShotIdFramesRoute: typeof ApiV1ScriptsScriptIdShotsShotIdFramesRouteWithChildren
 }
 
 const ApiV1ScriptsScriptIdRouteChildren: ApiV1ScriptsScriptIdRouteChildren = {
+  ApiV1ScriptsScriptIdAssembleRoute: ApiV1ScriptsScriptIdAssembleRoute,
   ApiV1ScriptsScriptIdGenerateRoute: ApiV1ScriptsScriptIdGenerateRoute,
   ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute:
     ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute,

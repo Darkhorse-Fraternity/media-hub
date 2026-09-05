@@ -42,6 +42,7 @@ import {
   requestGenerationProvider,
 } from "./provider-request";
 import { extractMediaGenerationLastFrame } from "./video-frame";
+import { maybeAssembleCompletedVideoScript } from "./video-script-assembly";
 
 const execFileAsync = promisify(execFile);
 const PROVIDER_CONTRACT = "ydc_generated_media_provider_request.v1";
@@ -1012,7 +1013,11 @@ async function runGenerationJob(jobId: string): Promise<void> {
     const finishedAt = new Date();
     const outputStorageKey = `media-hub/${job.kind === "edit" ? "edited" : "generated"}/${job.createdBy}/${job.id}.mp4`;
     await putMediaHubObject(outputStorageKey, video, "video/mp4");
-    const mediaTaskId = await createDraftFromGeneration(job, outputStorageKey);
+    // Script shots are intermediate assets. A single publishable draft is
+    // created only after every latest shot succeeds and is assembled.
+    const mediaTaskId = job.scriptId
+      ? null
+      : await createDraftFromGeneration(job, outputStorageKey);
 
     const [completedUpdate] = await db
       .update(mediaGenerationJob)
@@ -1036,29 +1041,33 @@ async function runGenerationJob(jobId: string): Promise<void> {
       )
       .returning({ id: mediaGenerationJob.id });
     if (!completedUpdate) return;
-    try {
-      await notifyResult(
-        "succeeded",
-        finishedAt,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        video,
-        providerJobIds.join(", "),
-        modelVersion,
-        workflowVersion,
-      );
-    } catch (notificationError) {
-      log.error("Media generation success notification failed", {
-        code: "MEDIA_GENERATION_RESULT_CARD_FAILED",
-        job_id: job.id,
-        status: "succeeded",
-        err:
-          notificationError instanceof Error
-            ? notificationError
-            : new Error(String(notificationError)),
-      });
+    if (job.scriptId) {
+      await maybeAssembleCompletedVideoScript(job.scriptId, job.createdBy);
+    } else {
+      try {
+        await notifyResult(
+          "succeeded",
+          finishedAt,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          video,
+          providerJobIds.join(", "),
+          modelVersion,
+          workflowVersion,
+        );
+      } catch (notificationError) {
+        log.error("Media generation success notification failed", {
+          code: "MEDIA_GENERATION_RESULT_CARD_FAILED",
+          job_id: job.id,
+          status: "succeeded",
+          err:
+            notificationError instanceof Error
+              ? notificationError
+              : new Error(String(notificationError)),
+        });
+      }
     }
   } catch (error) {
     const current = await db.query.mediaGenerationJob.findFirst({

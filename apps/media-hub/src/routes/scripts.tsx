@@ -134,6 +134,7 @@ function AuthenticatedVideoScriptStudio({
           job.status,
         ),
       ) ||
+      query.state.data?.assembledJob?.status === "running" ||
       query.state.data?.shotFrameCandidates.jobs.some((job) =>
         ["queued", "running"].includes(job.status),
       )
@@ -229,6 +230,9 @@ function AuthenticatedVideoScriptStudio({
   const generateMutation = useMutation(
     trpc.mediaHub.script.generate.mutationOptions(),
   );
+  const assembleMutation = useMutation(
+    trpc.mediaHub.script.assemble.mutationOptions(),
+  );
   const bridgeMutation = useMutation(
     trpc.mediaHub.script.bridgeLastFrame.mutationOptions(),
   );
@@ -244,6 +248,7 @@ function AuthenticatedVideoScriptStudio({
     createMutation.isPending ||
     updateMutation.isPending ||
     generateMutation.isPending ||
+    assembleMutation.isPending ||
     bridgeMutation.isPending ||
     createFrameCandidatesMutation.isPending ||
     selectFrameCandidateMutation.isPending;
@@ -266,6 +271,9 @@ function AuthenticatedVideoScriptStudio({
     list.push(job);
     jobsByShot.set(job.scriptShotId, list);
   }
+  const allShotsSucceeded =
+    shots.length > 0 &&
+    shots.every((shot) => jobsByShot.get(shot.id)?.[0]?.status === "succeeded");
 
   const markDirty = () => setDirty(true);
   const updateShot = (id: string, patch: Partial<MediaVideoScriptShot>) => {
@@ -477,6 +485,27 @@ function AuthenticatedVideoScriptStudio({
       setMessage(`${result.jobs.length} 个镜头已进入 GPU 队列。`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "镜头生成失败");
+    }
+  };
+
+  const assembleVideo = async () => {
+    if (!selectedScriptId) return;
+    try {
+      if (dirty) await persistScript();
+      const result = await assembleMutation.mutateAsync({
+        id: selectedScriptId,
+      });
+      await refreshScripts(selectedScriptId);
+      await queryClient.invalidateQueries({
+        queryKey: trpc.mediaHub.generation.list.queryKey(),
+      });
+      setMessage(
+        result.status === "succeeded"
+          ? "完整成片已合成，并已创建可发布草稿。"
+          : "完整成片正在合成。",
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "完整成片合成失败");
     }
   };
 
@@ -763,6 +792,50 @@ function AuthenticatedVideoScriptStudio({
                     ))}
                   </div>
                 </div>
+
+                {scriptQuery.data?.assembledJob && (
+                  <section className="border-b border-emerald-400/20 bg-emerald-400/5 p-5 sm:p-6">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="font-mono text-[10px] tracking-[0.24em] text-emerald-300">
+                          04 · FINAL CUT
+                        </p>
+                        <h2 className="mt-2 text-lg font-semibold">完整成片</h2>
+                        <p className="mt-1 text-xs text-slate-500">
+                          按脚本镜头顺序自动合成，并创建一条可审核、可发布的视频草稿。
+                        </p>
+                      </div>
+                      <span className="border border-emerald-400/30 px-3 py-1 text-xs text-emerald-300">
+                        {scriptQuery.data.assembledJob.status === "succeeded"
+                          ? "已完成"
+                          : scriptQuery.data.assembledJob.status === "running"
+                            ? "合成中"
+                            : "合成失败"}
+                      </span>
+                    </div>
+                    {scriptQuery.data.assembledJob.videoUrl && (
+                      <div className="mt-4 grid gap-3">
+                        <video
+                          src={scriptQuery.data.assembledJob.videoUrl}
+                          controls
+                          preload="metadata"
+                          className="w-full border border-slate-800 bg-black"
+                        />
+                        <a
+                          href={`${scriptQuery.data.assembledJob.videoUrl}?download=1`}
+                          className="text-right text-xs text-cyan-300"
+                        >
+                          下载完整 MP4
+                        </a>
+                      </div>
+                    )}
+                    {scriptQuery.data.assembledJob.errorMessage && (
+                      <p className="mt-3 text-xs text-rose-300">
+                        {scriptQuery.data.assembledJob.errorMessage}
+                      </p>
+                    )}
+                  </section>
+                )}
 
                 <div className="divide-y divide-slate-800">
                   {shots.map((shot, index) => {
@@ -1289,6 +1362,16 @@ function AuthenticatedVideoScriptStudio({
                   {selectedShotIds.length > 0
                     ? `生成选中的 ${selectedShotIds.length} 镜`
                     : `生成全部 ${shots.length} 镜`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void assembleVideo()}
+                  disabled={
+                    !selectedScriptId || !allShotsSucceeded || generating
+                  }
+                  className="border border-emerald-400/40 px-4 py-2.5 text-sm text-emerald-200 disabled:opacity-30"
+                >
+                  {assembleMutation.isPending ? "正在合成…" : "合成完整成片"}
                 </button>
                 <button
                   type="button"
