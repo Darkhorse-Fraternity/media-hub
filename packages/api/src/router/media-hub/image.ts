@@ -3,11 +3,7 @@ import { TRPCError } from "@trpc/server";
 
 import type { db as database } from "@acme/db/client";
 import { and, desc, eq, inArray, isNull } from "@acme/db";
-import {
-  mediaImageAsset,
-  mediaImageJob,
-  mediaImageJobInput,
-} from "@acme/db/schema";
+import { mediaImageAsset, mediaImageJob } from "@acme/db/schema";
 import {
   createMediaImageJobSchema,
   mediaImageIdSchema,
@@ -20,10 +16,10 @@ import { canAccessMediaImageAsset } from "./image-access";
 import {
   cancelMediaImageJob,
   getMediaImageProviderHealth,
-  HIDREAM_IMAGE_PROFILE,
   scheduleMediaImageJob,
   startMediaImageScheduler,
 } from "./image-generation";
+import { queueMediaImageJob } from "./image-job-service";
 
 startMediaImageScheduler();
 
@@ -88,41 +84,12 @@ export const mediaImageRouter = {
         ctx.session.user.id,
         input.inputAssetIds,
       );
-      const id = crypto.randomUUID();
-      const now = new Date();
-      const normalizedTitle = input.title?.trim();
-      await ctx.db.transaction(async (tx) => {
-        await tx.insert(mediaImageJob).values({
-          id,
-          kind: assets.length > 0 ? "edit" : "generate",
-          title: normalizedTitle?.length ? normalizedTitle : null,
-          prompt: input.prompt,
-          negativePrompt: input.negativePrompt,
-          width: input.width,
-          height: input.height,
-          seed: input.seed ?? null,
-          outputCount: input.outputCount,
-          diversity: input.diversity,
-          profile: HIDREAM_IMAGE_PROFILE,
-          status: "queued",
-          createdBy: ctx.session.user.id,
-          createdAt: now,
-          updatedAt: now,
-        });
-        if (assets.length > 0) {
-          await tx.insert(mediaImageJobInput).values(
-            assets.map((asset, position) => ({
-              id: crypto.randomUUID(),
-              jobId: id,
-              assetId: asset.id,
-              position,
-              role: "reference",
-            })),
-          );
-        }
+      return queueMediaImageJob({
+        db: ctx.db,
+        userId: ctx.session.user.id,
+        ...input,
+        inputAssetIds: assets.map((asset) => asset.id),
       });
-      scheduleMediaImageJob(id);
-      return { id, status: "queued" as const };
     }),
 
   list: protectedProcedure

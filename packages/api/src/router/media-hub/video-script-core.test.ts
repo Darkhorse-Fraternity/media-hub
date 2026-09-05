@@ -5,8 +5,10 @@ import { analyzeMediaVideoScriptShots } from "@acme/validators";
 import { validateH3GenerationPrompt } from "./h3-generation-config";
 import {
   buildVideoScriptDraftPrompt,
+  buildVideoScriptFirstFramePrompt,
   compileVideoScriptShotPrompt,
   parseVideoScriptDraft,
+  resolveVideoScriptCopyStatus,
 } from "./video-script-core";
 
 describe("video script core", () => {
@@ -26,6 +28,7 @@ describe("video script core", () => {
     const draft = parseVideoScriptDraft(
       JSON.stringify({
         title: "识字时间",
+        copy: "母亲陪孩子练习识字，耐心纠正读音。",
         continuityBible: {
           characters: "Mother S1 and child S2 keep the same faces.",
           wardrobeAndProps: "Beige cardigan, green sweater, workbook.",
@@ -54,8 +57,43 @@ describe("video script core", () => {
       }),
     );
     expect(draft.shots[0]?.id).toBeTruthy();
+    expect(draft.copy).toContain("练习识字");
     expect(draft.shots[0]?.dialogues[0]?.id).toBeTruthy();
     expect(draft.continuityBible.characters).toContain("Mother");
+  });
+
+  it("builds a continuity-aware still prompt for first-frame candidates", () => {
+    const prompt = buildVideoScriptFirstFramePrompt(
+      {
+        id: "shot-1",
+        title: "开始",
+        durationSeconds: 10,
+        visualDescription: "A mother and child sit at a study desk.",
+        cameraDirection: "Eye-level medium two-shot.",
+        continuity: "Workbook open on page twelve.",
+        soundscape: "Room tone.",
+        music: "N/A",
+        dialogues: [],
+      },
+      {
+        characters: "The same mother and child.",
+        wardrobeAndProps: "Beige cardigan and green sweatshirt.",
+        locationsAndLighting: "Warm desk lamp.",
+        visualRules: "Naturalistic family drama.",
+      },
+    );
+    expect(prompt).toContain("opening frame");
+    expect(prompt).toContain("Beige cardigan");
+    expect(prompt).toContain("No subtitles");
+  });
+
+  it("requires a second version-locked update to approve changed copy", () => {
+    expect(resolveVideoScriptCopyStatus("old", "new", "approved")).toBe(
+      "draft",
+    );
+    expect(resolveVideoScriptCopyStatus("new", "new", "approved")).toBe(
+      "approved",
+    );
   });
 
   it("compiles exact H3 fields and native-audio dialogue", () => {

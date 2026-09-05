@@ -423,6 +423,8 @@ export const mediaVideoScriptShotSchema = z
 export const createMediaVideoScriptSchema = z.object({
   title: z.string().trim().min(1).max(200),
   brief: z.string().trim().min(1).max(10_000),
+  copy: z.string().trim().max(20_000).default(""),
+  copyStatus: z.enum(["draft", "approved"]).default("draft"),
   language: mediaContentLanguageEnum.default("zh"),
   width: mediaH3DimensionSchema.default(MEDIA_H3_DEFAULT_WIDTH),
   height: mediaH3DimensionSchema.default(MEDIA_H3_DEFAULT_HEIGHT),
@@ -467,6 +469,24 @@ export const generateMediaVideoScriptSchema = z.object({
 export const bridgeMediaVideoScriptFrameSchema = z.object({
   id: z.string().trim().min(1),
   sourceShotId: z.string().trim().min(1),
+  version: z.number().int().min(1),
+});
+
+export const createMediaVideoScriptFrameCandidatesSchema = z.object({
+  id: z.string().trim().min(1),
+  shotId: z.string().trim().min(1).max(100),
+  outputCount: z.number().int().min(1).max(4).default(4),
+});
+
+export const listMediaVideoScriptFrameCandidatesSchema = z.object({
+  id: z.string().trim().min(1),
+  shotId: z.string().trim().min(1).max(100),
+});
+
+export const selectMediaVideoScriptFrameCandidateSchema = z.object({
+  id: z.string().trim().min(1),
+  shotId: z.string().trim().min(1).max(100),
+  assetId: z.string().trim().min(1).nullable(),
   version: z.number().int().min(1),
 });
 

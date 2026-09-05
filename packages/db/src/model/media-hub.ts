@@ -168,6 +168,10 @@ export const mediaVideoScript = pgTable(
     id: text("id").primaryKey(),
     title: text("title").notNull(),
     brief: text("brief").notNull(),
+    /** 可供用户确认的完整文案；确认后才进入首帧候选制作。 */
+    copy: text("copy").notNull().default(""),
+    /** draft | approved；文案内容变化时由服务端自动退回 draft。 */
+    copyStatus: text("copy_status").notNull().default("draft"),
     language: text("language").notNull().default("zh"),
     width: integer("width").notNull().default(1344),
     height: integer("height").notNull().default(768),
@@ -304,6 +308,13 @@ export const mediaImageJob = pgTable(
   "media_image_job",
   {
     id: text("id").primaryKey(),
+    scriptId: text("script_id").references(() => mediaVideoScript.id, {
+      onDelete: "set null",
+    }),
+    /** 脚本文档内的稳定镜头 ID。 */
+    scriptShotId: text("script_shot_id"),
+    /** general | script-first-frame */
+    purpose: text("purpose").notNull().default("general"),
     /** generate | edit */
     kind: text("kind").notNull().default("generate"),
     title: text("title"),
@@ -333,6 +344,10 @@ export const mediaImageJob = pgTable(
     index("media_image_job_owner_created_idx").on(
       table.createdBy,
       table.createdAt,
+    ),
+    index("media_image_job_script_shot_idx").on(
+      table.scriptId,
+      table.scriptShotId,
     ),
   ],
 );

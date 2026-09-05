@@ -35,6 +35,8 @@ async function handlePost(request: Request): Promise<Response> {
       await caller.mediaHub.script.create({
         title: input.title,
         brief: input.brief,
+        copy: input.copy,
+        copyStatus: input.copy_status,
         language: input.language,
         width: input.width,
         height: input.height,

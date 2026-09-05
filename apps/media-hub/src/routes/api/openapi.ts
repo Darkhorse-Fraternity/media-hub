@@ -17,12 +17,14 @@ function openApiDocument(request: Request) {
     "403": { description: "Insufficient permission" },
     "404": { description: "Resource not found" },
     "409": { description: "Operation conflicts with current state" },
+    "412": { description: "Required workflow step is not complete" },
+    "429": { description: "Too many requests" },
   };
   return {
     openapi: "3.1.0",
     info: {
       title: "Pumpkii Media Hub Agent API",
-      version: "1.3.1",
+      version: "1.4.0",
       description:
         "Bearer-token API for agents to optimize prompts, create and manage MiniMax H3 generation jobs, retrieve videos, and publish to configured platform accounts.",
     },
@@ -218,6 +220,12 @@ function openApiDocument(request: Request) {
           properties: {
             title: { type: "string", maxLength: 200 },
             brief: { type: "string", maxLength: 10000 },
+            copy: { type: "string", maxLength: 20000, default: "" },
+            copy_status: {
+              type: "string",
+              enum: ["draft", "approved"],
+              default: "draft",
+            },
             language: { type: "string", enum: ["zh", "en"], default: "zh" },
             width: {
               type: "integer",
@@ -251,6 +259,13 @@ function openApiDocument(request: Request) {
             version: { type: "integer", minimum: 1 },
             title: { type: "string", maxLength: 200 },
             brief: { type: "string", maxLength: 10000 },
+            copy: { type: "string", maxLength: 20000 },
+            copy_status: {
+              type: "string",
+              enum: ["draft", "approved"],
+              description:
+                "Changing copy always returns the stored script to draft; approve it in a subsequent version-locked update.",
+            },
             language: { type: "string", enum: ["zh", "en"] },
             width: {
               type: "integer",
@@ -323,6 +338,29 @@ function openApiDocument(request: Request) {
           type: "object",
           required: ["version"],
           properties: {
+            version: { type: "integer", minimum: 1 },
+          },
+        },
+        CreateVideoScriptFrameCandidates: {
+          type: "object",
+          properties: {
+            output_count: {
+              type: "integer",
+              minimum: 1,
+              maximum: 4,
+              default: 4,
+            },
+          },
+        },
+        SelectVideoScriptFrameCandidate: {
+          type: "object",
+          required: ["asset_id", "version"],
+          properties: {
+            asset_id: {
+              type: ["string", "null"],
+              description:
+                "A candidate asset created for this exact script shot, or null to clear the selection.",
+            },
             version: { type: "integer", minimum: 1 },
           },
         },
@@ -639,6 +677,85 @@ function openApiDocument(request: Request) {
           },
           responses: {
             "201": { description: "Final frame stored and next shot updated" },
+            ...errorResponses,
+          },
+        },
+      },
+      "/api/v1/scripts/{scriptId}/shots/{shotId}/frames": {
+        parameters: [
+          {
+            name: "scriptId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+          {
+            name: "shotId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        get: {
+          operationId: "listVideoScriptFrameCandidates",
+          summary:
+            "List private HiDream first-frame jobs and candidates for one script shot",
+          responses: {
+            "200": { description: "First-frame jobs and candidate assets" },
+            ...errorResponses,
+          },
+        },
+        post: {
+          operationId: "createVideoScriptFrameCandidates",
+          summary:
+            "Queue 1–4 HiDream first-frame candidates after the script copy is approved",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/CreateVideoScriptFrameCandidates",
+                },
+              },
+            },
+          },
+          responses: {
+            "201": { description: "HiDream image job queued" },
+            ...errorResponses,
+          },
+        },
+      },
+      "/api/v1/scripts/{scriptId}/shots/{shotId}/frames/select": {
+        patch: {
+          operationId: "selectVideoScriptFrameCandidate",
+          summary:
+            "Select or clear a first-frame candidate using optimistic version locking",
+          parameters: [
+            {
+              name: "scriptId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "shotId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/SelectVideoScriptFrameCandidate",
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Updated script" },
             ...errorResponses,
           },
         },

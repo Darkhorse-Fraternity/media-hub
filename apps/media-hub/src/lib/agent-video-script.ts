@@ -38,6 +38,8 @@ export const scriptShotBody = z.object({
 export const createScriptBody = z.object({
   title: z.string().trim().min(1).max(200),
   brief: z.string().trim().min(1).max(10_000),
+  copy: z.string().trim().max(20_000).default(""),
+  copy_status: z.enum(["draft", "approved"]).default("draft"),
   language: z.enum(["zh", "en"]).default("zh"),
   width: z.number().int().min(64).max(1344).default(1344),
   height: z.number().int().min(64).max(1344).default(768),
@@ -70,6 +72,15 @@ export const analyzeScriptBody = z.object({
 });
 
 export const bridgeScriptFrameBody = z.object({
+  version: z.number().int().min(1),
+});
+
+export const createScriptFrameCandidatesBody = z.object({
+  output_count: z.number().int().min(1).max(4).default(4),
+});
+
+export const selectScriptFrameCandidateBody = z.object({
+  asset_id: z.string().trim().min(1).nullable(),
   version: z.number().int().min(1),
 });
 

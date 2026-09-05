@@ -38,6 +38,10 @@ async function handlePatch(
         version: patch.version,
         title: patch.title ?? current.title,
         brief: patch.brief ?? current.brief,
+        copy: patch.copy ?? current.copy,
+        copyStatus:
+          patch.copy_status ??
+          (current.copyStatus === "approved" ? "approved" : "draft"),
         language: patch.language ?? (current.language === "en" ? "en" : "zh"),
         width: patch.width ?? current.width,
         height: patch.height ?? current.height,

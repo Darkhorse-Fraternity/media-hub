@@ -8,6 +8,7 @@ import { and, count, desc, eq, inArray, isNull } from "@acme/db";
 import {
   mediaGenerationJob,
   mediaImageAsset,
+  mediaImageJob,
   mediaVideoScript,
 } from "@acme/db/schema";
 import {
@@ -19,11 +20,14 @@ import {
   analyzeMediaVideoScriptSchema,
   analyzeMediaVideoScriptShots,
   bridgeMediaVideoScriptFrameSchema,
+  createMediaVideoScriptFrameCandidatesSchema,
   createMediaVideoScriptSchema,
   draftMediaVideoScriptSchema,
   generateMediaVideoScriptSchema,
+  listMediaVideoScriptFrameCandidatesSchema,
   mediaVideoScriptIdSchema,
   mediaVideoScriptListSchema,
+  selectMediaVideoScriptFrameCandidateSchema,
   updateMediaVideoScriptSchema,
 } from "@acme/validators";
 
@@ -38,15 +42,85 @@ import {
   validateH3GenerationPrompt,
 } from "./h3-generation-config";
 import { requireH3Profile } from "./h3-profile";
+import { queueMediaImageJob } from "./image-job-service";
 import { resolveMediaSystemSetting } from "./system-settings";
 import { extractMediaGenerationLastFrame } from "./video-frame";
 import {
   buildVideoScriptDraftPrompt,
+  buildVideoScriptFirstFramePrompt,
   compileVideoScriptShotPrompt,
   parseVideoScriptDraft,
+  resolveVideoScriptCopyStatus,
 } from "./video-script-core";
 
 type MediaHubDb = typeof mediaHubDb;
+
+async function requireOwnedScript(
+  database: MediaHubDb,
+  userId: string,
+  id: string,
+) {
+  const script = await database.query.mediaVideoScript.findFirst({
+    where: and(
+      eq(mediaVideoScript.id, id),
+      eq(mediaVideoScript.createdBy, userId),
+      isNull(mediaVideoScript.deletedAt),
+    ),
+  });
+  if (!script) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "视频脚本不存在" });
+  }
+  return script;
+}
+
+async function listShotFrameCandidates(
+  database: MediaHubDb,
+  userId: string,
+  scriptId: string,
+  shotId?: string,
+) {
+  const where = and(
+    eq(mediaImageJob.scriptId, scriptId),
+    eq(mediaImageJob.createdBy, userId),
+    eq(mediaImageJob.purpose, "script-first-frame"),
+    shotId ? eq(mediaImageJob.scriptShotId, shotId) : undefined,
+  );
+  const jobs = await database.query.mediaImageJob.findMany({
+    where,
+    orderBy: desc(mediaImageJob.createdAt),
+  });
+  const jobIds = jobs.map((job) => job.id);
+  const assets =
+    jobIds.length > 0
+      ? await database.query.mediaImageAsset.findMany({
+          where: and(
+            inArray(mediaImageAsset.jobId, jobIds),
+            eq(mediaImageAsset.ownerUserId, userId),
+            isNull(mediaImageAsset.deletedAt),
+          ),
+          orderBy: desc(mediaImageAsset.createdAt),
+        })
+      : [];
+  return {
+    jobs: jobs.map((job) => ({
+      id: job.id,
+      scriptShotId: job.scriptShotId,
+      status: job.status,
+      errorMessage: job.errorMessage,
+      createdAt: job.createdAt,
+      finishedAt: job.finishedAt,
+    })),
+    assets: assets.map((asset) => ({
+      id: asset.id,
+      jobId: asset.jobId,
+      filename: asset.filename,
+      width: asset.width,
+      height: asset.height,
+      createdAt: asset.createdAt,
+      url: `/api/media-hub/images/${encodeURIComponent(asset.id)}`,
+    })),
+  };
+}
 
 function scriptSummary<T extends { shots: MediaVideoScriptShot[] }>(script: T) {
   return {
@@ -118,25 +192,24 @@ export const mediaVideoScriptRouter = {
   get: protectedProcedure
     .input(mediaVideoScriptIdSchema)
     .query(async ({ ctx, input }) => {
-      const script = await ctx.db.query.mediaVideoScript.findFirst({
-        where: and(
-          eq(mediaVideoScript.id, input.id),
-          eq(mediaVideoScript.createdBy, ctx.session.user.id),
-          isNull(mediaVideoScript.deletedAt),
-        ),
-      });
-      if (!script) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "视频脚本不存在" });
-      }
-      const jobs = await ctx.db.query.mediaGenerationJob.findMany({
-        where: and(
-          eq(mediaGenerationJob.scriptId, script.id),
-          eq(mediaGenerationJob.createdBy, ctx.session.user.id),
-        ),
-        orderBy: desc(mediaGenerationJob.createdAt),
-      });
+      const script = await requireOwnedScript(
+        ctx.db,
+        ctx.session.user.id,
+        input.id,
+      );
+      const [jobs, shotFrameCandidates] = await Promise.all([
+        ctx.db.query.mediaGenerationJob.findMany({
+          where: and(
+            eq(mediaGenerationJob.scriptId, script.id),
+            eq(mediaGenerationJob.createdBy, ctx.session.user.id),
+          ),
+          orderBy: desc(mediaGenerationJob.createdAt),
+        }),
+        listShotFrameCandidates(ctx.db, ctx.session.user.id, script.id),
+      ]);
       return {
         ...scriptSummary(script),
+        shotFrameCandidates,
         shotJobs: jobs.map((job) => ({
           id: job.id,
           scriptShotId: job.scriptShotId,
@@ -202,6 +275,17 @@ export const mediaVideoScriptRouter = {
   update: protectedProcedure
     .input(updateMediaVideoScriptSchema)
     .mutation(async ({ ctx, input }) => {
+      const current = await requireOwnedScript(
+        ctx.db,
+        ctx.session.user.id,
+        input.id,
+      );
+      if (current.version !== input.version) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "脚本已在其他页面更新，请刷新后重试",
+        });
+      }
       if (input.defaultProfile) {
         await requireH3Profile(input.defaultProfile, "generate");
       }
@@ -215,6 +299,12 @@ export const mediaVideoScriptRouter = {
         .set({
           title: input.title,
           brief: input.brief,
+          copy: input.copy,
+          copyStatus: resolveVideoScriptCopyStatus(
+            current.copy,
+            input.copy,
+            input.copyStatus,
+          ),
           language: input.language,
           width: input.width,
           height: input.height,
@@ -230,6 +320,131 @@ export const mediaVideoScriptRouter = {
             eq(mediaVideoScript.id, input.id),
             eq(mediaVideoScript.createdBy, ctx.session.user.id),
             eq(mediaVideoScript.version, input.version),
+            isNull(mediaVideoScript.deletedAt),
+          ),
+        )
+        .returning();
+      if (!updated) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "脚本已在其他页面更新，请刷新后重试",
+        });
+      }
+      return scriptSummary(updated);
+    }),
+
+  listFrameCandidates: protectedProcedure
+    .input(listMediaVideoScriptFrameCandidatesSchema)
+    .query(async ({ ctx, input }) => {
+      const script = await requireOwnedScript(
+        ctx.db,
+        ctx.session.user.id,
+        input.id,
+      );
+      if (!script.shots.some((shot) => shot.id === input.shotId)) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "脚本镜头不存在" });
+      }
+      return listShotFrameCandidates(
+        ctx.db,
+        ctx.session.user.id,
+        script.id,
+        input.shotId,
+      );
+    }),
+
+  createFrameCandidates: protectedProcedure
+    .input(createMediaVideoScriptFrameCandidatesSchema)
+    .mutation(async ({ ctx, input }) => {
+      const script = await requireOwnedScript(
+        ctx.db,
+        ctx.session.user.id,
+        input.id,
+      );
+      if (script.copyStatus !== "approved") {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "请先确认文案，再生成分镜首帧",
+        });
+      }
+      const shotIndex = script.shots.findIndex(
+        (shot) => shot.id === input.shotId,
+      );
+      const shot = script.shots[shotIndex];
+      if (!shot) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "脚本镜头不存在" });
+      }
+      return queueMediaImageJob({
+        db: ctx.db,
+        userId: ctx.session.user.id,
+        title: `${script.title} / ${String(shotIndex + 1).padStart(2, "0")} ${shot.title} / 首帧`,
+        prompt: buildVideoScriptFirstFramePrompt(shot, script.continuityBible),
+        width: script.width,
+        height: script.height,
+        outputCount: input.outputCount,
+        diversity: 70,
+        scriptId: script.id,
+        scriptShotId: shot.id,
+        purpose: "script-first-frame",
+      });
+    }),
+
+  selectFrameCandidate: protectedProcedure
+    .input(selectMediaVideoScriptFrameCandidateSchema)
+    .mutation(async ({ ctx, input }) => {
+      const script = await requireOwnedScript(
+        ctx.db,
+        ctx.session.user.id,
+        input.id,
+      );
+      if (script.version !== input.version) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "脚本已在其他页面更新，请刷新后重试",
+        });
+      }
+      if (!script.shots.some((shot) => shot.id === input.shotId)) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "脚本镜头不存在" });
+      }
+      if (input.assetId) {
+        const asset = await ctx.db
+          .select({ id: mediaImageAsset.id })
+          .from(mediaImageAsset)
+          .innerJoin(mediaImageJob, eq(mediaImageAsset.jobId, mediaImageJob.id))
+          .where(
+            and(
+              eq(mediaImageAsset.id, input.assetId),
+              eq(mediaImageAsset.ownerUserId, ctx.session.user.id),
+              isNull(mediaImageAsset.deletedAt),
+              eq(mediaImageJob.createdBy, ctx.session.user.id),
+              eq(mediaImageJob.scriptId, script.id),
+              eq(mediaImageJob.scriptShotId, input.shotId),
+              eq(mediaImageJob.purpose, "script-first-frame"),
+            ),
+          );
+        if (!asset[0]) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "首帧候选不存在或不属于当前镜头",
+          });
+        }
+      }
+      const nextShots = script.shots.map((shot) =>
+        shot.id === input.shotId
+          ? { ...shot, firstFrameAssetId: input.assetId ?? undefined }
+          : shot,
+      );
+      const [updated] = await ctx.db
+        .update(mediaVideoScript)
+        .set({
+          shots: nextShots,
+          version: script.version + 1,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(mediaVideoScript.id, script.id),
+            eq(mediaVideoScript.createdBy, ctx.session.user.id),
+            eq(mediaVideoScript.version, script.version),
             isNull(mediaVideoScript.deletedAt),
           ),
         )

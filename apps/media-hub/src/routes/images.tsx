@@ -248,7 +248,13 @@ function AuthenticatedImageStudio({
   };
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_15%_0%,rgba(139,92,246,0.12),transparent_34%),#020617] p-4 text-slate-100 sm:p-6">
+    <main
+      className="min-h-screen bg-slate-950 p-4 text-slate-100 sm:p-6"
+      style={{
+        backgroundImage:
+          "radial-gradient(circle at 15% 0%, rgba(139, 92, 246, 0.12), transparent 34%)",
+      }}
+    >
       <div className="mx-auto max-w-[1500px] space-y-5">
         <header className="relative flex flex-col gap-4 border-b border-slate-800/80 pb-5 lg:flex-row lg:items-end lg:justify-between">
           <div className="pr-24 sm:pr-28 lg:pr-0">

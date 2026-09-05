@@ -21,6 +21,14 @@ function requestedLanguage(value: "zh" | "en"): string {
   return value === "zh" ? "Simplified Chinese" : "English";
 }
 
+export function resolveVideoScriptCopyStatus(
+  previousCopy: string,
+  nextCopy: string,
+  requestedStatus: "draft" | "approved",
+): "draft" | "approved" {
+  return previousCopy === nextCopy ? requestedStatus : "draft";
+}
+
 export function buildVideoScriptDraftPrompt(
   input: VideoScriptDraftInput,
 ): string {
@@ -41,6 +49,7 @@ export function buildVideoScriptDraftPrompt(
     "Return one valid JSON object and nothing else. Do not use a Markdown fence.",
     `Create exactly ${suggestedShotCount} shots totaling approximately ${input.targetDurationSeconds} seconds. Prefer 8–10 seconds per shot. Use 5–7 seconds for a simple close-up or reaction, and 11–15 seconds only for one uncomplicated action that genuinely needs the time. Every shot must be independently generatable and no longer than 15 seconds.`,
     "Preserve the requested story, facts, characters, products, visible text, and dialogue. Do not invent unrelated characters, claims, speech, lyrics, or plot events.",
+    "First write a concise production copy in the requested authoring language. It must express the complete story, intended pacing, and every supplied line of dialogue before the shot breakdown.",
     "Write shot titles in the requested authoring language. Write visualDescription, cameraDirection, continuity, soundscape, and music in precise natural English for H3.",
     `Authoring and dialogue language: ${requestedLanguage(input.language)}. Dialogue text must remain verbatim in that language.`,
     "Use one achievable camera idea and one clear action arc per shot. State concrete subject positions, lighting, environment reactions, and the ending composition.",
@@ -48,7 +57,7 @@ export function buildVideoScriptDraftPrompt(
     "Create a concise continuityBible for the entire script. Treat it as fixed production truth shared by every shot.",
     "For each spoken line, choose a stable speakerId S1–S4 and an atSeconds value within that shot. Omit dialogue when the brief does not provide exact words; never invent placeholder or unintelligible speech.",
     "Use N/A for music when no audience-only score was requested.",
-    'JSON shape: {"title":"...","continuityBible":{"characters":"...","wardrobeAndProps":"...","locationsAndLighting":"...","visualRules":"..."},"shots":[{"title":"...","durationSeconds":10,"visualDescription":"...","cameraDirection":"...","continuity":"...","soundscape":"...","music":"N/A","dialogues":[{"atSeconds":1.5,"speakerId":"S1","language":"zh","text":"..."}]}]}',
+    'JSON shape: {"title":"...","copy":"complete production copy in the requested language","continuityBible":{"characters":"...","wardrobeAndProps":"...","locationsAndLighting":"...","visualRules":"..."},"shots":[{"title":"...","durationSeconds":10,"visualDescription":"...","cameraDirection":"...","continuity":"...","soundscape":"...","music":"N/A","dialogues":[{"atSeconds":1.5,"speakerId":"S1","language":"zh","text":"..."}]}]}',
     input.title ? `Working title: ${input.title}` : "",
     "Creative brief:",
     input.brief,
@@ -69,6 +78,7 @@ function parseUnknownJson(value: string): unknown {
 
 export function parseVideoScriptDraft(value: string): {
   title: string;
+  copy: string;
   continuityBible: MediaVideoScriptContinuityBible;
   shots: MediaVideoScriptShot[];
 } {
@@ -83,7 +93,9 @@ export function parseVideoScriptDraft(value: string): {
   }
   const record = parsed as Record<string, unknown>;
   const title = typeof record.title === "string" ? record.title.trim() : "";
+  const copy = typeof record.copy === "string" ? record.copy.trim() : "";
   if (!title) throw new Error("脚本 Worker 未返回标题");
+  if (!copy) throw new Error("脚本 Worker 未返回文案");
   if (!Array.isArray(record.shots) || record.shots.length === 0) {
     throw new Error("脚本 Worker 未返回镜头");
   }
@@ -121,9 +133,26 @@ export function parseVideoScriptDraft(value: string): {
   });
   return {
     title: title.slice(0, 200),
+    copy: copy.slice(0, 20_000),
     continuityBible: continuityResult.data,
     shots,
   };
+}
+
+export function buildVideoScriptFirstFramePrompt(
+  shot: MediaVideoScriptShot,
+  continuityBible?: MediaVideoScriptContinuityBible,
+): string {
+  return [
+    "Create a photorealistic cinematic still image for the opening frame of a video shot.",
+    shot.visualDescription,
+    shot.cameraDirection ? `Composition and lens: ${shot.cameraDirection}` : "",
+    continuityBible ? continuityDirection(continuityBible).trim() : "",
+    shot.continuity ? `Continuity requirement: ${shot.continuity}` : "",
+    "Show the exact opening composition before the described action develops. Preserve character identity, wardrobe, props, spatial layout, lighting, and screen direction. No subtitles, captions, logos, watermarks, UI, or unrequested visible text.",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function continuityDirection(

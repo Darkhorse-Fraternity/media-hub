@@ -46,7 +46,9 @@ import { Route as ApiV1GenerationsJobIdPublishRouteImport } from './routes/api/v
 import { Route as ApiV1GenerationsJobIdNotifyRouteImport } from './routes/api/v1/generations/$jobId/notify'
 import { Route as ApiV1GenerationsJobIdEditsRouteImport } from './routes/api/v1/generations/$jobId/edits'
 import { Route as ApiMediaHubGenerationJobIdVideoRouteImport } from './routes/api/media-hub/generation/$jobId/video'
+import { Route as ApiV1ScriptsScriptIdShotsShotIdFramesRouteImport } from './routes/api/v1/scripts/$scriptId/shots/$shotId/frames'
 import { Route as ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRouteImport } from './routes/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
+import { Route as ApiV1ScriptsScriptIdShotsShotIdFramesSelectRouteImport } from './routes/api/v1/scripts/$scriptId/shots/$shotId/frames/select'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -243,11 +245,23 @@ const ApiMediaHubGenerationJobIdVideoRoute =
     path: '/api/media-hub/generation/$jobId/video',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiV1ScriptsScriptIdShotsShotIdFramesRoute =
+  ApiV1ScriptsScriptIdShotsShotIdFramesRouteImport.update({
+    id: '/shots/$shotId/frames',
+    path: '/shots/$shotId/frames',
+    getParentRoute: () => ApiV1ScriptsScriptIdRoute,
+  } as any)
 const ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute =
   ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRouteImport.update({
     id: '/shots/$shotId/carry-final-frame',
     path: '/shots/$shotId/carry-final-frame',
     getParentRoute: () => ApiV1ScriptsScriptIdRoute,
+  } as any)
+const ApiV1ScriptsScriptIdShotsShotIdFramesSelectRoute =
+  ApiV1ScriptsScriptIdShotsShotIdFramesSelectRouteImport.update({
+    id: '/select',
+    path: '/select',
+    getParentRoute: () => ApiV1ScriptsScriptIdShotsShotIdFramesRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -289,6 +303,8 @@ export interface FileRoutesByFullPath {
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
   '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
+  '/api/v1/scripts/$scriptId/shots/$shotId/frames': typeof ApiV1ScriptsScriptIdShotsShotIdFramesRouteWithChildren
+  '/api/v1/scripts/$scriptId/shots/$shotId/frames/select': typeof ApiV1ScriptsScriptIdShotsShotIdFramesSelectRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -329,6 +345,8 @@ export interface FileRoutesByTo {
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
   '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
+  '/api/v1/scripts/$scriptId/shots/$shotId/frames': typeof ApiV1ScriptsScriptIdShotsShotIdFramesRouteWithChildren
+  '/api/v1/scripts/$scriptId/shots/$shotId/frames/select': typeof ApiV1ScriptsScriptIdShotsShotIdFramesSelectRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -370,6 +388,8 @@ export interface FileRoutesById {
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
   '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
+  '/api/v1/scripts/$scriptId/shots/$shotId/frames': typeof ApiV1ScriptsScriptIdShotsShotIdFramesRouteWithChildren
+  '/api/v1/scripts/$scriptId/shots/$shotId/frames/select': typeof ApiV1ScriptsScriptIdShotsShotIdFramesSelectRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -412,6 +432,8 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/video'
     | '/api/v1/scripts/$scriptId/generate'
     | '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/frames'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/frames/select'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -452,6 +474,8 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/video'
     | '/api/v1/scripts/$scriptId/generate'
     | '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/frames'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/frames/select'
   id:
     | '__root__'
     | '/'
@@ -492,6 +516,8 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/video'
     | '/api/v1/scripts/$scriptId/generate'
     | '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/frames'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/frames/select'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -785,12 +811,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiMediaHubGenerationJobIdVideoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/v1/scripts/$scriptId/shots/$shotId/frames': {
+      id: '/api/v1/scripts/$scriptId/shots/$shotId/frames'
+      path: '/shots/$shotId/frames'
+      fullPath: '/api/v1/scripts/$scriptId/shots/$shotId/frames'
+      preLoaderRoute: typeof ApiV1ScriptsScriptIdShotsShotIdFramesRouteImport
+      parentRoute: typeof ApiV1ScriptsScriptIdRoute
+    }
     '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': {
       id: '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
       path: '/shots/$shotId/carry-final-frame'
       fullPath: '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
       preLoaderRoute: typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRouteImport
       parentRoute: typeof ApiV1ScriptsScriptIdRoute
+    }
+    '/api/v1/scripts/$scriptId/shots/$shotId/frames/select': {
+      id: '/api/v1/scripts/$scriptId/shots/$shotId/frames/select'
+      path: '/select'
+      fullPath: '/api/v1/scripts/$scriptId/shots/$shotId/frames/select'
+      preLoaderRoute: typeof ApiV1ScriptsScriptIdShotsShotIdFramesSelectRouteImport
+      parentRoute: typeof ApiV1ScriptsScriptIdShotsShotIdFramesRoute
     }
   }
 }
@@ -827,15 +867,33 @@ const ApiV1GenerationsRouteChildren: ApiV1GenerationsRouteChildren = {
 const ApiV1GenerationsRouteWithChildren =
   ApiV1GenerationsRoute._addFileChildren(ApiV1GenerationsRouteChildren)
 
+interface ApiV1ScriptsScriptIdShotsShotIdFramesRouteChildren {
+  ApiV1ScriptsScriptIdShotsShotIdFramesSelectRoute: typeof ApiV1ScriptsScriptIdShotsShotIdFramesSelectRoute
+}
+
+const ApiV1ScriptsScriptIdShotsShotIdFramesRouteChildren: ApiV1ScriptsScriptIdShotsShotIdFramesRouteChildren =
+  {
+    ApiV1ScriptsScriptIdShotsShotIdFramesSelectRoute:
+      ApiV1ScriptsScriptIdShotsShotIdFramesSelectRoute,
+  }
+
+const ApiV1ScriptsScriptIdShotsShotIdFramesRouteWithChildren =
+  ApiV1ScriptsScriptIdShotsShotIdFramesRoute._addFileChildren(
+    ApiV1ScriptsScriptIdShotsShotIdFramesRouteChildren,
+  )
+
 interface ApiV1ScriptsScriptIdRouteChildren {
   ApiV1ScriptsScriptIdGenerateRoute: typeof ApiV1ScriptsScriptIdGenerateRoute
   ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute: typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
+  ApiV1ScriptsScriptIdShotsShotIdFramesRoute: typeof ApiV1ScriptsScriptIdShotsShotIdFramesRouteWithChildren
 }
 
 const ApiV1ScriptsScriptIdRouteChildren: ApiV1ScriptsScriptIdRouteChildren = {
   ApiV1ScriptsScriptIdGenerateRoute: ApiV1ScriptsScriptIdGenerateRoute,
   ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute:
     ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute,
+  ApiV1ScriptsScriptIdShotsShotIdFramesRoute:
+    ApiV1ScriptsScriptIdShotsShotIdFramesRouteWithChildren,
 }
 
 const ApiV1ScriptsScriptIdRouteWithChildren =

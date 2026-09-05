@@ -103,6 +103,52 @@ const activeGenerationStatuses = [
 ] as const;
 const historyGenerationStatuses = ["succeeded", "failed", "canceled"] as const;
 
+const agentApiEndpoints = [
+  ["POST", "/api/v1/prompts/optimize", "优化 H3 视频提示词"],
+  ["GET", "/api/v1/generations", "查询生成任务"],
+  ["POST", "/api/v1/generations", "创建或预约视频生成任务"],
+  ["GET", "/api/v1/generation-profiles", "查询可用生成工作流"],
+  ["GET", "/api/v1/image-assets", "查询私有图片素材"],
+  ["GET", "/api/v1/scripts", "查询视频脚本"],
+  ["POST", "/api/v1/scripts", "创建结构化视频脚本"],
+  ["POST", "/api/v1/scripts/draft", "根据创意简报生成脚本草稿"],
+  ["POST", "/api/v1/scripts/analyze", "检查镜头时长与对白语速"],
+  ["GET", "/api/v1/scripts/{scriptId}", "获取视频脚本详情"],
+  ["PATCH", "/api/v1/scripts/{scriptId}", "更新视频脚本"],
+  ["DELETE", "/api/v1/scripts/{scriptId}", "删除视频脚本"],
+  ["POST", "/api/v1/scripts/{scriptId}/generate", "生成脚本镜头"],
+  [
+    "GET",
+    "/api/v1/scripts/{scriptId}/shots/{shotId}/frames",
+    "查询分镜首帧候选",
+  ],
+  [
+    "POST",
+    "/api/v1/scripts/{scriptId}/shots/{shotId}/frames",
+    "生成分镜首帧候选",
+  ],
+  [
+    "PATCH",
+    "/api/v1/scripts/{scriptId}/shots/{shotId}/frames/select",
+    "选定或清空分镜首帧",
+  ],
+  [
+    "POST",
+    "/api/v1/scripts/{scriptId}/shots/{shotId}/carry-final-frame",
+    "传递上一镜头的最后一帧",
+  ],
+  ["POST", "/api/v1/uploads/presign", "获取参考图上传地址"],
+  ["GET", "/api/v1/generations/{jobId}", "获取生成任务"],
+  ["PATCH", "/api/v1/generations/{jobId}", "更新排队中的生成任务"],
+  ["DELETE", "/api/v1/generations/{jobId}", "取消或删除生成任务"],
+  ["GET", "/api/v1/generations/{jobId}/video", "读取已完成的视频"],
+  ["POST", "/api/v1/generations/{jobId}/edits", "创建视频修改任务"],
+  ["POST", "/api/v1/generations/{jobId}/retry", "重试失败任务"],
+  ["GET", "/api/v1/platform-accounts", "查询可发布的平台账号"],
+  ["POST", "/api/v1/generations/{jobId}/publish", "发布已完成的视频"],
+  ["POST", "/api/v1/generations/{jobId}/notify", "重新发送生成通知"],
+] as const;
+
 interface GenerationEditDraft {
   id: string;
   prompt: string;
@@ -4172,6 +4218,46 @@ function AgentApiManagementPanel() {
             <code className="mt-2 block text-[11px] text-cyan-300">
               POST /api/v1/generations
             </code>
+          </div>
+        </div>
+        <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-medium text-slate-300">
+                OpenAPI 接口（{agentApiEndpoints.length} 个）
+              </p>
+              <p className="mt-1 text-[11px] text-slate-500">
+                下列接口均使用上方 Bearer Token 鉴权。
+              </p>
+            </div>
+            <a
+              href="/api/openapi"
+              target="_blank"
+              rel="noreferrer"
+              className="text-[11px] text-violet-300 underline decoration-violet-400/40 underline-offset-2 hover:text-violet-200"
+            >
+              查看完整 JSON
+            </a>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {agentApiEndpoints.map(([method, path, description]) => (
+              <div
+                key={`${method}-${path}`}
+                className="min-w-0 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2"
+              >
+                <div className="flex items-start gap-2">
+                  <span className="shrink-0 rounded bg-violet-400/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-violet-300">
+                    {method}
+                  </span>
+                  <code className="min-w-0 font-mono text-[11px] break-all text-cyan-300">
+                    {path}
+                  </code>
+                </div>
+                <p className="mt-1 pl-12 text-[11px] text-slate-500">
+                  {description}
+                </p>
+              </div>
+            ))}
           </div>
         </div>
         {tokenQuery.data?.lastUsedAt && (

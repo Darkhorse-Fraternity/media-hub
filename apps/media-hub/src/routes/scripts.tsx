@@ -25,6 +25,7 @@ export const Route = createFileRoute("/scripts")({
 
 type ScriptLanguage = "zh" | "en";
 type QualityPreset = "fast" | "balanced" | "quality";
+type CopyStatus = "draft" | "approved";
 interface VideoScriptStudioSearch {
   scriptId?: string;
 }
@@ -109,6 +110,8 @@ function AuthenticatedVideoScriptStudio({
   const [language, setLanguage] = useState<ScriptLanguage>("zh");
   const [title, setTitle] = useState("");
   const [brief, setBrief] = useState("");
+  const [copy, setCopy] = useState("");
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>("draft");
   const [width, setWidth] = useState(1344);
   const [height, setHeight] = useState(768);
   const [defaultProfile, setDefaultProfile] = useState("");
@@ -134,6 +137,9 @@ function AuthenticatedVideoScriptStudio({
         ["scheduled", "queued", "waiting_for_gpu", "running"].includes(
           job.status,
         ),
+      ) ||
+      query.state.data?.shotFrameCandidates.jobs.some((job) =>
+        ["queued", "running"].includes(job.status),
       )
         ? 5_000
         : false,
@@ -151,6 +157,8 @@ function AuthenticatedVideoScriptStudio({
     (script: {
       title: string;
       brief: string;
+      copy: string;
+      copyStatus: string;
       language: string;
       width: number;
       height: number;
@@ -161,6 +169,8 @@ function AuthenticatedVideoScriptStudio({
     }) => {
       setTitle(script.title);
       setBrief(script.brief);
+      setCopy(script.copy);
+      setCopyStatus(script.copyStatus === "approved" ? "approved" : "draft");
       setLanguage(script.language === "en" ? "en" : "zh");
       setWidth(script.width);
       setHeight(script.height);
@@ -240,13 +250,21 @@ function AuthenticatedVideoScriptStudio({
   const bridgeMutation = useMutation(
     trpc.mediaHub.script.bridgeLastFrame.mutationOptions(),
   );
+  const createFrameCandidatesMutation = useMutation(
+    trpc.mediaHub.script.createFrameCandidates.mutationOptions(),
+  );
+  const selectFrameCandidateMutation = useMutation(
+    trpc.mediaHub.script.selectFrameCandidate.mutationOptions(),
+  );
 
   const generating =
     draftMutation.isPending ||
     createMutation.isPending ||
     updateMutation.isPending ||
     generateMutation.isPending ||
-    bridgeMutation.isPending;
+    bridgeMutation.isPending ||
+    createFrameCandidatesMutation.isPending ||
+    selectFrameCandidateMutation.isPending;
   const generationProfiles = (healthQuery.data?.profiles ?? []).filter(
     (profile) => profile.kind === "generate",
   );
@@ -314,6 +332,8 @@ function AuthenticatedVideoScriptStudio({
       const script = await createMutation.mutateAsync({
         title: newTitle.trim(),
         brief: newBrief.trim(),
+        copy: "",
+        copyStatus: "draft",
         language,
         continuityBible: EMPTY_CONTINUITY_BIBLE,
         shots: [],
@@ -346,6 +366,8 @@ function AuthenticatedVideoScriptStudio({
       const script = await createMutation.mutateAsync({
         title: newTitle.trim() || draft.title,
         brief: newBrief.trim(),
+        copy: draft.copy,
+        copyStatus: "draft",
         language,
         continuityBible: draft.continuityBible,
         shots: draft.shots,
@@ -362,13 +384,18 @@ function AuthenticatedVideoScriptStudio({
     }
   };
 
-  const persistScript = async () => {
+  const persistScript = async (
+    requestedCopyStatus: CopyStatus = copyStatus,
+    expectedVersion = version,
+  ) => {
     if (!selectedScriptId) throw new Error("请先选择脚本");
     const updated = await updateMutation.mutateAsync({
       id: selectedScriptId,
-      version,
+      version: expectedVersion,
       title,
       brief,
+      copy,
+      copyStatus: requestedCopyStatus,
       language,
       width,
       height,
@@ -377,9 +404,67 @@ function AuthenticatedVideoScriptStudio({
       shots,
     });
     setVersion(updated.version);
+    setCopyStatus(updated.copyStatus === "approved" ? "approved" : "draft");
     setDirty(false);
     await refreshScripts(selectedScriptId);
     return updated;
+  };
+
+  const approveCopy = async () => {
+    if (!copy.trim()) {
+      setMessage("请先填写文案，再确认进入首帧制作。");
+      return;
+    }
+    try {
+      const saved = dirty ? await persistScript("draft") : null;
+      const approved = await persistScript(
+        "approved",
+        saved?.version ?? version,
+      );
+      setCopyStatus("approved");
+      setVersion(approved.version);
+      await refreshScripts(selectedScriptId ?? undefined);
+      setMessage("文案已确认，可以逐镜生成首帧候选。");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "确认文案失败");
+    }
+  };
+
+  const createFrameCandidates = async (shotId: string) => {
+    if (!selectedScriptId) return;
+    try {
+      if (dirty) await persistScript();
+      await createFrameCandidatesMutation.mutateAsync({
+        id: selectedScriptId,
+        shotId,
+        outputCount: 4,
+      });
+      await refreshScripts(selectedScriptId);
+      setMessage("4 张首帧候选已进入 HiDream 队列。");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "首帧生成失败");
+    }
+  };
+
+  const selectFrameCandidate = async (shotId: string, assetId: string) => {
+    if (!selectedScriptId) return;
+    try {
+      const saved = dirty ? await persistScript() : null;
+      const updated = await selectFrameCandidateMutation.mutateAsync({
+        id: selectedScriptId,
+        shotId,
+        assetId,
+        version: saved?.version ?? version,
+      });
+      applyScript(updated);
+      await refreshScripts(selectedScriptId);
+      await queryClient.invalidateQueries({
+        queryKey: trpc.mediaHub.image.list.queryKey(),
+      });
+      setMessage("已选定这个镜头的首帧。");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "选择首帧失败");
+    }
   };
 
   const saveScript = async (event?: FormEvent) => {
@@ -453,7 +538,13 @@ function AuthenticatedVideoScriptStudio({
   };
 
   return (
-    <main className="min-h-screen bg-[linear-gradient(110deg,rgba(245,158,11,0.05),transparent_28%),#020617] p-4 text-slate-100 sm:p-6">
+    <main
+      className="min-h-screen bg-slate-950 p-4 text-slate-100 sm:p-6"
+      style={{
+        backgroundImage:
+          "linear-gradient(110deg, rgba(245, 158, 11, 0.05), transparent 28%)",
+      }}
+    >
       <div className="mx-auto max-w-[1720px]">
         <header className="relative flex flex-col gap-4 border-b border-slate-800 pb-5 lg:flex-row lg:items-end lg:justify-between">
           <div className="pr-24 sm:pr-28 lg:pr-0">
@@ -615,6 +706,53 @@ function AuthenticatedVideoScriptStudio({
                   />
                 </div>
 
+                <section className="border-b border-slate-800 bg-slate-900/30 p-5 sm:p-6">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <p className="font-mono text-[10px] tracking-[0.24em] text-cyan-300">
+                        01 · COPY LOCK
+                      </p>
+                      <h2 className="mt-2 text-lg font-semibold">成片文案</h2>
+                      <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500">
+                        先确认故事、节奏和台词。修改已确认文案会自动退回待确认，避免旧首帧继续流入制作。
+                      </p>
+                    </div>
+                    <span
+                      className={`border px-3 py-1 text-xs ${copyStatus === "approved" ? "border-emerald-400/30 text-emerald-300" : "border-amber-300/30 text-amber-200"}`}
+                    >
+                      {copyStatus === "approved" ? "已确认" : "待确认"}
+                    </span>
+                  </div>
+                  <textarea
+                    value={copy}
+                    onChange={(event) => {
+                      setCopy(event.target.value);
+                      setCopyStatus("draft");
+                      markDirty();
+                    }}
+                    rows={7}
+                    placeholder="完整故事文案、旁白、必须保留的台词与节奏说明…"
+                    className="mt-4 w-full resize-y border border-slate-700 bg-slate-950 px-4 py-3 text-sm leading-7 text-slate-200 outline-none focus:border-cyan-300"
+                  />
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                    <span className="text-xs text-slate-600">
+                      {copy.length.toLocaleString()} / 20,000 字符
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void approveCopy()}
+                      disabled={
+                        !copy.trim() ||
+                        (copyStatus === "approved" && !dirty) ||
+                        generating
+                      }
+                      className="bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-30"
+                    >
+                      确认文案并锁定
+                    </button>
+                  </div>
+                </section>
+
                 <div className="border-b border-slate-800 bg-slate-900/50 px-5 py-4 sm:px-6">
                   <div className="flex items-end justify-between gap-4 text-xs text-slate-500">
                     <span>镜头轨道 · 按时长比例</span>
@@ -652,6 +790,21 @@ function AuthenticatedVideoScriptStudio({
                 <div className="divide-y divide-slate-800">
                   {shots.map((shot, index) => {
                     const latestJob = jobsByShot.get(shot.id)?.[0];
+                    const frameJobs =
+                      scriptQuery.data?.shotFrameCandidates.jobs.filter(
+                        (job) => job.scriptShotId === shot.id,
+                      ) ?? [];
+                    const frameJobIds = new Set(frameJobs.map((job) => job.id));
+                    const frameAssets =
+                      scriptQuery.data?.shotFrameCandidates.assets.filter(
+                        (asset) => asset.jobId && frameJobIds.has(asset.jobId),
+                      ) ?? [];
+                    const activeFrameJob = frameJobs.find((job) =>
+                      ["queued", "running"].includes(job.status),
+                    );
+                    const failedFrameJob = frameJobs.find(
+                      (job) => job.status === "failed",
+                    );
                     const shotIssues = scriptIssues.filter(
                       (issue) => issue.shotId === shot.id,
                     );
@@ -740,6 +893,80 @@ function AuthenticatedVideoScriptStudio({
                             </button>
                           </div>
                         </div>
+
+                        <section className="mt-5 border-y border-slate-800 bg-slate-900/30 py-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3 px-1">
+                            <div>
+                              <p className="text-xs font-medium text-slate-300">
+                                首帧候选
+                              </p>
+                              <p className="mt-1 text-[11px] text-slate-600">
+                                HiDream 按当前镜头与连续性设定生成 4 个开场构图
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void createFrameCandidates(shot.id)
+                              }
+                              disabled={
+                                copyStatus !== "approved" ||
+                                Boolean(activeFrameJob) ||
+                                generating
+                              }
+                              className="border border-cyan-300/30 px-3 py-2 text-xs text-cyan-200 hover:bg-cyan-300/10 disabled:opacity-30"
+                            >
+                              {activeFrameJob
+                                ? `生成中 · ${activeFrameJob.status}`
+                                : frameAssets.length > 0
+                                  ? "再生成 4 张"
+                                  : "生成 4 张首帧"}
+                            </button>
+                          </div>
+                          {copyStatus !== "approved" && (
+                            <p className="mt-3 px-1 text-xs text-amber-200/70">
+                              先确认上方文案，才能生成首帧候选。
+                            </p>
+                          )}
+                          {failedFrameJob?.errorMessage && !activeFrameJob && (
+                            <p className="mt-3 px-1 text-xs text-rose-300">
+                              上次生成失败：{failedFrameJob.errorMessage}
+                            </p>
+                          )}
+                          {frameAssets.length > 0 && (
+                            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                              {frameAssets.map((asset) => {
+                                const selected =
+                                  shot.firstFrameAssetId === asset.id;
+                                return (
+                                  <button
+                                    key={asset.id}
+                                    type="button"
+                                    onClick={() =>
+                                      void selectFrameCandidate(
+                                        shot.id,
+                                        asset.id,
+                                      )
+                                    }
+                                    className={`group relative aspect-video overflow-hidden border text-left ${selected ? "border-amber-300 ring-1 ring-amber-300" : "border-slate-700 hover:border-cyan-300"}`}
+                                    aria-label={`选择 ${shot.title} 的首帧 ${asset.filename}`}
+                                  >
+                                    <img
+                                      src={asset.url}
+                                      alt={asset.filename}
+                                      className="size-full object-cover transition duration-200 group-hover:scale-[1.02]"
+                                    />
+                                    <span
+                                      className={`absolute right-1 bottom-1 px-2 py-1 text-[10px] ${selected ? "bg-amber-300 text-slate-950" : "bg-slate-950/80 text-slate-300"}`}
+                                    >
+                                      {selected ? "已选首帧" : "选用"}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </section>
 
                         <div className="mt-5 grid gap-4 lg:grid-cols-2">
                           <label className="block text-xs text-slate-500 lg:col-span-2">
