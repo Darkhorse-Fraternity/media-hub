@@ -5,16 +5,12 @@ import { authClient } from "~/auth/client";
 interface MediaHubAccountMenuProps {
   user: { name: string; email: string };
   isAdmin: boolean;
-  agentApiOpen?: boolean;
-  onAgentApi?: () => void;
   onSignedOut: () => void;
 }
 
 export function MediaHubAccountMenu({
   user,
   isAdmin,
-  agentApiOpen = false,
-  onAgentApi,
   onSignedOut,
 }: MediaHubAccountMenuProps) {
   const closeMenu = (target: HTMLElement) => {
@@ -66,20 +62,13 @@ export function MediaHubAccountMenu({
           >
             设置
           </Link>
-          {onAgentApi && (
-            <button
-              type="button"
-              onClick={(event) => {
-                closeMenu(event.currentTarget);
-                onAgentApi();
-              }}
-              className={`rounded-lg px-3 py-2 text-left text-sm transition hover:bg-slate-800 ${
-                agentApiOpen ? "text-violet-200" : "text-slate-300"
-              }`}
-            >
-              Agent API
-            </button>
-          )}
+          <Link
+            to="/agent-api"
+            onClick={(event) => closeMenu(event.currentTarget)}
+            className="rounded-lg px-3 py-2 text-sm text-slate-300 transition hover:bg-slate-800 hover:text-violet-200"
+          >
+            Agent API
+          </Link>
         </nav>
         <button
           type="button"

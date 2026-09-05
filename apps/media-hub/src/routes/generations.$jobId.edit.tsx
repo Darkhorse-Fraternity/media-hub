@@ -102,8 +102,8 @@ function AuthenticatedVideoEditPage() {
           <div>
             {job.scriptId ? (
               <Link
-                to="/scripts"
-                search={{ scriptId: job.scriptId }}
+                to="/scripts/$scriptId"
+                params={{ scriptId: job.scriptId }}
                 className="inline-flex items-center gap-2 text-xs text-cyan-300 transition hover:text-cyan-200"
               >
                 <span aria-hidden="true">←</span>
@@ -194,8 +194,8 @@ function AuthenticatedVideoEditPage() {
             onCreated={(newJobId) => {
               if (job.scriptId) {
                 void navigate({
-                  to: "/scripts",
-                  search: { scriptId: job.scriptId },
+                  to: "/scripts/$scriptId",
+                  params: { scriptId: job.scriptId },
                 });
                 return;
               }

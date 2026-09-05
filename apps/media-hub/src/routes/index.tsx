@@ -384,7 +384,6 @@ function MediaHubDashboard({
   const [preparingImages, setPreparingImages] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [showApiManagement, setShowApiManagement] = useState(false);
   const [isFloatingQueueOpen, setIsFloatingQueueOpen] = useState(true);
   const [historyPage, setHistoryPage] = useState(1);
   const [selectedPublishJobId, setSelectedPublishJobId] = useState<
@@ -1267,14 +1266,10 @@ function MediaHubDashboard({
             <MediaHubAccountMenu
               user={currentUser}
               isAdmin={isAdmin}
-              agentApiOpen={showApiManagement}
-              onAgentApi={() => setShowApiManagement((current) => !current)}
               onSignedOut={onSignOut}
             />
           </div>
         </header>
-
-        {showApiManagement && <AgentApiManagementPanel />}
 
         <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.85fr)]">
           <form
@@ -4060,7 +4055,7 @@ export function PlatformAccountManagementPanel({
   );
 }
 
-function AgentApiManagementPanel() {
+export function AgentApiManagementPanel() {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);

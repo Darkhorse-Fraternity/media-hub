@@ -13,7 +13,10 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ScriptsRouteImport } from './routes/scripts'
 import { Route as PlatformsRouteImport } from './routes/platforms'
 import { Route as ImagesRouteImport } from './routes/images'
+import { Route as AgentApiRouteImport } from './routes/agent-api'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ScriptsHistoryRouteImport } from './routes/scripts_.history'
+import { Route as ScriptsScriptIdRouteImport } from './routes/scripts_.$scriptId'
 import { Route as LegalTermsOfServiceRouteImport } from './routes/legal/terms-of-service'
 import { Route as LegalPrivacyPolicyRouteImport } from './routes/legal/privacy-policy'
 import { Route as LegalDataDeletionRouteImport } from './routes/legal/data-deletion'
@@ -70,9 +73,24 @@ const ImagesRoute = ImagesRouteImport.update({
   path: '/images',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AgentApiRoute = AgentApiRouteImport.update({
+  id: '/agent-api',
+  path: '/agent-api',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ScriptsHistoryRoute = ScriptsHistoryRouteImport.update({
+  id: '/scripts_/history',
+  path: '/scripts/history',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ScriptsScriptIdRoute = ScriptsScriptIdRouteImport.update({
+  id: '/scripts_/$scriptId',
+  path: '/scripts/$scriptId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LegalTermsOfServiceRoute = LegalTermsOfServiceRouteImport.update({
@@ -266,6 +284,7 @@ const ApiV1ScriptsScriptIdShotsShotIdFramesSelectRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/agent-api': typeof AgentApiRoute
   '/images': typeof ImagesRoute
   '/platforms': typeof PlatformsRoute
   '/scripts': typeof ScriptsRoute
@@ -276,6 +295,8 @@ export interface FileRoutesByFullPath {
   '/legal/data-deletion': typeof LegalDataDeletionRoute
   '/legal/privacy-policy': typeof LegalPrivacyPolicyRoute
   '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
+  '/scripts/$scriptId': typeof ScriptsScriptIdRoute
+  '/scripts/history': typeof ScriptsHistoryRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
   '/api/v1/generation-profiles': typeof ApiV1GenerationProfilesRoute
@@ -308,6 +329,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/agent-api': typeof AgentApiRoute
   '/images': typeof ImagesRoute
   '/platforms': typeof PlatformsRoute
   '/scripts': typeof ScriptsRoute
@@ -318,6 +340,8 @@ export interface FileRoutesByTo {
   '/legal/data-deletion': typeof LegalDataDeletionRoute
   '/legal/privacy-policy': typeof LegalPrivacyPolicyRoute
   '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
+  '/scripts/$scriptId': typeof ScriptsScriptIdRoute
+  '/scripts/history': typeof ScriptsHistoryRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
   '/api/v1/generation-profiles': typeof ApiV1GenerationProfilesRoute
@@ -351,6 +375,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/agent-api': typeof AgentApiRoute
   '/images': typeof ImagesRoute
   '/platforms': typeof PlatformsRoute
   '/scripts': typeof ScriptsRoute
@@ -361,6 +386,8 @@ export interface FileRoutesById {
   '/legal/data-deletion': typeof LegalDataDeletionRoute
   '/legal/privacy-policy': typeof LegalPrivacyPolicyRoute
   '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
+  '/scripts_/$scriptId': typeof ScriptsScriptIdRoute
+  '/scripts_/history': typeof ScriptsHistoryRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
   '/api/v1/generation-profiles': typeof ApiV1GenerationProfilesRoute
@@ -395,6 +422,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/agent-api'
     | '/images'
     | '/platforms'
     | '/scripts'
@@ -405,6 +433,8 @@ export interface FileRouteTypes {
     | '/legal/data-deletion'
     | '/legal/privacy-policy'
     | '/legal/terms-of-service'
+    | '/scripts/$scriptId'
+    | '/scripts/history'
     | '/api/auth/$'
     | '/api/trpc/$'
     | '/api/v1/generation-profiles'
@@ -437,6 +467,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/agent-api'
     | '/images'
     | '/platforms'
     | '/scripts'
@@ -447,6 +478,8 @@ export interface FileRouteTypes {
     | '/legal/data-deletion'
     | '/legal/privacy-policy'
     | '/legal/terms-of-service'
+    | '/scripts/$scriptId'
+    | '/scripts/history'
     | '/api/auth/$'
     | '/api/trpc/$'
     | '/api/v1/generation-profiles'
@@ -479,6 +512,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/agent-api'
     | '/images'
     | '/platforms'
     | '/scripts'
@@ -489,6 +523,8 @@ export interface FileRouteTypes {
     | '/legal/data-deletion'
     | '/legal/privacy-policy'
     | '/legal/terms-of-service'
+    | '/scripts_/$scriptId'
+    | '/scripts_/history'
     | '/api/auth/$'
     | '/api/trpc/$'
     | '/api/v1/generation-profiles'
@@ -522,6 +558,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AgentApiRoute: typeof AgentApiRoute
   ImagesRoute: typeof ImagesRoute
   PlatformsRoute: typeof PlatformsRoute
   ScriptsRoute: typeof ScriptsRoute
@@ -532,6 +569,8 @@ export interface RootRouteChildren {
   LegalDataDeletionRoute: typeof LegalDataDeletionRoute
   LegalPrivacyPolicyRoute: typeof LegalPrivacyPolicyRoute
   LegalTermsOfServiceRoute: typeof LegalTermsOfServiceRoute
+  ScriptsScriptIdRoute: typeof ScriptsScriptIdRoute
+  ScriptsHistoryRoute: typeof ScriptsHistoryRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiTrpcSplatRoute: typeof ApiTrpcSplatRoute
   ApiV1GenerationProfilesRoute: typeof ApiV1GenerationProfilesRoute
@@ -580,11 +619,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ImagesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/agent-api': {
+      id: '/agent-api'
+      path: '/agent-api'
+      fullPath: '/agent-api'
+      preLoaderRoute: typeof AgentApiRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/scripts_/history': {
+      id: '/scripts_/history'
+      path: '/scripts/history'
+      fullPath: '/scripts/history'
+      preLoaderRoute: typeof ScriptsHistoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/scripts_/$scriptId': {
+      id: '/scripts_/$scriptId'
+      path: '/scripts/$scriptId'
+      fullPath: '/scripts/$scriptId'
+      preLoaderRoute: typeof ScriptsScriptIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/legal/terms-of-service': {
@@ -917,6 +977,7 @@ const ApiV1ScriptsRouteWithChildren = ApiV1ScriptsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AgentApiRoute: AgentApiRoute,
   ImagesRoute: ImagesRoute,
   PlatformsRoute: PlatformsRoute,
   ScriptsRoute: ScriptsRoute,
@@ -927,6 +988,8 @@ const rootRouteChildren: RootRouteChildren = {
   LegalDataDeletionRoute: LegalDataDeletionRoute,
   LegalPrivacyPolicyRoute: LegalPrivacyPolicyRoute,
   LegalTermsOfServiceRoute: LegalTermsOfServiceRoute,
+  ScriptsScriptIdRoute: ScriptsScriptIdRoute,
+  ScriptsHistoryRoute: ScriptsHistoryRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiTrpcSplatRoute: ApiTrpcSplatRoute,
   ApiV1GenerationProfilesRoute: ApiV1GenerationProfilesRoute,

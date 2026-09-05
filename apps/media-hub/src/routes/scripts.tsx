@@ -1,7 +1,7 @@
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 
 import type {
   MediaVideoScriptContinuityBible,
@@ -16,19 +16,11 @@ import { useTRPC } from "~/lib/trpc";
 
 export const Route = createFileRoute("/scripts")({
   component: VideoScriptStudioPage,
-  validateSearch: (
-    search: Record<string, unknown>,
-  ): VideoScriptStudioSearch => ({
-    scriptId: typeof search.scriptId === "string" ? search.scriptId : undefined,
-  }),
 });
 
 type ScriptLanguage = "zh" | "en";
 type QualityPreset = "fast" | "balanced" | "quality";
 type CopyStatus = "draft" | "approved";
-interface VideoScriptStudioSearch {
-  scriptId?: string;
-}
 
 const EMPTY_CONTINUITY_BIBLE: MediaVideoScriptContinuityBible = {
   characters: "",
@@ -51,7 +43,11 @@ function emptyShot(position: number): MediaVideoScriptShot {
   };
 }
 
-function VideoScriptStudioPage() {
+export function VideoScriptStudioPage({
+  initialScriptId,
+}: {
+  initialScriptId?: string;
+}) {
   const sessionQuery = authClient.useSession();
   if (sessionQuery.isPending) {
     return (
@@ -81,6 +77,7 @@ function VideoScriptStudioPage() {
   }
   return (
     <AuthenticatedVideoScriptStudio
+      initialScriptId={initialScriptId}
       userName={sessionQuery.data.user.name}
       userEmail={sessionQuery.data.user.email}
       isAdmin={sessionQuery.data.user.role === "admin"}
@@ -89,19 +86,21 @@ function VideoScriptStudioPage() {
 }
 
 function AuthenticatedVideoScriptStudio({
+  initialScriptId,
   userName,
   userEmail,
   isAdmin,
 }: {
+  initialScriptId?: string;
   userName: string;
   userEmail: string;
   isAdmin: boolean;
 }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
-  const { scriptId: linkedScriptId } = Route.useSearch();
+  const navigate = useNavigate();
   const [selectedScriptId, setSelectedScriptId] = useState<string | null>(
-    linkedScriptId ?? null,
+    initialScriptId ?? null,
   );
   const hydratedScriptIdRef = useRef<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
@@ -124,9 +123,6 @@ function AuthenticatedVideoScriptStudio({
   const [qualityPreset, setQualityPreset] = useState<QualityPreset>("balanced");
   const [message, setMessage] = useState<string | null>(null);
 
-  const listQuery = useQuery(
-    trpc.mediaHub.script.list.queryOptions({ page: 1, pageSize: 100 }),
-  );
   const scriptQuery = useQuery({
     ...trpc.mediaHub.script.get.queryOptions({
       id: selectedScriptId ?? "none",
@@ -185,12 +181,14 @@ function AuthenticatedVideoScriptStudio({
   );
 
   useEffect(() => {
-    if (!linkedScriptId || hydratedScriptIdRef.current === linkedScriptId) {
+    if (!initialScriptId || hydratedScriptIdRef.current === initialScriptId) {
       return;
     }
     let canceled = false;
     void queryClient
-      .fetchQuery(trpc.mediaHub.script.get.queryOptions({ id: linkedScriptId }))
+      .fetchQuery(
+        trpc.mediaHub.script.get.queryOptions({ id: initialScriptId }),
+      )
       .then((script) => {
         if (canceled) return;
         applyScript(script);
@@ -203,23 +201,7 @@ function AuthenticatedVideoScriptStudio({
     return () => {
       canceled = true;
     };
-  }, [applyScript, linkedScriptId, queryClient, trpc]);
-
-  const openScript = async (id: string) => {
-    if (dirty && !window.confirm("当前修改尚未保存，仍要切换脚本吗？")) {
-      return;
-    }
-    try {
-      const script = await queryClient.fetchQuery(
-        trpc.mediaHub.script.get.queryOptions({ id }),
-      );
-      applyScript(script);
-      hydratedScriptIdRef.current = id;
-      setSelectedScriptId(id);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "读取脚本失败");
-    }
-  };
+  }, [applyScript, initialScriptId, queryClient, trpc]);
 
   const refreshScripts = async (id?: string) => {
     await queryClient.invalidateQueries({
@@ -338,13 +320,13 @@ function AuthenticatedVideoScriptStudio({
         continuityBible: EMPTY_CONTINUITY_BIBLE,
         shots: [],
       });
-      setSelectedScriptId(script.id);
-      applyScript(script);
-      hydratedScriptIdRef.current = script.id;
       setNewTitle("");
       setNewBrief("");
       await refreshScripts(script.id);
-      setMessage("空白脚本已创建，可以开始添加镜头。");
+      await navigate({
+        to: "/scripts/$scriptId",
+        params: { scriptId: script.id },
+      });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "创建脚本失败");
     }
@@ -372,13 +354,13 @@ function AuthenticatedVideoScriptStudio({
         continuityBible: draft.continuityBible,
         shots: draft.shots,
       });
-      setSelectedScriptId(script.id);
-      applyScript(script);
-      hydratedScriptIdRef.current = script.id;
       setNewTitle("");
       setNewBrief("");
       await refreshScripts(script.id);
-      setMessage(`脚本已创建，共 ${script.shotCount} 个镜头。`);
+      await navigate({
+        to: "/scripts/$scriptId",
+        params: { scriptId: script.id },
+      });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "AI 拆镜失败");
     }
@@ -511,7 +493,7 @@ function AuthenticatedVideoScriptStudio({
       hydratedScriptIdRef.current = null;
       setDirty(false);
       await refreshScripts();
-      setMessage("脚本已删除。");
+      await navigate({ to: "/scripts/history" });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "删除脚本失败");
     }
@@ -558,6 +540,20 @@ function AuthenticatedVideoScriptStudio({
             </p>
           </div>
           <nav className="flex flex-wrap gap-2" aria-label="创作工具">
+            {selectedScriptId && (
+              <Link
+                to="/scripts"
+                className="border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:border-amber-300 hover:text-amber-200"
+              >
+                新建脚本
+              </Link>
+            )}
+            <Link
+              to="/scripts/history"
+              className="border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:border-amber-300 hover:text-amber-200"
+            >
+              历史脚本
+            </Link>
             <Link
               to="/"
               className="border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:border-cyan-400 hover:text-cyan-200"
@@ -586,95 +582,76 @@ function AuthenticatedVideoScriptStudio({
           </div>
         )}
 
-        <div className="mt-5 grid gap-5 xl:grid-cols-[280px_minmax(0,1fr)_320px]">
-          <aside className="space-y-5 xl:sticky xl:top-5 xl:self-start">
-            <section className="border border-slate-800 bg-slate-900/90 p-4">
-              <h2 className="font-semibold">新脚本</h2>
-              <div className="mt-4 space-y-3">
-                <input
-                  value={newTitle}
-                  onChange={(event) => setNewTitle(event.target.value)}
-                  placeholder="标题（可选）"
-                  className="w-full border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-amber-300"
-                />
-                <textarea
-                  value={newBrief}
-                  onChange={(event) => setNewBrief(event.target.value)}
-                  rows={5}
-                  placeholder="故事、受众、人物、必须出现的台词…"
-                  className="w-full resize-y border border-slate-700 bg-slate-950 px-3 py-2 text-sm leading-6 outline-none focus:border-amber-300"
-                />
-                <label className="block text-xs text-slate-400">
-                  目标时长 · {targetDuration} 秒
-                  <input
-                    type="range"
-                    min={10}
-                    max={120}
-                    step={5}
-                    value={targetDuration}
-                    onChange={(event) =>
-                      setTargetDuration(Number(event.target.value))
-                    }
-                    className="mt-2 w-full accent-amber-300"
-                  />
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void createBlank()}
-                    disabled={generating}
-                    className="border border-slate-700 px-3 py-2 text-sm text-slate-300 disabled:opacity-50"
+        <div
+          className={`mt-5 grid gap-5 ${selectedScriptId ? "xl:grid-cols-[minmax(0,1fr)_320px]" : "xl:grid-cols-[360px_minmax(0,1fr)_320px]"}`}
+        >
+          {!selectedScriptId && (
+            <aside className="space-y-5 xl:sticky xl:top-5 xl:self-start">
+              <section className="border border-slate-800 bg-slate-900/90 p-4">
+                <div className="flex items-center justify-between gap-4">
+                  <h2 className="font-semibold">新脚本</h2>
+                  <Link
+                    to="/scripts/history"
+                    className="text-xs text-amber-200 hover:text-amber-100"
                   >
-                    空白脚本
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void createFromBrief()}
-                    disabled={generating}
-                    className="bg-amber-300 px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
-                  >
-                    AI 拆镜
-                  </button>
+                    查看历史
+                  </Link>
                 </div>
-              </div>
-            </section>
-
-            <section className="border-t border-slate-800 pt-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold">我的脚本</h2>
-                <span className="text-xs text-slate-500">
-                  {listQuery.data?.total ?? 0}
-                </span>
-              </div>
-              <div className="mt-3 grid gap-1">
-                {listQuery.data?.rows.map((script) => (
-                  <button
-                    key={script.id}
-                    type="button"
-                    onClick={() => void openScript(script.id)}
-                    className={`border-l-2 px-3 py-3 text-left ${selectedScriptId === script.id ? "border-amber-300 bg-amber-300/5" : "border-slate-800 hover:border-slate-600"}`}
-                  >
-                    <span className="block truncate text-sm text-slate-200">
-                      {script.title}
-                    </span>
-                    <span className="mt-1 block text-xs text-slate-500">
-                      {script.shotCount} 镜 · {script.totalDurationSeconds} 秒
-                    </span>
-                  </button>
-                ))}
-                {!listQuery.isPending && listQuery.data?.rows.length === 0 && (
-                  <p className="px-3 py-6 text-sm leading-6 text-slate-500">
-                    输入简报，让 AI 先给你一版可以逐镜修改的拍摄稿。
-                  </p>
-                )}
-              </div>
-            </section>
-          </aside>
+                <div className="mt-4 space-y-3">
+                  <input
+                    value={newTitle}
+                    onChange={(event) => setNewTitle(event.target.value)}
+                    placeholder="标题（可选）"
+                    className="w-full border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-amber-300"
+                  />
+                  <textarea
+                    value={newBrief}
+                    onChange={(event) => setNewBrief(event.target.value)}
+                    rows={5}
+                    placeholder="故事、受众、人物、必须出现的台词…"
+                    className="w-full resize-y border border-slate-700 bg-slate-950 px-3 py-2 text-sm leading-6 outline-none focus:border-amber-300"
+                  />
+                  <label className="block text-xs text-slate-400">
+                    目标时长 · {targetDuration} 秒
+                    <input
+                      type="range"
+                      min={10}
+                      max={120}
+                      step={5}
+                      value={targetDuration}
+                      onChange={(event) =>
+                        setTargetDuration(Number(event.target.value))
+                      }
+                      className="mt-2 w-full accent-amber-300"
+                    />
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void createBlank()}
+                      disabled={generating}
+                      className="border border-slate-700 px-3 py-2 text-sm text-slate-300 disabled:opacity-50"
+                    >
+                      空白脚本
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void createFromBrief()}
+                      disabled={generating}
+                      className="bg-amber-300 px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+                    >
+                      AI 拆镜
+                    </button>
+                  </div>
+                </div>
+              </section>
+            </aside>
+          )}
 
           <section className="min-w-0 border-x border-slate-800 bg-slate-950/40">
             {!selectedScriptId ? (
               <div className="grid min-h-[620px] place-items-center p-8 text-center text-sm text-slate-500">
-                从左侧创建或选择一个脚本。
+                从左侧创建脚本，或前往历史脚本继续制作。
               </div>
             ) : scriptQuery.isPending ? (
               <div className="grid min-h-[620px] place-items-center text-sm text-slate-500">
