@@ -83,4 +83,24 @@ describe("buildGenerationResultCard", () => {
       kind: "disabled",
     });
   });
+
+  it("labels assembled script videos distinctly from H3 generation", () => {
+    const card = buildGenerationResultCard({
+      jobId: "assembly-1",
+      title: "完整成片",
+      prompt: "A complete scripted video",
+      status: "succeeded",
+      operation: "assemble",
+      durationSeconds: 30,
+      language: "zh",
+      elapsedSeconds: 1,
+      fps: 24,
+      width: 960,
+      height: 544,
+      referenceImageCount: 0,
+      hasFirstFrame: false,
+      createdByLabel: "Service",
+    });
+    expect(JSON.stringify(card)).toContain("脚本镜头合成");
+  });
 });

@@ -287,6 +287,12 @@ export const mediaGenerationJob = pgTable(
     /** H3 原始音轨的只读 ASR 验收结果；不会替换原声音轨。 */
     asrTranscript: text("asr_transcript"),
     asrMatchPercent: integer("asr_match_percent"),
+    /** pending | sending | delivered | disabled | failed；终态通知独立于生成状态重试。 */
+    notificationStatus: text("notification_status"),
+    notificationAttempts: integer("notification_attempts").notNull().default(0),
+    notificationError: text("notification_error"),
+    notificationNextAttemptAt: timestamp("notification_next_attempt_at"),
+    notificationDeliveredAt: timestamp("notification_delivered_at"),
     createdBy: text("created_by")
       .notNull()
       .references(() => user.id, { onDelete: "restrict" }),

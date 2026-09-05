@@ -10,9 +10,7 @@ import { db } from "@acme/db/client";
 import {
   mediaGenerationJob,
   mediaTask,
-  mediaUserPreference,
   mediaVideoScript,
-  user as User,
 } from "@acme/db/schema";
 import { log } from "@acme/logger";
 import {
@@ -21,7 +19,7 @@ import {
   putMediaHubObject,
 } from "@acme/storage";
 
-import { sendGenerationResultCard } from "./feishu-notify";
+import { deliverGenerationResultNotification } from "./generation-notification";
 import { validateGeneratedVideoOutput } from "./generation-output-validation";
 import { selectLatestScriptShotJobs } from "./video-script-assembly-core";
 
@@ -275,6 +273,11 @@ export async function assembleCompletedVideoScript(input: {
           status: "succeeded",
           outputStorageKey: storageKey,
           mediaTaskId,
+          notificationStatus: "pending",
+          notificationAttempts: 0,
+          notificationError: null,
+          notificationNextAttemptAt: null,
+          notificationDeliveredAt: null,
           finishedAt,
           updatedAt: finishedAt,
         })
@@ -285,50 +288,14 @@ export async function assembleCompletedVideoScript(input: {
         .where(eq(mediaVideoScript.id, script.id));
     });
 
-    const [creator, recipientPreference] = await Promise.all([
-      db.query.user.findFirst({
-        where: eq(User.id, input.userId),
-        columns: { name: true, email: true },
-      }),
-      db.query.mediaUserPreference.findFirst({
-        where: eq(mediaUserPreference.userId, input.userId),
-        columns: { feishuWebhookUrl: true },
-      }),
-    ]);
-    try {
-      const appUrl = process.env.APP_URL?.replace(/\/$/, "");
-      await sendGenerationResultCard({
-        jobId,
-        title: `${script.title} / 完整成片`,
-        prompt: script.copy || script.brief,
-        status: "succeeded",
-        durationSeconds: totalDurationSeconds,
-        language: script.language,
-        elapsedSeconds: (finishedAt.getTime() - now.getTime()) / 1000,
-        fps: sourceJobs[0]?.fps ?? 24,
-        width: script.width,
-        height: script.height,
-        qualityPreset: "assembled",
-        steps: 0,
-        profile: "script-concat-v1",
-        workflowVersion: "script-concat-copy-v1",
-        referenceImageCount: 0,
-        hasFirstFrame: false,
-        videoBytes: video.length,
-        createdByLabel: creator
-          ? `${creator.name} (${creator.email})`
-          : input.userId,
-        videoUrl: appUrl ? `${appUrl}/#generation-job-${jobId}` : undefined,
-        recipientWebhookUrl: recipientPreference?.feishuWebhookUrl,
-      });
-    } catch (error) {
+    await deliverGenerationResultNotification(jobId).catch((error: unknown) => {
       log.error("Video script assembly notification failed", {
         code: "VIDEO_SCRIPT_ASSEMBLY_NOTIFICATION_FAILED",
         script_id: script.id,
         job_id: jobId,
         err: error instanceof Error ? error : new Error(String(error)),
       });
-    }
+    });
     return { jobId, mediaTaskId, status: "succeeded", sourceJobIds };
   } catch (error) {
     await deleteMediaHubObject(storageKey).catch(() => undefined);

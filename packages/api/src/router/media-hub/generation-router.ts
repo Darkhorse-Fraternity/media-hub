@@ -28,10 +28,7 @@ import {
 } from "@acme/validators";
 
 import { protectedProcedure } from "../../trpc";
-import {
-  sendGenerationCancellationAlert,
-  sendGenerationResultCard,
-} from "./feishu-notify";
+import { sendGenerationCancellationAlert } from "./feishu-notify";
 import {
   cancelMediaGenerationJob,
   getMediaGenerationProviderHealth,
@@ -50,6 +47,10 @@ import {
   isRetryableMediaGenerationStatus,
 } from "./generation-access";
 import {
+  resendGenerationResultNotification,
+  startMediaGenerationNotificationScheduler,
+} from "./generation-notification";
+import {
   h3StepsForPreset,
   validateH3GenerationPrompt,
 } from "./h3-generation-config";
@@ -64,6 +65,7 @@ import { runPublishForTask, startMediaPublishScheduler } from "./runner";
 import { resolveMediaSystemSetting } from "./system-settings";
 
 startMediaGenerationScheduler();
+startMediaGenerationNotificationScheduler();
 startMediaPublishScheduler();
 
 function fireAndForgetGenerationPublish(taskId: string): void {
@@ -645,54 +647,18 @@ export const mediaGenerationRouter = {
         });
       }
 
-      const [creator, recipientPreference] = await Promise.all([
-        ctx.db.query.user.findFirst({
-          where: eq(User.id, job.createdBy),
-          columns: { name: true, email: true },
-        }),
-        ctx.db.query.mediaUserPreference.findFirst({
-          where: eq(mediaUserPreference.userId, job.createdBy),
-          columns: { feishuWebhookUrl: true },
-        }),
-      ]);
-      const appUrl = process.env.APP_URL?.replace(/\/$/, "");
-      await sendGenerationResultCard({
-        jobId: job.id,
-        title: job.title,
-        prompt: job.prompt,
-        status: "succeeded",
-        operation: job.kind === "edit" ? "edit" : "generate",
-        editSegmentCount: job.editSegments.length,
-        durationSeconds: job.durationSeconds,
-        language: job.language,
-        elapsedSeconds:
-          job.startedAt && job.finishedAt
-            ? (job.finishedAt.getTime() - job.startedAt.getTime()) / 1000
-            : 0,
-        fps: job.fps,
-        width: job.width,
-        height: job.height,
-        qualityPreset: job.qualityPreset,
-        steps: job.steps,
-        seed: job.seed,
-        profile: job.profile,
-        modelVersion: job.modelVersion,
-        workflowVersion: job.workflowVersion,
-        referenceImageCount:
-          job.referenceImages.length +
-          job.editSegments.reduce(
-            (total, segment) => total + segment.referenceImages.length,
-            0,
-          ),
-        hasFirstFrame: Boolean(job.sourceImageStorageKey),
-        scheduledAt: job.scheduledAt,
-        providerJobId: job.providerJobId,
-        createdByLabel: creator
-          ? `${creator.name} (${creator.email})`
-          : job.createdBy,
-        videoUrl: appUrl ? `${appUrl}/#generation-job-${job.id}` : undefined,
-        recipientWebhookUrl: recipientPreference?.feishuWebhookUrl,
-      });
+      const notificationStatus = await resendGenerationResultNotification(
+        job.id,
+      );
+      if (notificationStatus !== "delivered") {
+        throw new TRPCError({
+          code: "BAD_GATEWAY",
+          message:
+            notificationStatus === "disabled"
+              ? "该用户未配置飞书 Webhook"
+              : "通知暂未送达，已进入自动重试队列",
+        });
+      }
       log.info("Media generation result notification resent", {
         code: "MEDIA_GENERATION_RESULT_CARD_RESENT",
         job_id: job.id,

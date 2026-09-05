@@ -7,16 +7,11 @@ import { promisify } from "node:util";
 
 import { and, asc, eq, inArray } from "@acme/db";
 import { db } from "@acme/db/client";
-import {
-  mediaGenerationJob,
-  mediaTask,
-  mediaUserPreference,
-  user as User,
-} from "@acme/db/schema";
+import { mediaGenerationJob, mediaTask } from "@acme/db/schema";
 import { log } from "@acme/logger";
 import { getMediaHubObject, putMediaHubObject } from "@acme/storage";
 
-import { sendGenerationResultCard } from "./feishu-notify";
+import { deliverGenerationResultNotification } from "./generation-notification";
 import {
   GenerationOutputValidationError,
   validateGeneratedVideoOutput,
@@ -907,70 +902,6 @@ async function runGenerationJob(jobId: string): Promise<void> {
       .where(eq(mediaGenerationJob.id, job.id));
   }
 
-  const notifyResult = async (
-    status: "succeeded" | "failed",
-    finishedAt: Date,
-    errorMessage?: string,
-    errorCode?: string,
-    failureStage?: string,
-    errorRetryable?: boolean,
-    video?: Buffer,
-    providerJobId?: string,
-    modelVersion?: string | null,
-    workflowVersion?: string | null,
-  ) => {
-    const [creator, recipientPreference] = await Promise.all([
-      db.query.user.findFirst({
-        where: eq(User.id, job.createdBy),
-        columns: { name: true, email: true },
-      }),
-      db.query.mediaUserPreference.findFirst({
-        where: eq(mediaUserPreference.userId, job.createdBy),
-        columns: { feishuWebhookUrl: true },
-      }),
-    ]);
-    const appUrl = process.env.APP_URL?.replace(/\/$/, "");
-    await sendGenerationResultCard({
-      jobId: job.id,
-      title: job.title,
-      prompt: job.prompt,
-      status,
-      operation: job.kind === "edit" ? "edit" : "generate",
-      editSegmentCount: job.editSegments.length,
-      durationSeconds: job.durationSeconds,
-      language: job.language,
-      elapsedSeconds: (finishedAt.getTime() - startedAt.getTime()) / 1000,
-      fps: job.fps,
-      width: job.width,
-      height: job.height,
-      qualityPreset: job.qualityPreset,
-      steps: job.steps,
-      seed: job.seed,
-      profile: job.profile,
-      modelVersion,
-      workflowVersion,
-      referenceImageCount:
-        job.referenceImages.length +
-        job.editSegments.reduce(
-          (total, segment) => total + segment.referenceImages.length,
-          0,
-        ),
-      hasFirstFrame: Boolean(job.sourceImageStorageKey),
-      scheduledAt: job.scheduledAt,
-      providerJobId,
-      videoBytes: video?.length,
-      createdByLabel: creator
-        ? `${creator.name} (${creator.email})`
-        : job.createdBy,
-      errorMessage,
-      errorCode,
-      failureStage,
-      errorRetryable,
-      videoUrl: appUrl ? `${appUrl}/#generation-job-${job.id}` : undefined,
-      recipientWebhookUrl: recipientPreference?.feishuWebhookUrl,
-    });
-  };
-
   try {
     job.startedAt = startedAt;
     const providerHealth = await getMediaGenerationProviderHealth(true);
@@ -1030,6 +961,11 @@ async function runGenerationJob(jobId: string): Promise<void> {
         workflowVersion,
         asrTranscript: speechValidation?.transcript ?? null,
         asrMatchPercent: speechValidation?.matchPercent ?? null,
+        notificationStatus: job.scriptId ? null : "pending",
+        notificationAttempts: 0,
+        notificationError: null,
+        notificationNextAttemptAt: null,
+        notificationDeliveredAt: null,
         finishedAt,
         updatedAt: finishedAt,
       })
@@ -1044,30 +980,19 @@ async function runGenerationJob(jobId: string): Promise<void> {
     if (job.scriptId) {
       await maybeAssembleCompletedVideoScript(job.scriptId, job.createdBy);
     } else {
-      try {
-        await notifyResult(
-          "succeeded",
-          finishedAt,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          video,
-          providerJobIds.join(", "),
-          modelVersion,
-          workflowVersion,
-        );
-      } catch (notificationError) {
-        log.error("Media generation success notification failed", {
-          code: "MEDIA_GENERATION_RESULT_CARD_FAILED",
-          job_id: job.id,
-          status: "succeeded",
-          err:
-            notificationError instanceof Error
-              ? notificationError
-              : new Error(String(notificationError)),
-        });
-      }
+      await deliverGenerationResultNotification(job.id).catch(
+        (notificationError: unknown) => {
+          log.error("Media generation success notification failed", {
+            code: "MEDIA_GENERATION_RESULT_CARD_FAILED",
+            job_id: job.id,
+            status: "succeeded",
+            err:
+              notificationError instanceof Error
+                ? notificationError
+                : new Error(String(notificationError)),
+          });
+        },
+      );
     }
   } catch (error) {
     const current = await db.query.mediaGenerationJob.findFirst({
@@ -1088,30 +1013,28 @@ async function runGenerationJob(jobId: string): Promise<void> {
         errorCode: structuredFailure.code,
         failureStage: structuredFailure.failureStage,
         errorRetryable: structuredFailure.retryable,
+        notificationStatus: "pending",
+        notificationAttempts: 0,
+        notificationError: null,
+        notificationNextAttemptAt: null,
+        notificationDeliveredAt: null,
         finishedAt,
         updatedAt: finishedAt,
       })
       .where(eq(mediaGenerationJob.id, jobId));
-    try {
-      await notifyResult(
-        "failed",
-        finishedAt,
-        errorMessage,
-        structuredFailure.code,
-        structuredFailure.failureStage,
-        structuredFailure.retryable,
-      );
-    } catch (notificationError) {
-      log.error("Media generation failure notification failed", {
-        code: "MEDIA_GENERATION_RESULT_CARD_FAILED",
-        job_id: job.id,
-        status: "failed",
-        err:
-          notificationError instanceof Error
-            ? notificationError
-            : new Error(String(notificationError)),
-      });
-    }
+    await deliverGenerationResultNotification(job.id).catch(
+      (notificationError: unknown) => {
+        log.error("Media generation failure notification failed", {
+          code: "MEDIA_GENERATION_RESULT_CARD_FAILED",
+          job_id: job.id,
+          status: "failed",
+          err:
+            notificationError instanceof Error
+              ? notificationError
+              : new Error(String(notificationError)),
+        });
+      },
+    );
   }
 }
 

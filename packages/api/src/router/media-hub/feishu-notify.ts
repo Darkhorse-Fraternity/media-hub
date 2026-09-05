@@ -11,6 +11,7 @@ async function feishuFetch(url: string, init: RequestInit = {}) {
   const requestInit = {
     ...init,
     dispatcher: directDispatcher,
+    signal: init.signal ?? AbortSignal.timeout(15_000),
   } as unknown as Parameters<typeof undiciFetch>[1];
   return (await undiciFetch(url, requestInit)) as unknown as Response;
 }
@@ -104,7 +105,7 @@ export interface GenerationResultCardInput {
   title: string | null;
   prompt: string;
   status: "succeeded" | "failed";
-  operation?: "generate" | "edit";
+  operation?: "generate" | "edit" | "assemble";
   editSegmentCount?: number;
   durationSeconds: number;
   language: string;
@@ -219,7 +220,7 @@ export function buildGenerationResultCard(input: GenerationResultCardInput) {
           is_short: true,
           text: {
             tag: "lark_md",
-            content: `**任务类型**\n${input.operation === "edit" ? `Ref2VA 修改 · ${input.editSegmentCount ?? 0} 个片段` : "FL2VA 生成"}`,
+            content: `**任务类型**\n${input.operation === "edit" ? `Ref2VA 修改 · ${input.editSegmentCount ?? 0} 个片段` : input.operation === "assemble" ? "脚本镜头合成" : "FL2VA 生成"}`,
           },
         },
         {
