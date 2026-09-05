@@ -8,19 +8,19 @@ const dialogueBody = z.object({
   text: z.string().trim().min(1).max(300),
 });
 
-export const continuityBibleBody = z
-  .object({
-    characters: z.string().trim().max(3000).default(""),
-    wardrobe_and_props: z.string().trim().max(3000).default(""),
-    locations_and_lighting: z.string().trim().max(3000).default(""),
-    visual_rules: z.string().trim().max(3000).default(""),
-  })
-  .default({
-    characters: "",
-    wardrobe_and_props: "",
-    locations_and_lighting: "",
-    visual_rules: "",
-  });
+const continuityBibleObject = z.object({
+  characters: z.string().trim().max(3000).default(""),
+  wardrobe_and_props: z.string().trim().max(3000).default(""),
+  locations_and_lighting: z.string().trim().max(3000).default(""),
+  visual_rules: z.string().trim().max(3000).default(""),
+});
+
+export const continuityBibleBody = continuityBibleObject.default({
+  characters: "",
+  wardrobe_and_props: "",
+  locations_and_lighting: "",
+  visual_rules: "",
+});
 
 export const scriptShotBody = z.object({
   id: z.string().trim().min(1).max(100).optional(),
@@ -49,8 +49,18 @@ export const createScriptBody = z.object({
 });
 
 export const patchScriptBody = createScriptBody.partial().extend({
-  version: z.number().int().min(1),
+  // Override every defaulted create field. Otherwise Zod applies the create
+  // defaults to omitted PATCH properties and a status-only update silently
+  // clears the copy, continuity bible, and shots.
+  copy: z.string().trim().max(20_000).optional(),
+  copy_status: z.enum(["draft", "approved"]).optional(),
+  language: z.enum(["zh", "en"]).optional(),
+  width: z.number().int().min(64).max(1344).optional(),
+  height: z.number().int().min(64).max(1344).optional(),
   default_profile: z.string().trim().min(1).max(200).nullable().optional(),
+  continuity_bible: continuityBibleObject.optional(),
+  shots: z.array(scriptShotBody).max(12).optional(),
+  version: z.number().int().min(1),
 });
 
 export const draftScriptBody = z.object({
