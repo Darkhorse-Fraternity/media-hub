@@ -1,0 +1,20 @@
+[Unit]
+Description=Media Hub H3 original-audio ASR validator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/a/.local/share/media-hub-h3-asr
+Environment=HF_HOME=/data/ai-cache/huggingface
+Environment=HF_ENDPOINT=https://hf-mirror.com
+Environment=HF_HUB_DISABLE_XET=1
+Environment=OMP_NUM_THREADS=12
+ExecStart=/home/a/.local/share/media-hub-h3-asr/.venv/bin/python h3_asr_service.py --host 0.0.0.0 --port 8788 --model large-v3-turbo --device cpu --compute-type int8 --cpu-threads 12 --download-root /data/ai-cache/huggingface/hub --token-file /home/a/.config/ydc-provider/provider.token
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

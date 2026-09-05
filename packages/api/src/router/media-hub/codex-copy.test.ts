@@ -79,12 +79,45 @@ describe("Media Hub Codex copy prompts", () => {
       "Requested dialogue and visible-text language: Simplified Chinese",
     );
     expect(prompt).toContain("production direction in precise natural English");
+    expect(prompt).toContain("do not request indistinct");
     expect(prompt).toContain(
       "even when the original prompt is written in another language",
     );
     expect(prompt).not.toContain(
       "entire returned content in natural Simplified Chinese",
     );
+  });
+
+  it("treats dedicated dialogue lines as authoritative H3 original audio", () => {
+    const prompt = buildVideoPromptOptimizationPrompt({
+      prompt: "母亲带孩子读书，孩子逐渐失去耐心",
+      durationSeconds: 30,
+      hasReferenceImage: false,
+      language: "zh",
+      dialogues: [
+        {
+          segment: 1,
+          speakerId: "S1",
+          language: "zh",
+          text: "跟我读，春天来了。",
+        },
+        {
+          segment: 2,
+          speakerId: "S2",
+          language: "zh",
+          text: "我真的不会。",
+        },
+      ],
+    });
+
+    expect(prompt).toContain("dedicated dialogue editor");
+    expect(prompt).toContain(
+      "segment 1/2: (S1) <d>[Mandarin Chinese] 跟我读，春天来了。</d>",
+    );
+    expect(prompt).toContain(
+      "segment 2/2: (S2) <d>[Mandarin Chinese] 我真的不会。</d>",
+    );
+    expect(prompt).toContain("Do not paraphrase, translate, merge, split");
   });
 
   it("removes a generated duration label without changing action timing", () => {

@@ -9,6 +9,7 @@ import { mediaHubSignInSchema } from "@acme/validators";
 import type { ContentLanguage } from "~/lib/content-language";
 import type { ResolutionValue } from "~/lib/generation-resolution";
 import type {
+  H3DialogueLine,
   ReferenceImageContentType,
   ReferenceImageDraft,
   ReferenceImageRole,
@@ -25,10 +26,12 @@ import { formatGenerationElapsed } from "~/lib/generation-display";
 import { resolutionOptions } from "~/lib/generation-resolution";
 import {
   createReferenceImageDraftId,
+  h3PromptContainsDialogues,
   referenceImageContentTypes,
   resolveScheduledAt,
   scheduleDayOptions,
   scheduleTimeOptions,
+  shouldOptimizeH3PromptBeforeSubmit,
   uploadReferenceImage,
 } from "~/lib/media-generation-form";
 import {
@@ -68,9 +71,36 @@ const qualityOptions = [
 ] as const;
 type QualityPreset = (typeof qualityOptions)[number]["value"];
 
+interface H3GenerationProfileOption {
+  id: string;
+  kind: "generate" | "edit";
+  workflowVersion: string | null;
+  modelVersion: string | null;
+  maxReferenceImages: number | null;
+  minimumSteps: number | null;
+}
+
+function h3GenerationProfileLabel(profile: H3GenerationProfileOption): string {
+  const details = [
+    profile.workflowVersion,
+    profile.minimumSteps ? `最低 ${profile.minimumSteps} 步` : null,
+    profile.maxReferenceImages === 0
+      ? "仅首帧"
+      : profile.maxReferenceImages
+        ? `最多 ${profile.maxReferenceImages} 张额外参考图`
+        : null,
+  ].filter(Boolean);
+  return details.length ? `${profile.id} · ${details.join(" · ")}` : profile.id;
+}
+
 const maxReferenceImages = 5;
 const historyPageSize = 3;
-const activeGenerationStatuses = ["scheduled", "queued", "running"] as const;
+const activeGenerationStatuses = [
+  "scheduled",
+  "queued",
+  "waiting_for_gpu",
+  "running",
+] as const;
 const historyGenerationStatuses = ["succeeded", "failed", "canceled"] as const;
 
 interface GenerationEditDraft {
@@ -82,6 +112,18 @@ interface GenerationEditDraft {
   qualityPreset: QualityPreset;
   scheduleDay: string;
   scheduleTime: string;
+}
+
+interface H3DialogueDraft extends H3DialogueLine {
+  id: string;
+}
+
+const dialogueSpeakerOptions = ["S1", "S2", "S3", "S4"] as const;
+let dialogueDraftCounter = 0;
+
+function createDialogueDraftId(): string {
+  dialogueDraftCounter += 1;
+  return `dialogue-${Date.now()}-${dialogueDraftCounter}`;
 }
 
 type PublishTiming = "now" | "scheduled";
@@ -280,6 +322,7 @@ function MediaHubDashboard({
   );
   const [durationSeconds, setDurationSeconds] = useState<DurationSeconds>(30);
   const [qualityPreset, setQualityPreset] = useState<QualityPreset>("balanced");
+  const [generationProfile, setGenerationProfile] = useState("");
   const [resolutionValue, setResolutionValue] =
     useState<ResolutionValue>("1344x768");
   const [scheduleDay, setScheduleDay] = useState("now");
@@ -287,6 +330,7 @@ function MediaHubDashboard({
   const [referenceImages, setReferenceImages] = useState<ReferenceImageDraft[]>(
     [],
   );
+  const [dialogues, setDialogues] = useState<H3DialogueDraft[]>([]);
   const [isImageLibraryOpen, setIsImageLibraryOpen] = useState(false);
   const referenceImagesRef = useRef<ReferenceImageDraft[]>([]);
   const appliedImageAssetsRef = useRef<string | null>(null);
@@ -584,12 +628,23 @@ function MediaHubDashboard({
       retry: false,
     }),
   );
+  const generationProfiles = (providerHealthQuery.data?.profiles ?? []).filter(
+    (profile) => profile.kind === "generate",
+  );
+  const effectiveGenerationProfileId =
+    generationProfile.length > 0
+      ? generationProfile
+      : (providerHealthQuery.data?.defaultGenerationProfile ?? "");
+  const selectedGenerationProfile = generationProfiles.find(
+    (profile) => profile.id === effectiveGenerationProfileId,
+  );
   const accountsQuery = useQuery(trpc.mediaHub.account.list.queryOptions({}));
   const createMutation = useMutation(
     trpc.mediaHub.generation.create.mutationOptions({
       onSuccess: () => {
         setPrompt("");
         setTitle("");
+        setDialogues([]);
         setDurationSeconds(30);
         setQualityPreset("balanced");
         setScheduleDay("now");
@@ -729,13 +784,35 @@ function MediaHubDashboard({
     setOptimizingPromptContext("create");
     setMessage("Codex Worker 正在优化提示词…");
     try {
+      if (dialogues.some((dialogue) => !dialogue.text.trim())) {
+        throw new Error("请填写所有已添加的逐字台词，或删除空白台词行。");
+      }
       const result = await optimizePromptMutation.mutateAsync({
         prompt: prompt.trim(),
         language: contentLanguage,
         title: title.trim() || undefined,
         durationSeconds,
         hasReferenceImage: referenceImages.length > 0,
+        dialogues: dialogues.map((dialogue) => ({
+          segment: dialogue.segment,
+          speakerId: dialogue.speakerId,
+          language: dialogue.language,
+          text: dialogue.text.trim(),
+        })),
       });
+      const dialogueLines = dialogues.map((dialogue) => ({
+        segment: dialogue.segment,
+        speakerId: dialogue.speakerId,
+        language: dialogue.language,
+        text: dialogue.text.trim(),
+      }));
+      if (
+        !h3PromptContainsDialogues(result.text, dialogueLines, durationSeconds)
+      ) {
+        throw new Error(
+          "AI 优化结果未完整保留逐字台词，请重试或检查台词所在分段。",
+        );
+      }
       setPrompt(result.text);
       setMessage("提示词已优化，可以继续修改或直接生成。");
     } catch (error) {
@@ -763,6 +840,47 @@ function MediaHubDashboard({
     setUploading(true);
     setMessage(null);
     try {
+      if (dialogues.some((dialogue) => !dialogue.text.trim())) {
+        throw new Error("请填写所有已添加的逐字台词，或删除空白台词行。");
+      }
+      const dialogueLines = dialogues.map((dialogue) => ({
+        segment: dialogue.segment,
+        speakerId: dialogue.speakerId,
+        language: dialogue.language,
+        text: dialogue.text.trim(),
+      }));
+      let generationPrompt = prompt.trim();
+      if (
+        shouldOptimizeH3PromptBeforeSubmit(generationPrompt, durationSeconds) ||
+        !h3PromptContainsDialogues(
+          generationPrompt,
+          dialogueLines,
+          durationSeconds,
+        )
+      ) {
+        setMessage("正在规范化 H3 分镜、原声与分段提示词…");
+        const optimized = await optimizePromptMutation.mutateAsync({
+          prompt: generationPrompt,
+          language: contentLanguage,
+          title: title.trim() || undefined,
+          durationSeconds,
+          hasReferenceImage: referenceImages.length > 0,
+          dialogues: dialogueLines,
+        });
+        if (
+          !h3PromptContainsDialogues(
+            optimized.text,
+            dialogueLines,
+            durationSeconds,
+          )
+        ) {
+          throw new Error(
+            "AI 优化结果未完整保留逐字台词，请重试或检查台词所在分段。",
+          );
+        }
+        generationPrompt = optimized.text;
+        setPrompt(generationPrompt);
+      }
       const preparedImages = await Promise.all(
         referenceImages.map(async (image) => {
           if (image.asset) {
@@ -810,7 +928,7 @@ function MediaHubDashboard({
         }
       }
       await createMutation.mutateAsync({
-        prompt: prompt.trim(),
+        prompt: generationPrompt,
         language: contentLanguage,
         title: title.trim() || undefined,
         sourceImageAssetId:
@@ -827,6 +945,7 @@ function MediaHubDashboard({
         referenceImageAssets: assetReferences,
         durationSeconds,
         qualityPreset,
+        h3Profile: generationProfile || undefined,
         scheduledAt,
         width: resolution.width,
         height: resolution.height,
@@ -1135,11 +1254,22 @@ function MediaHubDashboard({
                 视频时长
                 <select
                   value={durationSeconds}
-                  onChange={(event) =>
-                    setDurationSeconds(
-                      Number(event.target.value) as DurationSeconds,
-                    )
-                  }
+                  onChange={(event) => {
+                    const nextDuration = Number(
+                      event.target.value,
+                    ) as DurationSeconds;
+                    const segmentCount = Math.max(
+                      1,
+                      Math.ceil(nextDuration / 15),
+                    );
+                    setDurationSeconds(nextDuration);
+                    setDialogues((current) =>
+                      current.map((dialogue) => ({
+                        ...dialogue,
+                        segment: Math.min(dialogue.segment, segmentCount),
+                      })),
+                    );
+                  }}
                   className="mt-2 w-full cursor-pointer rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm outline-none focus:border-cyan-400"
                 >
                   {durationOptions.map((seconds) => (
@@ -1148,6 +1278,36 @@ function MediaHubDashboard({
                     </option>
                   ))}
                 </select>
+              </label>
+              <label className="block text-sm text-slate-300 sm:col-span-2">
+                H3 生成工作流
+                <select
+                  value={generationProfile}
+                  onChange={(event) => setGenerationProfile(event.target.value)}
+                  disabled={providerHealthQuery.isFetching}
+                  className="mt-2 w-full cursor-pointer rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm outline-none focus:border-cyan-400 disabled:cursor-wait disabled:opacity-60"
+                >
+                  <option value="">
+                    管理员默认
+                    {providerHealthQuery.data?.defaultGenerationProfile
+                      ? ` · ${providerHealthQuery.data.defaultGenerationProfile}`
+                      : ""}
+                  </option>
+                  {generationProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {h3GenerationProfileLabel(profile)}
+                    </option>
+                  ))}
+                </select>
+                <span className="mt-2 block text-xs leading-5 text-slate-500">
+                  本次选择会固化到任务，不受管理员之后修改默认工作流影响。
+                  {selectedGenerationProfile?.minimumSteps
+                    ? ` 当前工作流至少执行 ${selectedGenerationProfile.minimumSteps} 步。`
+                    : ""}
+                  {selectedGenerationProfile?.maxReferenceImages === 0
+                    ? " 当前工作流仅支持首帧，不支持额外参考图。"
+                    : ""}
+                </span>
               </label>
               <label className="block text-sm text-slate-300 sm:col-span-2">
                 生成质量
@@ -1218,6 +1378,174 @@ function MediaHubDashboard({
                 生产提示词，并补全镜头、动作节奏和场景连续性；明确要求的对白与画面文字保留所选内容语言。
               </p>
             </div>
+            <section className="mt-4 border-l-2 border-cyan-400/70 bg-slate-950/55 px-4 py-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-slate-200">
+                    原声台词（可选）
+                  </p>
+                  <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500">
+                    每句按原文进入 H3 原声音轨，并在生成后执行 ASR
+                    验收；不填时不会自动编造对白。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={dialogues.length >= 12}
+                  onClick={() =>
+                    setDialogues((current) => [
+                      ...current,
+                      {
+                        id: createDialogueDraftId(),
+                        segment: 1,
+                        speakerId:
+                          dialogueSpeakerOptions[
+                            current.length % dialogueSpeakerOptions.length
+                          ] ?? "S1",
+                        language: contentLanguage,
+                        text: "",
+                      },
+                    ])
+                  }
+                  className="border border-cyan-400/35 px-3 py-1.5 text-xs font-medium text-cyan-200 transition hover:border-cyan-300/70 hover:bg-cyan-400/10 focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  ＋ 添加台词
+                </button>
+              </div>
+              {dialogues.length === 0 ? (
+                <p className="mt-3 text-xs text-slate-600">
+                  当前为无指定台词。需要朗读、对话或唱词时，请逐句添加。
+                </p>
+              ) : (
+                <div className="mt-4 space-y-3">
+                  {dialogues.map((dialogue, dialogueIndex) => {
+                    const segmentCount = Math.max(
+                      1,
+                      Math.ceil(durationSeconds / 15),
+                    );
+                    return (
+                      <div
+                        key={dialogue.id}
+                        className="grid gap-3 border-t border-slate-800 pt-3 sm:grid-cols-[7rem_6rem_9rem_minmax(0,1fr)_auto] sm:items-start"
+                      >
+                        <label className="text-xs text-slate-500">
+                          所在分段
+                          <select
+                            value={dialogue.segment}
+                            onChange={(event) =>
+                              setDialogues((current) =>
+                                current.map((item) =>
+                                  item.id === dialogue.id
+                                    ? {
+                                        ...item,
+                                        segment: Number(event.target.value),
+                                      }
+                                    : item,
+                                ),
+                              )
+                            }
+                            className="mt-1.5 w-full border border-slate-700 bg-slate-950 px-2.5 py-2 text-sm text-slate-200 outline-none focus:border-cyan-400"
+                          >
+                            {Array.from(
+                              { length: segmentCount },
+                              (_, index) => index + 1,
+                            ).map((segment) => (
+                              <option key={segment} value={segment}>
+                                第 {segment} 段
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="text-xs text-slate-500">
+                          说话人
+                          <select
+                            value={dialogue.speakerId}
+                            onChange={(event) =>
+                              setDialogues((current) =>
+                                current.map((item) =>
+                                  item.id === dialogue.id
+                                    ? {
+                                        ...item,
+                                        speakerId: event.target.value as
+                                          | "S1"
+                                          | "S2"
+                                          | "S3"
+                                          | "S4",
+                                      }
+                                    : item,
+                                ),
+                              )
+                            }
+                            className="mt-1.5 w-full border border-slate-700 bg-slate-950 px-2.5 py-2 text-sm font-semibold text-cyan-200 outline-none focus:border-cyan-400"
+                          >
+                            {dialogueSpeakerOptions.map((speakerId) => (
+                              <option key={speakerId} value={speakerId}>
+                                {speakerId}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="text-xs text-slate-500">
+                          台词语言
+                          <select
+                            value={dialogue.language}
+                            onChange={(event) =>
+                              setDialogues((current) =>
+                                current.map((item) =>
+                                  item.id === dialogue.id
+                                    ? {
+                                        ...item,
+                                        language: event.target
+                                          .value as ContentLanguage,
+                                      }
+                                    : item,
+                                ),
+                              )
+                            }
+                            className="mt-1.5 w-full border border-slate-700 bg-slate-950 px-2.5 py-2 text-sm text-slate-200 outline-none focus:border-cyan-400"
+                          >
+                            <option value="zh">普通话</option>
+                            <option value="en">英语</option>
+                          </select>
+                        </label>
+                        <label className="text-xs text-slate-500">
+                          第 {dialogueIndex + 1} 句逐字台词
+                          <textarea
+                            value={dialogue.text}
+                            onChange={(event) =>
+                              setDialogues((current) =>
+                                current.map((item) =>
+                                  item.id === dialogue.id
+                                    ? { ...item, text: event.target.value }
+                                    : item,
+                                ),
+                              )
+                            }
+                            required
+                            maxLength={300}
+                            rows={2}
+                            placeholder="例如：跟我读，春天来了。"
+                            className="mt-1.5 w-full resize-y border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDialogues((current) =>
+                              current.filter((item) => item.id !== dialogue.id),
+                            )
+                          }
+                          className="mt-6 px-2 py-2 text-xs text-slate-500 transition hover:text-rose-300 focus-visible:ring-2 focus-visible:ring-rose-300 focus-visible:outline-none"
+                          aria-label={`删除第 ${dialogueIndex + 1} 句台词`}
+                        >
+                          删除
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
             <fieldset className="mt-4 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
               <legend className="px-1 text-sm text-slate-300">定点执行</legend>
               <div className="grid gap-4 sm:grid-cols-2">
@@ -1528,9 +1856,12 @@ function MediaHubDashboard({
                     editingJob?.id === job.id ? editingJob : null;
                   const isEditing = currentEdit !== null;
                   const canEdit = ["scheduled", "queued"].includes(job.status);
-                  const canCancel = ["scheduled", "queued", "running"].includes(
-                    job.status,
-                  );
+                  const canCancel = [
+                    "scheduled",
+                    "queued",
+                    "waiting_for_gpu",
+                    "running",
+                  ].includes(job.status);
                   const isTerminalJob = [
                     "succeeded",
                     "failed",
@@ -1984,9 +2315,18 @@ function MediaHubDashboard({
                         </div>
                       )}
                       {job.errorMessage && (
-                        <p className="mt-3 text-xs text-rose-300">
-                          {job.errorMessage}
-                        </p>
+                        <div className="mt-3 rounded-lg border border-rose-400/25 bg-rose-400/5 px-3 py-2.5 text-xs text-rose-200">
+                          <p>{job.errorMessage}</p>
+                          {(job.errorCode ?? job.failureStage) && (
+                            <p className="mt-1 font-mono text-[10px] text-rose-300/70">
+                              {job.errorCode ?? "unknown"} ·{" "}
+                              {job.failureStage ?? "unknown"}
+                              {job.errorRetryable === null
+                                ? ""
+                                : ` · ${job.errorRetryable ? "可重试" : "不可重试"}`}
+                            </p>
+                          )}
+                        </div>
                       )}
                       {failedPublishTargets.length > 0 && (
                         <div
@@ -2883,9 +3223,11 @@ function MediaHubDashboard({
                       <p className="mt-1 text-[10px] text-slate-500">
                         {job.status === "scheduled" && job.scheduledAt
                           ? `定于 ${new Date(job.scheduledAt).toLocaleString()}`
-                          : job.status === "running"
-                            ? `正在生成${queueElapsed ? ` · ${queueElapsed}` : ""}`
-                            : "等待 GPU 队列执行"}
+                          : job.status === "waiting_for_gpu"
+                            ? "等待统一 GPU 调度"
+                            : job.status === "running"
+                              ? `正在生成${queueElapsed ? ` · ${queueElapsed}` : ""}`
+                              : "等待 GPU 队列执行"}
                       </p>
                       <p className="mt-1 text-[10px] text-slate-600">
                         {job.width}×{job.height} · {job.steps} 步 · seed{" "}
@@ -3688,8 +4030,34 @@ function AgentApiManagementPanel() {
 
   const copyToken = async () => {
     if (!token) return;
+
     try {
-      await navigator.clipboard.writeText(token);
+      let copied = false;
+      const clipboard = Reflect.get(navigator, "clipboard") as
+        | Clipboard
+        | undefined;
+      if (clipboard) {
+        try {
+          await clipboard.writeText(token);
+          copied = true;
+        } catch {
+          // HTTP LAN deployments may expose the API but reject clipboard writes.
+        }
+      }
+      if (!copied) {
+        const input = document.createElement("textarea");
+        input.value = token;
+        input.readOnly = true;
+        input.style.position = "fixed";
+        input.style.left = "-9999px";
+        input.style.opacity = "0";
+        document.body.appendChild(input);
+        input.select();
+        input.setSelectionRange(0, input.value.length);
+        copied = document.execCommand("copy");
+        input.remove();
+        if (!copied) throw new Error("Legacy clipboard copy failed");
+      }
       setMessage("Token 已复制到剪贴板。");
     } catch {
       setMessage("浏览器不允许自动复制，请手动选择 Token。 ");
@@ -4117,6 +4485,7 @@ function StatusBadge({ status }: { status: string }) {
   const labels: Record<string, string> = {
     scheduled: "已定时",
     queued: "排队中",
+    waiting_for_gpu: "等待 GPU",
     running: "生成中",
     succeeded: "已完成",
     failed: "失败",
@@ -4125,6 +4494,7 @@ function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
     scheduled: "bg-amber-400/10 text-amber-300",
     queued: "bg-slate-700 text-slate-300",
+    waiting_for_gpu: "bg-orange-400/10 text-orange-300",
     running: "bg-cyan-400/10 text-cyan-300",
     succeeded: "bg-emerald-400/10 text-emerald-300",
     failed: "bg-rose-400/10 text-rose-300",

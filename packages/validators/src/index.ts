@@ -263,6 +263,7 @@ export const mediaUploadPresignSchema = z.object({
 export const mediaGenerationStatusEnum = z.enum([
   "scheduled",
   "queued",
+  "waiting_for_gpu",
   "running",
   "succeeded",
   "failed",
@@ -272,6 +273,13 @@ export const mediaGenerationStatusEnum = z.enum([
 export const mediaContentLanguageEnum = z.enum(["zh", "en"]);
 export const mediaH3QualityPresetEnum = z.enum(["fast", "balanced", "quality"]);
 
+/** Agent API、OpenAPI 与内部 tRPC 共用的 H3 请求契约常量。 */
+export const MEDIA_H3_PROMPT_MAX_LENGTH = 16_000;
+export const MEDIA_H3_DEFAULT_WIDTH = 1344;
+export const MEDIA_H3_DEFAULT_HEIGHT = 768;
+export const MEDIA_H3_DEFAULT_DURATION_SECONDS = 30;
+export const MEDIA_H3_DEFAULT_QUALITY_PRESET = "balanced" as const;
+
 export const mediaH3DimensionSchema = z
   .number()
   .int()
@@ -279,9 +287,30 @@ export const mediaH3DimensionSchema = z
   .max(1344)
   .refine((value) => value % 32 === 0, "H3 宽高必须是 32 的倍数");
 
+export const mediaH3DialogueSchema = z.object({
+  segment: z.number().int().min(1).max(4),
+  speakerId: z.enum(["S1", "S2", "S3", "S4"]),
+  language: mediaContentLanguageEnum,
+  text: z
+    .string()
+    .trim()
+    .min(1, "请输入逐字台词")
+    .max(300, "单句台词不能超过 300 个字符")
+    .refine(
+      (value) => !/[<>]/.test(value),
+      "台词不能包含尖括号，H3 标签由系统自动生成",
+    ),
+});
+
+export type MediaH3Dialogue = z.infer<typeof mediaH3DialogueSchema>;
+
 /** 创建一个 MiniMax H3 图片/文字视频生成任务。 */
 export const createMediaGenerationSchema = z.object({
-  prompt: z.string().trim().min(1, "请输入视频描述").max(16000),
+  prompt: z
+    .string()
+    .trim()
+    .min(1, "请输入视频描述")
+    .max(MEDIA_H3_PROMPT_MAX_LENGTH),
   language: mediaContentLanguageEnum.default("en"),
   sourceImageStorageKey: z.string().min(1).optional(),
   sourceImageName: z.string().max(255).optional(),
@@ -311,12 +340,21 @@ export const createMediaGenerationSchema = z.object({
     .max(4, "最多上传 4 张风格或主体参考图")
     .default([]),
   title: z.string().trim().max(200).optional(),
-  durationSeconds: z.number().int().min(5).max(60).default(30),
-  qualityPreset: mediaH3QualityPresetEnum.default("balanced"),
+  durationSeconds: z
+    .number()
+    .int()
+    .min(5)
+    .max(60)
+    .default(MEDIA_H3_DEFAULT_DURATION_SECONDS),
+  qualityPreset: mediaH3QualityPresetEnum.default(
+    MEDIA_H3_DEFAULT_QUALITY_PRESET,
+  ),
+  /** 可选的单次任务 H3 工作流；留空时由服务端使用管理员默认值。 */
+  h3Profile: z.string().trim().min(1).max(200).optional(),
   seed: z.number().int().min(0).max(2_147_483_643).optional(),
   scheduledAt: z.date().nullable().optional(),
-  width: mediaH3DimensionSchema.default(1344),
-  height: mediaH3DimensionSchema.default(768),
+  width: mediaH3DimensionSchema.default(MEDIA_H3_DEFAULT_WIDTH),
+  height: mediaH3DimensionSchema.default(MEDIA_H3_DEFAULT_HEIGHT),
 });
 
 export const mediaImageDimensionSchema = z
@@ -407,7 +445,7 @@ export const mediaGenerationListSchema = z.object({
   page: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(100).default(20),
   status: mediaGenerationStatusEnum.optional(),
-  statuses: z.array(mediaGenerationStatusEnum).min(1).max(6).optional(),
+  statuses: z.array(mediaGenerationStatusEnum).min(1).max(7).optional(),
 });
 
 export const mediaGenerationIdSchema = z.object({
@@ -466,13 +504,27 @@ export const publishMediaGenerationSchema = z.object({
     ),
 });
 
-export const optimizeMediaPromptSchema = z.object({
-  prompt: z.string().trim().min(1, "请先填写提示词").max(5000),
-  language: mediaContentLanguageEnum.default("en"),
-  title: z.string().trim().max(200).optional(),
-  durationSeconds: z.number().int().min(5).max(60),
-  hasReferenceImage: z.boolean().default(false),
-});
+export const optimizeMediaPromptSchema = z
+  .object({
+    prompt: z.string().trim().min(1, "请先填写提示词").max(5000),
+    language: mediaContentLanguageEnum.default("en"),
+    title: z.string().trim().max(200).optional(),
+    durationSeconds: z.number().int().min(5).max(60),
+    hasReferenceImage: z.boolean().default(false),
+    dialogues: z.array(mediaH3DialogueSchema).max(12).default([]),
+  })
+  .superRefine((input, ctx) => {
+    const segmentCount = Math.max(1, Math.ceil(input.durationSeconds / 15));
+    input.dialogues.forEach((dialogue, index) => {
+      if (dialogue.segment > segmentCount) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["dialogues", index, "segment"],
+          message: `${input.durationSeconds} 秒视频只有 ${segmentCount} 个分段`,
+        });
+      }
+    });
+  });
 
 export const optimizeMediaImagePromptSchema = z.object({
   prompt: z.string().trim().min(1, "请先填写图片描述或修改指令").max(5000),

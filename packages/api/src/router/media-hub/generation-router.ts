@@ -10,12 +10,12 @@ import {
   mediaPublishTarget,
   mediaReviewLog,
   mediaTask,
+  mediaUserPreference,
   user as User,
 } from "@acme/db/schema";
 import { log } from "@acme/logger";
 import {
   deleteMediaHubObject,
-  getMediaHubObject,
   getMediaHubPresignedDownloadUrl,
 } from "@acme/storage";
 import {
@@ -35,7 +35,6 @@ import {
 import {
   cancelMediaGenerationJob,
   getMediaGenerationProviderHealth,
-  prepareFeishuVideo,
   rescheduleMediaGenerationJob,
   scheduleMediaGenerationJob,
   startMediaGenerationScheduler,
@@ -50,7 +49,10 @@ import {
   isProtectedMediaTaskStatus,
   isRetryableMediaGenerationStatus,
 } from "./generation-access";
-import { H3_PROFILE, h3StepsForPreset } from "./h3-generation-config";
+import {
+  h3StepsForPreset,
+  validateH3GenerationPrompt,
+} from "./h3-generation-config";
 import { canManageMediaPlatformAccount } from "./platform-account-access";
 import {
   normalizeMediaPublishPlan,
@@ -58,6 +60,7 @@ import {
   writeMediaPublishPlans,
 } from "./publish-settings";
 import { runPublishForTask, startMediaPublishScheduler } from "./runner";
+import { resolveMediaSystemSetting } from "./system-settings";
 
 startMediaGenerationScheduler();
 startMediaPublishScheduler();
@@ -74,15 +77,49 @@ function fireAndForgetGenerationPublish(taskId: string): void {
   });
 }
 
+async function requireH3Profile(profileId: string, kind: "generate" | "edit") {
+  const health = await getMediaGenerationProviderHealth(false);
+  if (health.status !== "healthy") {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: `H3 Provider 当前不可用：${health.message}`,
+    });
+  }
+  const profile = health.profiles.find(
+    (candidate) => candidate.id === profileId,
+  );
+  if (!profile) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: `H3 Provider 未启用管理员选择的工作流 ${profileId}`,
+    });
+  }
+  if (profile.kind !== kind) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: `H3 工作流 ${profileId} 不支持${kind === "edit" ? "视频编辑" : "视频生成"}`,
+    });
+  }
+  return profile;
+}
+
 export const mediaGenerationRouter = {
-  providerHealth: protectedProcedure.query(() =>
-    getMediaGenerationProviderHealth(true),
-  ),
+  providerHealth: protectedProcedure.query(async () => {
+    const [health, systemSettings] = await Promise.all([
+      getMediaGenerationProviderHealth(true),
+      resolveMediaSystemSetting(),
+    ]);
+    return {
+      ...health,
+      defaultGenerationProfile: systemSettings.h3GenerationProfile,
+    };
+  }),
 
   create: protectedProcedure
     .input(createMediaGenerationSchema)
     .mutation(async ({ ctx, input }) => {
       startMediaGenerationScheduler();
+      const systemSettings = await resolveMediaSystemSetting();
       const scheduledAt = input.scheduledAt ?? null;
       if (scheduledAt && scheduledAt.getTime() <= Date.now()) {
         throw new TRPCError({
@@ -94,6 +131,16 @@ export const mediaGenerationRouter = {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "上传图片后缺少图片类型",
+        });
+      }
+      const promptIssues = validateH3GenerationPrompt(
+        input.prompt,
+        input.durationSeconds,
+      );
+      if (promptIssues.length) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `H3 提示词预检失败：${promptIssues.join("；")}`,
         });
       }
 
@@ -153,6 +200,21 @@ export const mediaGenerationRouter = {
           message: "最多选择 4 张风格或主体参考图",
         });
       }
+      const selectedProfileId =
+        input.h3Profile ?? systemSettings.h3GenerationProfile;
+      const selectedProfile = await requireH3Profile(
+        selectedProfileId,
+        "generate",
+      );
+      if (
+        selectedProfile.maxReferenceImages !== null &&
+        referenceImages.length > selectedProfile.maxReferenceImages
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `当前 H3 工作流最多支持 ${selectedProfile.maxReferenceImages} 张额外参考图`,
+        });
+      }
 
       const id = crypto.randomUUID();
       const now = new Date();
@@ -173,9 +235,12 @@ export const mediaGenerationRouter = {
         width: input.width,
         height: input.height,
         qualityPreset: input.qualityPreset,
-        steps: h3StepsForPreset(input.qualityPreset),
+        steps: Math.max(
+          h3StepsForPreset(input.qualityPreset),
+          selectedProfile.minimumSteps ?? 1,
+        ),
         seed: input.seed ?? randomInt(0, 2_147_483_643),
-        profile: H3_PROFILE,
+        profile: selectedProfileId,
         status: scheduledAt ? "scheduled" : "queued",
         scheduledAt,
         createdBy: ctx.session.user.id,
@@ -191,6 +256,11 @@ export const mediaGenerationRouter = {
     .input(createMediaVideoEditSchema)
     .mutation(async ({ ctx, input }) => {
       startMediaGenerationScheduler();
+      const systemSettings = await resolveMediaSystemSetting();
+      const selectedProfile = await requireH3Profile(
+        systemSettings.h3EditProfile,
+        "edit",
+      );
       const sourceJob = await ctx.db.query.mediaGenerationJob.findFirst({
         where: eq(mediaGenerationJob.id, input.sourceGenerationJobId),
       });
@@ -257,9 +327,9 @@ export const mediaGenerationRouter = {
         width: sourceJob.width,
         height: sourceJob.height,
         qualityPreset: "quality",
-        steps: 20,
+        steps: Math.max(20, selectedProfile.minimumSteps ?? 1),
         seed: randomInt(0, 2_147_483_643),
-        profile: "platform-h3-ref2va-edit-v1",
+        profile: systemSettings.h3EditProfile,
         status: scheduledAt ? "scheduled" : "queued",
         scheduledAt,
         createdBy: ctx.session.user.id,
@@ -472,6 +542,18 @@ export const mediaGenerationRouter = {
           message: "定点执行时间必须晚于当前时间",
         });
       }
+      if (job.kind === "generate") {
+        const promptIssues = validateH3GenerationPrompt(
+          input.prompt,
+          input.durationSeconds,
+        );
+        if (promptIssues.length) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `H3 提示词预检失败：${promptIssues.join("；")}`,
+          });
+        }
+      }
 
       const nextStatus = input.scheduledAt ? "scheduled" : "queued";
       const trimmedTitle = input.title?.trim();
@@ -548,7 +630,7 @@ export const mediaGenerationRouter = {
       };
     }),
 
-  /** 管理员或任务所有者重新发送带可播放视频和生成参数的飞书通知。 */
+  /** 管理员或任务所有者向任务创建人配置的 Webhook 重发生成结果。 */
   resendNotification: protectedProcedure
     .input(mediaGenerationIdSchema)
     .mutation(async ({ ctx, input }) => {
@@ -580,14 +662,16 @@ export const mediaGenerationRouter = {
         });
       }
 
-      const [sourceVideo, creator] = await Promise.all([
-        getMediaHubObject(job.outputStorageKey),
+      const [creator, recipientPreference] = await Promise.all([
         ctx.db.query.user.findFirst({
           where: eq(User.id, job.createdBy),
           columns: { name: true, email: true },
         }),
+        ctx.db.query.mediaUserPreference.findFirst({
+          where: eq(mediaUserPreference.userId, job.createdBy),
+          columns: { feishuWebhookUrl: true },
+        }),
       ]);
-      const video = await prepareFeishuVideo(sourceVideo);
       const appUrl = process.env.APP_URL?.replace(/\/$/, "");
       await sendGenerationResultCard({
         jobId: job.id,
@@ -620,12 +704,11 @@ export const mediaGenerationRouter = {
         hasFirstFrame: Boolean(job.sourceImageStorageKey),
         scheduledAt: job.scheduledAt,
         providerJobId: job.providerJobId,
-        videoBytes: video.length,
         createdByLabel: creator
           ? `${creator.name} (${creator.email})`
           : job.createdBy,
         videoUrl: appUrl ? `${appUrl}/#generation-job-${job.id}` : undefined,
-        video,
+        recipientWebhookUrl: recipientPreference?.feishuWebhookUrl,
       });
       log.info("Media generation result notification resent", {
         code: "MEDIA_GENERATION_RESULT_CARD_RESENT",
@@ -967,6 +1050,12 @@ export const mediaGenerationRouter = {
           outputStorageKey: null,
           mediaTaskId: null,
           errorMessage: null,
+          errorCode: null,
+          failureStage: null,
+          errorRetryable: null,
+          gpuBrokerLeaseId: null,
+          asrTranscript: null,
+          asrMatchPercent: null,
           workflowVersion: null,
           modelVersion: null,
           startedAt: null,
@@ -1030,10 +1119,16 @@ export const mediaGenerationRouter = {
       }
 
       await cancelMediaGenerationJob(input.id);
-      const creator = await ctx.db.query.user.findFirst({
-        where: eq(User.id, job.createdBy),
-        columns: { name: true, email: true },
-      });
+      const [creator, recipientPreference] = await Promise.all([
+        ctx.db.query.user.findFirst({
+          where: eq(User.id, job.createdBy),
+          columns: { name: true, email: true },
+        }),
+        ctx.db.query.mediaUserPreference.findFirst({
+          where: eq(mediaUserPreference.userId, job.createdBy),
+          columns: { feishuWebhookUrl: true },
+        }),
+      ]);
       const creatorLabel = creator
         ? `${creator.name} (${creator.email})`
         : job.createdBy;
@@ -1052,6 +1147,7 @@ export const mediaGenerationRouter = {
         previousStatus: job.status,
         createdByLabel: creatorLabel,
         canceledByLabel,
+        recipientWebhookUrl: recipientPreference?.feishuWebhookUrl,
       }).catch((error: unknown) => {
         log.error("Media generation cancel alert failed", {
           code: "MEDIA_GENERATION_CANCEL_ALERT_FAILED",
@@ -1121,6 +1217,7 @@ export const mediaGenerationRouter = {
           inArray(mediaGenerationJob.status, [
             "scheduled",
             "queued",
+            "waiting_for_gpu",
             "running",
           ]),
         ),

@@ -30,6 +30,7 @@ REQUEST_CONTRACT = "ydc_generated_media_provider_request.v1"
 CONFIG_CONTRACT = "generated_media_provider_config.v1"
 COMFYUI_WAN22_ADAPTER_KIND = "comfyui_wan22_i2v.v1"
 COMFYUI_H3_ADAPTER_KIND = "comfyui_minimax_h3_i2v.v1"
+COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND = "comfyui_minimax_h3_i2v_official.v1"
 COMFYUI_H3_REF2VA_ADAPTER_KIND = "comfyui_minimax_h3_ref2va.v1"
 COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND = "comfyui_hidream_o1_image.v1"
 INLINE_CORE_H3_ADAPTER_KIND = "inline_core_minimax_h3_i2v.v1"
@@ -92,6 +93,7 @@ HIDREAM_IMAGE_REQUIRED_NODES = (
 )
 COMFYUI_H3_ADAPTER_KINDS = {
     COMFYUI_H3_ADAPTER_KIND,
+    COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND,
     COMFYUI_H3_REF2VA_ADAPTER_KIND,
 }
 H3_ADAPTER_KINDS = {*COMFYUI_H3_ADAPTER_KINDS, INLINE_CORE_H3_ADAPTER_KIND}
@@ -264,6 +266,7 @@ class ProviderProfile:
         if adapter not in {
             COMFYUI_WAN22_ADAPTER_KIND,
             COMFYUI_H3_ADAPTER_KIND,
+            COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND,
             COMFYUI_H3_REF2VA_ADAPTER_KIND,
             COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
             INLINE_CORE_H3_ADAPTER_KIND,
@@ -280,6 +283,10 @@ class ProviderProfile:
         elif adapter == COMFYUI_H3_ADAPTER_KIND:
             required_model_keys = (
                 "transformer", "text_encoder", "video_vae", "audio_vae", "turbo_lora"
+            )
+        elif adapter == COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND:
+            required_model_keys = (
+                "transformer", "text_encoder", "video_vae", "audio_vae"
             )
         elif adapter == COMFYUI_H3_REF2VA_ADAPTER_KIND:
             required_model_keys = (
@@ -1119,6 +1126,117 @@ def _build_comfyui_h3_prompt(
     return nodes
 
 
+def _build_comfyui_h3_official_i2v_prompt(
+    profile: ProviderProfile,
+    *,
+    first_frame_ref: str | None,
+    reference_image_refs: list[str],
+    positive: str,
+    width: int,
+    height: int,
+    length: int,
+    seed: int,
+    filename_prefix: str,
+    steps: int,
+    fps: float,
+) -> dict[str, Any]:
+    """Build the pinned Comfy-Org H3 I2V baseline in API prompt format."""
+    if reference_image_refs:
+        raise ProviderJobError(
+            "profile_reference_images_unsupported",
+            "the selected official H3 I2V workflow does not support extra reference images",
+        )
+    nodes: dict[str, Any] = {
+        "10": {
+            "class_type": "UNETLoader",
+            "inputs": {"unet_name": profile.transformer, "weight_dtype": "default"},
+        },
+        "12": {
+            "class_type": "CLIPLoader",
+            "inputs": {
+                "clip_name": profile.text_encoder,
+                "type": "minimax",
+                "device": "default",
+            },
+        },
+        "13": {"class_type": "VAELoader", "inputs": {"vae_name": profile.video_vae}},
+        "14": {"class_type": "VAELoader", "inputs": {"vae_name": profile.audio_vae}},
+    }
+    conditioning_inputs: dict[str, Any] = {
+        "clip": ["12", 0],
+        "vae": ["13", 0],
+        "prompt": positive,
+        "width": width,
+        "height": height,
+        "length": length,
+    }
+    if first_frame_ref:
+        nodes["20"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": first_frame_ref},
+        }
+        conditioning_inputs["first_frame"] = ["20", 0]
+    nodes["30"] = {
+        "class_type": "MiniMaxH3ImageToVideo",
+        "inputs": conditioning_inputs,
+    }
+    official_steps = max(steps, profile.default_steps)
+    nodes.update(
+        {
+            "40": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
+            "41": {
+                "class_type": "BasicScheduler",
+                "inputs": {
+                    "model": ["10", 0],
+                    "scheduler": "simple",
+                    "steps": official_steps,
+                    "denoise": 1.0,
+                },
+            },
+            "42": {
+                "class_type": "KSamplerSelect",
+                "inputs": {"sampler_name": "res_multistep"},
+            },
+            "43": {
+                "class_type": "BasicGuider",
+                "inputs": {"model": ["10", 0], "conditioning": ["30", 0]},
+            },
+            "44": {
+                "class_type": "SamplerCustomAdvanced",
+                "inputs": {
+                    "noise": ["40", 0],
+                    "guider": ["43", 0],
+                    "sampler": ["42", 0],
+                    "sigmas": ["41", 0],
+                    "latent_image": ["30", 1],
+                },
+            },
+            "50": {
+                "class_type": "VAEDecode",
+                "inputs": {"samples": ["44", 0], "vae": ["13", 0]},
+            },
+            "51": {
+                "class_type": "VAEDecodeAudio",
+                "inputs": {"samples": ["44", 0], "vae": ["14", 0]},
+            },
+            "60": {
+                "class_type": "CreateVideo",
+                "inputs": {"images": ["50", 0], "audio": ["51", 0], "fps": fps},
+            },
+            "70": {
+                "class_type": "SaveVideo",
+                "inputs": {
+                    "video": ["60", 0],
+                    "filename_prefix": filename_prefix,
+                    "format": "auto",
+                    "codec": "auto",
+                },
+            },
+        }
+    )
+    return nodes
+
+
 def _build_comfyui_h3_ref2va_prompt(
     profile: ProviderProfile,
     *,
@@ -1478,8 +1596,49 @@ class ProviderService:
             "profiles": sorted(self.config.profiles),
             "backends": values,
         }
+        profile_details = []
+        for name, profile in sorted(self.config.profiles.items()):
+            if profile.adapter in {
+                COMFYUI_H3_ADAPTER_KIND,
+                COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND,
+                INLINE_CORE_H3_ADAPTER_KIND,
+            }:
+                kind = "generate"
+                max_reference_images = (
+                    4 if profile.adapter == COMFYUI_H3_ADAPTER_KIND else 0
+                )
+            elif profile.adapter == COMFYUI_H3_REF2VA_ADAPTER_KIND:
+                kind = "edit"
+                max_reference_images = 4
+            elif profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
+                kind = "image"
+                max_reference_images = 4
+            else:
+                kind = "legacy"
+                max_reference_images = 0
+            minimum_steps = (
+                profile.default_steps
+                if profile.adapter
+                in {
+                    COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND,
+                    COMFYUI_H3_REF2VA_ADAPTER_KIND,
+                }
+                else 1
+            )
+            profile_details.append(
+                {
+                    "id": name,
+                    "kind": kind,
+                    "adapter": profile.adapter,
+                    "workflow_version": profile.workflow_version,
+                    "model_version": profile.model_version,
+                    "max_reference_images": max_reference_images,
+                    "minimum_steps": minimum_steps,
+                }
+            )
         return {
             **value,
+            "profile_details": profile_details,
             "provider_version": self.config.provider_version,
             "contract": REQUEST_CONTRACT,
             "resource_lifecycle": self.resource_lifecycle(),
@@ -2317,6 +2476,25 @@ class ProviderService:
                         steps=int(parameters["steps"]),
                         fps=float(parameters["fps"]),
                         preserve_source_audio=bool(parameters["preserve_source_audio"]),
+                    )
+                    content = self._run_or_resume_comfyui_prompt(job_id, prompt)
+                elif profile.adapter == COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND:
+                    if self.comfyui is None:
+                        raise ProviderJobError(
+                            "comfyui_unavailable", "platform H3 generation backend is unavailable"
+                        )
+                    prompt = _build_comfyui_h3_official_i2v_prompt(
+                        profile,
+                        first_frame_ref=first_frame_ref,
+                        reference_image_refs=reference_image_refs,
+                        positive=str(parameters["behavior_prompts"][label]),
+                        width=int(parameters["width"]),
+                        height=int(parameters["height"]),
+                        length=int(parameters["length"]),
+                        seed=seed,
+                        filename_prefix=f"ydc_generated_media/{job_id}/{sample_id}",
+                        steps=int(parameters["steps"]),
+                        fps=float(parameters["fps"]),
                     )
                     content = self._run_or_resume_comfyui_prompt(job_id, prompt)
                 elif profile.adapter == COMFYUI_H3_ADAPTER_KIND:

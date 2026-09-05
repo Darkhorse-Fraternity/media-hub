@@ -5,12 +5,11 @@ import {
   mediaPlatformAccount,
   mediaPublishTarget,
   mediaTask,
+  mediaUserPreference,
 } from "@acme/db/schema";
 import { log } from "@acme/logger";
-import { getMediaHubObject } from "@acme/storage";
 
 import { sendPublishResultCard } from "./feishu-notify";
-import { prepareFeishuVideo } from "./generation";
 import {
   isMediaPublishPlanDue,
   readMediaPublishPlans,
@@ -181,23 +180,15 @@ async function aggregateTaskStatus(taskId: string) {
       where: eq(mediaTask.id, taskId),
     });
     if (task) {
-      const generation = await db.query.mediaGenerationJob.findFirst({
-        where: eq(mediaGenerationJob.mediaTaskId, task.id),
-      });
-      let notificationVideo: Buffer | undefined;
-      if (generation) {
-        try {
-          notificationVideo = await prepareFeishuVideo(
-            await getMediaHubObject(task.videoStorageKey),
-          );
-        } catch (error) {
-          log.error("Preparing publish result video for Feishu failed", {
-            code: "MEDIA_PUBLISH_RESULT_VIDEO_FAILED",
-            task_id: taskId,
-            err: error instanceof Error ? error : new Error(String(error)),
-          });
-        }
-      }
+      const [generation, recipientPreference] = await Promise.all([
+        db.query.mediaGenerationJob.findFirst({
+          where: eq(mediaGenerationJob.mediaTaskId, task.id),
+        }),
+        db.query.mediaUserPreference.findFirst({
+          where: eq(mediaUserPreference.userId, task.createdBy),
+          columns: { feishuWebhookUrl: true },
+        }),
+      ]);
       const accountIds = [
         ...new Set(targets.map((target) => target.accountId)),
       ];
@@ -214,13 +205,12 @@ async function aggregateTaskStatus(taskId: string) {
         await sendPublishResultCard({
           taskId,
           title: task.title,
-          video: notificationVideo,
-          videoBytes: notificationVideo?.length,
           durationSeconds: generation?.durationSeconds,
           fps: generation?.fps,
           width: generation?.width,
           height: generation?.height,
           providerJobId: generation?.providerJobId,
+          recipientWebhookUrl: recipientPreference?.feishuWebhookUrl,
           targets: targets.map((t) => ({
             platform: t.platform,
             accountLabel: accountLabelById.get(t.accountId) ?? null,

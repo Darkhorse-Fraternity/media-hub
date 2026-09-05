@@ -5,6 +5,7 @@ the FL2VA video profile, the Ref2VA video editing profile, and the HiDream-O1
 image generation/editing profile.
 
 - Provider source: `generated_media_comfyui_provider.py`
+- Official Comfy-Org I2V baseline profile: `official-i2v-profile.json`
 - Ref2VA profile fragment: `ref2va-profile.json`
 - HiDream profile fragment: `hidream-profile.json`
 - GPU execution is serialized by the Provider's single-worker executor.
@@ -13,6 +14,9 @@ image generation/editing profile.
 - Ref2VA accepts one source video plus up to two additional reference videos and
   nine images. Media Hub currently submits one 2–15 second source clip and up to
   four per-segment style/subject images.
+- The official I2V baseline uses `MiniMaxH3ImageToVideo`, the `simple`
+  scheduler, and `res_multistep` sampling at a minimum of 20 steps. It supports
+  an optional first frame but intentionally rejects extra reference images.
 
 Set `YDC_GENERATED_MEDIA_PROVIDER_CONFIG` to the local Provider configuration
 path and run `generated_media_comfyui_provider.py` as the service entrypoint.

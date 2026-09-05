@@ -5,7 +5,12 @@ import { authClient } from "~/auth/client";
 import { formatGenerationElapsed } from "~/lib/generation-display";
 import { useTRPC } from "~/lib/trpc";
 
-const activeVideoStatuses = ["scheduled", "queued", "running"] as const;
+const activeVideoStatuses = [
+  "scheduled",
+  "queued",
+  "waiting_for_gpu",
+  "running",
+] as const;
 const activeImageStatuses = new Set(["queued", "running"]);
 
 export function FloatingMediaQueue() {
@@ -214,9 +219,11 @@ export function FloatingMediaQueue() {
                     <p className="mt-1 text-[10px] text-slate-500">
                       {job.status === "scheduled" && job.scheduledAt
                         ? `定于 ${new Date(job.scheduledAt).toLocaleString()}`
-                        : job.status === "running"
-                          ? `正在生成${elapsed ? ` · ${elapsed}` : ""}`
-                          : "等待 GPU 队列执行"}
+                        : job.status === "waiting_for_gpu"
+                          ? "等待统一 GPU 调度"
+                          : job.status === "running"
+                            ? `正在生成${elapsed ? ` · ${elapsed}` : ""}`
+                            : "等待 GPU 队列执行"}
                     </p>
                   </div>
                   <QueueStatus status={job.status} />
@@ -373,12 +380,14 @@ function QueueStatus({ status }: { status: string }) {
   const labels: Record<string, string> = {
     scheduled: "已定时",
     queued: "排队中",
+    waiting_for_gpu: "等待 GPU",
     running: "生成中",
     failed: "失败",
   };
   const colors: Record<string, string> = {
     scheduled: "bg-amber-400/10 text-amber-300",
     queued: "bg-slate-800 text-slate-300",
+    waiting_for_gpu: "bg-orange-400/10 text-orange-300",
     running: "bg-cyan-400/10 text-cyan-300",
     failed: "bg-rose-400/10 text-rose-300",
   };

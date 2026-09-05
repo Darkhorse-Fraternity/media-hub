@@ -46,6 +46,8 @@ export const mediaUserPreference = pgTable("media_user_preference", {
   instagramShareToFeed: boolean("instagram_share_to_feed")
     .notNull()
     .default(true),
+  /** 该用户的通知地址；留空时不发送任何飞书通知。 */
+  feishuWebhookUrl: text("feishu_webhook_url"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -56,11 +58,16 @@ export const mediaUserPreference = pgTable("media_user_preference", {
  */
 export const mediaSystemSetting = pgTable("media_system_setting", {
   id: text("id").primaryKey(),
+  /** Provider 注册的默认 H3 生成 profile；为空时使用部署默认值。 */
+  h3GenerationProfile: text("h3_generation_profile"),
+  /** Provider 注册的默认 H3 编辑 profile；为空时使用部署默认值。 */
+  h3EditProfile: text("h3_edit_profile"),
   codexWorkerUrl: text("codex_worker_url"),
   codexWorkerSource: text("codex_worker_source"),
   codexTimeoutMs: integer("codex_timeout_ms").notNull().default(180000),
   ollamaBaseUrl: text("ollama_base_url"),
   ollamaModel: text("ollama_model").notNull().default("qwen3-vl:32b"),
+  /** @deprecated 保留旧列以避免破坏性迁移；通知不再读取全局群配置。 */
   feishuReviewChatId: text("feishu_review_chat_id"),
   updatedBy: text("updated_by").references(() => user.id, {
     onDelete: "set null",
@@ -178,7 +185,7 @@ export const mediaGenerationJob = pgTable("media_generation_job", {
   profile: text("profile").notNull().default("platform-h3-i2v-inline-v1"),
   workflowVersion: text("workflow_version"),
   modelVersion: text("model_version"),
-  /** scheduled|queued|running|succeeded|failed|canceled */
+  /** scheduled|queued|waiting_for_gpu|running|succeeded|failed|canceled */
   status: text("status").notNull().default("queued"),
   scheduledAt: timestamp("scheduled_at"),
   providerJobId: text("provider_job_id"),
@@ -187,6 +194,18 @@ export const mediaGenerationJob = pgTable("media_generation_job", {
     onDelete: "set null",
   }),
   errorMessage: text("error_message"),
+  /** Provider/质检可机读失败码，例如 gpu_out_of_memory。 */
+  errorCode: text("error_code"),
+  /** provider_backend | provider_execution | output_validation | orchestration */
+  failureStage: text("failure_stage"),
+  /** 是否适合在资源或链路恢复后原参数重试。 */
+  errorRetryable: boolean("error_retryable"),
+  /** gpu-resource-broker 的幂等请求与当前租约，用于重启续跑和审计。 */
+  gpuBrokerRequestId: text("gpu_broker_request_id"),
+  gpuBrokerLeaseId: text("gpu_broker_lease_id"),
+  /** H3 原始音轨的只读 ASR 验收结果；不会替换原声音轨。 */
+  asrTranscript: text("asr_transcript"),
+  asrMatchPercent: integer("asr_match_percent"),
   createdBy: text("created_by")
     .notNull()
     .references(() => user.id, { onDelete: "restrict" }),

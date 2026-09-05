@@ -4,7 +4,6 @@ import { mediaPlatformStats } from "@acme/db/schema";
 import { log } from "@acme/logger";
 
 import type { StatsFetchIssue } from "./stats-fetcher";
-import { sendToReviewChat } from "./feishu-notify";
 import { buildDailyReportSuggestionSystemPrompt } from "./growth-prompts";
 import { resolveMediaSystemSetting } from "./system-settings";
 
@@ -281,26 +280,18 @@ export async function sendDailyReport(input?: {
     ],
   };
 
-  try {
-    await sendToReviewChat(JSON.stringify(card));
-    log.info("Daily report sent", {
-      code: "MEDIA_DAILY_REPORT_SENT",
-      date: today,
-      video_count: platformSummaries.reduce(
-        (sum, summary) => sum + summary.todayRows.length,
-        0,
-      ),
-      total_views: platformSummaries.reduce(
-        (sum, summary) => sum + summary.totalViews,
-        0,
-      ),
-      ai_suggestions: !!aiSuggestions,
-    });
-  } catch (err) {
-    log.error("Daily report send failed", {
-      code: "MEDIA_DAILY_REPORT_FAILED",
-      err: err instanceof Error ? err : new Error(String(err)),
-    });
-    throw err;
-  }
+  log.info("Daily report generated without an unscoped notification", {
+    code: "MEDIA_DAILY_REPORT_NOTIFICATION_DISABLED",
+    date: today,
+    card_bytes: Buffer.byteLength(JSON.stringify(card)),
+    video_count: platformSummaries.reduce(
+      (sum, summary) => sum + summary.todayRows.length,
+      0,
+    ),
+    total_views: platformSummaries.reduce(
+      (sum, summary) => sum + summary.totalViews,
+      0,
+    ),
+    ai_suggestions: !!aiSuggestions,
+  });
 }

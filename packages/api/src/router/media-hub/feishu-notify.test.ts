@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  buildFeishuVideoContent,
   buildGenerationResultCard,
+  resolveGenerationNotificationDestination,
 } from "./feishu-notify";
 
 describe("buildGenerationResultCard", () => {
@@ -57,17 +57,30 @@ describe("buildGenerationResultCard", () => {
       hasFirstFrame: false,
       createdByLabel: "Service",
       errorMessage: "provider timeout",
+      errorCode: "provider_transport_failed",
+      failureStage: "provider_transport",
+      errorRetryable: true,
     });
 
     expect(card.header.template).toBe("red");
     expect(card.header.title.content).toContain("视频生成失败");
     expect(JSON.stringify(card)).toContain("provider timeout");
+    expect(JSON.stringify(card)).toContain("provider_transport_failed");
+    expect(JSON.stringify(card)).toContain("provider_transport · 是");
     expect(JSON.stringify(card)).not.toContain("打开 Media Hub 查看视频");
   });
 
-  it("builds a native playable Feishu video message", () => {
-    expect(buildFeishuVideoContent("file_v2_video", "img_v2_thumbnail")).toBe(
-      '{"file_key":"file_v2_video","image_key":"img_v2_thumbnail"}',
-    );
+  it("uses only a user Webhook and otherwise disables notification", () => {
+    expect(
+      resolveGenerationNotificationDestination(
+        "https://open.feishu.cn/open-apis/bot/v2/hook/user-hook",
+      ),
+    ).toEqual({
+      kind: "user_webhook",
+      webhookUrl: "https://open.feishu.cn/open-apis/bot/v2/hook/user-hook",
+    });
+    expect(resolveGenerationNotificationDestination("")).toEqual({
+      kind: "disabled",
+    });
   });
 });

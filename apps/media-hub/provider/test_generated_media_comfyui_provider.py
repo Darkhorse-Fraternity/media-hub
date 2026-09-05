@@ -58,6 +58,32 @@ def ref2va_profile():
     )
 
 
+def official_i2v_profile():
+    return provider.ProviderProfile.from_mapping(
+        "platform-h3-i2v-official-base-v1",
+        {
+            "adapter": provider.COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND,
+            "workflow_version": "comfyui-official-h3-i2v-base-20step-v1",
+            "model_version": "minimax-h3-pruned-int8-convrot-nvfp4",
+            "models": {
+                "transformer": "fl2va.safetensors",
+                "text_encoder": "clip.safetensors",
+                "video_vae": "video-vae.safetensors",
+                "audio_vae": "audio-vae.safetensors",
+            },
+            "defaults": {
+                "width": 960,
+                "height": 544,
+                "length": 124,
+                "fps": 24,
+                "steps": 20,
+                "cfg": 1,
+            },
+            "limits": {"max_width": 1344, "max_height": 1344, "max_length": 362},
+        },
+    )
+
+
 def hidream_profile():
     return provider.ProviderProfile.from_mapping(
         "platform-hidream-o1-image-v1",
@@ -79,6 +105,77 @@ def hidream_profile():
 
 
 class Ref2VAWorkflowTests(unittest.TestCase):
+    def test_health_exposes_profile_capabilities_for_admin_selection(self) -> None:
+        service = object.__new__(provider.ProviderService)
+        service.config = types.SimpleNamespace(
+            profiles={"platform-h3-ref2va-edit-v1": ref2va_profile()},
+            provider_version="test",
+        )
+        service.comfyui = types.SimpleNamespace(
+            healthcheck_h3=lambda profiles: {
+                "status": "healthy",
+                "profiles": sorted(profiles),
+                "backend": "comfyui_h3",
+            }
+        )
+        service.inline_core = None
+        service.resource_lifecycle = lambda: {}
+
+        health = service.healthcheck()
+
+        self.assertEqual(
+            health["profile_details"],
+            [
+                {
+                    "id": "platform-h3-ref2va-edit-v1",
+                    "kind": "edit",
+                    "adapter": provider.COMFYUI_H3_REF2VA_ADAPTER_KIND,
+                    "workflow_version": provider.COMFYUI_H3_REF2VA_ADAPTER_KIND,
+                    "model_version": "platform-managed",
+                    "max_reference_images": 4,
+                    "minimum_steps": 20,
+                }
+            ],
+        )
+
+    def test_official_i2v_graph_uses_pinned_core_nodes_and_minimum_steps(self) -> None:
+        workflow = provider._build_comfyui_h3_official_i2v_prompt(
+            official_i2v_profile(),
+            first_frame_ref="job/first.png",
+            reference_image_refs=[],
+            positive="A calm classroom scene with native Mandarin dialogue.",
+            width=960,
+            height=544,
+            length=124,
+            seed=9,
+            filename_prefix="test/official-i2v",
+            steps=6,
+            fps=24,
+        )
+
+        self.assertEqual(workflow["30"]["class_type"], "MiniMaxH3ImageToVideo")
+        self.assertEqual(workflow["42"]["inputs"]["sampler_name"], "res_multistep")
+        self.assertEqual(workflow["41"]["inputs"]["scheduler"], "simple")
+        self.assertEqual(workflow["41"]["inputs"]["steps"], 20)
+        self.assertEqual(workflow["60"]["inputs"]["audio"], ["51", 0])
+
+    def test_official_i2v_rejects_extra_reference_images(self) -> None:
+        with self.assertRaises(provider.ProviderJobError) as raised:
+            provider._build_comfyui_h3_official_i2v_prompt(
+                official_i2v_profile(),
+                first_frame_ref="job/first.png",
+                reference_image_refs=["job/subject.png"],
+                positive="Keep the subject consistent.",
+                width=960,
+                height=544,
+                length=124,
+                seed=10,
+                filename_prefix="test/official-i2v-reference",
+                steps=20,
+                fps=24,
+            )
+        self.assertEqual(raised.exception.code, "profile_reference_images_unsupported")
+
     def test_profile_does_not_require_fl2va_turbo_lora(self) -> None:
         profile = ref2va_profile()
         self.assertEqual(profile.transformer, "ref2va.safetensors")

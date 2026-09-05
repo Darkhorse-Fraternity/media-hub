@@ -36,15 +36,34 @@ interface PreferenceDraft {
   youtubeCategoryId: string;
   youtubeNotifySubscribers: boolean;
   instagramShareToFeed: boolean;
+  feishuWebhookUrl: string;
 }
 
 interface SystemDraft {
+  h3GenerationProfile: string;
+  h3EditProfile: string;
   codexWorkerUrl: string;
   codexWorkerSource: string;
   codexTimeoutMs: number;
   ollamaBaseUrl: string;
   ollamaModel: string;
-  feishuReviewChatId: string;
+}
+
+interface H3ProfileOption {
+  id: string;
+  workflowVersion: string | null;
+  minimumSteps: number | null;
+  maxReferenceImages: number | null;
+}
+
+function h3ProfileLabel(profile: H3ProfileOption): string {
+  const details = [profile.id];
+  if (profile.workflowVersion) details.push(profile.workflowVersion);
+  if (profile.minimumSteps && profile.minimumSteps > 1) {
+    details.push(`${profile.minimumSteps} 步起`);
+  }
+  if (profile.maxReferenceImages === 0) details.push("仅首帧");
+  return details.join(" · ");
 }
 
 function MediaHubSettingsPage() {
@@ -338,6 +357,24 @@ function SettingsWorkspace({
                     hint="发布 Reels 时同时显示在主页动态中。"
                   />
                 </div>
+                <SettingField
+                  label="飞书通知 Webhook"
+                  hint="仅用于当前账号的生成、取消和发布结果；留空时不发送。"
+                >
+                  <input
+                    type="url"
+                    value={preferenceDraft.feishuWebhookUrl}
+                    onChange={(event) =>
+                      setPreferenceDraft({
+                        ...preferenceDraft,
+                        feishuWebhookUrl: event.target.value,
+                      })
+                    }
+                    placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."
+                    autoComplete="off"
+                    className={controlClass}
+                  />
+                </SettingField>
                 <SaveBar
                   pending={updatePreferences.isPending}
                   message={preferenceMessage}
@@ -369,6 +406,67 @@ function SettingsWorkspace({
             ) : (
               <div className="space-y-6 p-6">
                 <div className="space-y-4">
+                  <ConfigGroup label="H3 工作流">
+                    <SettingField
+                      label="默认生成工作流"
+                      hint={`当前生效：${systemQuery.data?.effective.h3GenerationProfile ?? "未配置"}`}
+                    >
+                      <select
+                        value={systemDraft.h3GenerationProfile}
+                        onChange={(event) =>
+                          setSystemDraft({
+                            ...systemDraft,
+                            h3GenerationProfile: event.target.value,
+                          })
+                        }
+                        className={controlClass}
+                      >
+                        <option value="">跟随部署默认</option>
+                        {systemQuery.data?.availableH3Profiles
+                          .filter((profile) => profile.kind === "generate")
+                          .map((profile) => (
+                            <option key={profile.id} value={profile.id}>
+                              {h3ProfileLabel(profile)}
+                            </option>
+                          ))}
+                      </select>
+                    </SettingField>
+                    <SettingField
+                      label="默认编辑工作流"
+                      hint={`当前生效：${systemQuery.data?.effective.h3EditProfile ?? "未配置"}`}
+                    >
+                      <select
+                        value={systemDraft.h3EditProfile}
+                        onChange={(event) =>
+                          setSystemDraft({
+                            ...systemDraft,
+                            h3EditProfile: event.target.value,
+                          })
+                        }
+                        className={controlClass}
+                      >
+                        <option value="">跟随部署默认</option>
+                        {systemQuery.data?.availableH3Profiles
+                          .filter((profile) => profile.kind === "edit")
+                          .map((profile) => (
+                            <option key={profile.id} value={profile.id}>
+                              {h3ProfileLabel(profile)}
+                            </option>
+                          ))}
+                      </select>
+                    </SettingField>
+                    <p
+                      className={`text-xs leading-5 ${
+                        systemQuery.data?.h3ProviderStatus === "healthy"
+                          ? "text-emerald-300"
+                          : "text-amber-300"
+                      }`}
+                    >
+                      {systemQuery.data?.h3ProviderMessage ??
+                        "正在读取 H3 Provider 工作流…"}
+                    </p>
+                  </ConfigGroup>
+
                   <ConfigGroup label="Codex Worker">
                     <SettingField
                       label="服务地址"
@@ -447,25 +545,6 @@ function SettingsWorkspace({
                           })
                         }
                         placeholder="qwen3-vl:32b"
-                        className={controlClass}
-                      />
-                    </SettingField>
-                  </ConfigGroup>
-
-                  <ConfigGroup label="通知">
-                    <SettingField
-                      label="飞书审核群 ID"
-                      hint="用于生成、取消、发布结果和日报通知"
-                    >
-                      <input
-                        value={systemDraft.feishuReviewChatId}
-                        onChange={(event) =>
-                          setSystemDraft({
-                            ...systemDraft,
-                            feishuReviewChatId: event.target.value,
-                          })
-                        }
-                        placeholder="留空使用 MEDIA_HUB_REVIEW_CHAT_ID"
                         className={controlClass}
                       />
                     </SettingField>

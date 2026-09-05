@@ -1,10 +1,16 @@
+import {
+  DEFAULT_H3_EDIT_PROFILE,
+  DEFAULT_H3_GENERATION_PROFILE,
+} from "./h3-generation-config";
+
 export interface StoredMediaSystemSetting {
+  h3GenerationProfile?: string | null;
+  h3EditProfile?: string | null;
   codexWorkerUrl?: string | null;
   codexWorkerSource?: string | null;
   codexTimeoutMs?: number | null;
   ollamaBaseUrl?: string | null;
   ollamaModel?: string | null;
-  feishuReviewChatId?: string | null;
 }
 
 function clean(value: string | null | undefined): string | undefined {
@@ -27,6 +33,14 @@ export function resolveMediaSystemSettingValues(
   environment: NodeJS.ProcessEnv,
 ) {
   return {
+    h3GenerationProfile:
+      clean(stored?.h3GenerationProfile) ??
+      clean(environment.MEDIA_HUB_H3_GENERATION_PROFILE) ??
+      DEFAULT_H3_GENERATION_PROFILE,
+    h3EditProfile:
+      clean(stored?.h3EditProfile) ??
+      clean(environment.MEDIA_HUB_H3_EDIT_PROFILE) ??
+      DEFAULT_H3_EDIT_PROFILE,
     codexWorkerUrl:
       clean(stored?.codexWorkerUrl) ?? clean(environment.CODEX_WORKER_URL),
     codexWorkerSource:
@@ -43,8 +57,5 @@ export function resolveMediaSystemSettingValues(
       clean(stored?.ollamaModel) ??
       clean(environment.OLLAMA_MODEL) ??
       "qwen3-vl:32b",
-    feishuReviewChatId:
-      clean(stored?.feishuReviewChatId) ??
-      clean(environment.MEDIA_HUB_REVIEW_CHAT_ID),
   };
 }

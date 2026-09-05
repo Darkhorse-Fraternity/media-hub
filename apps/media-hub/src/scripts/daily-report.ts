@@ -1,7 +1,7 @@
 /**
  * 每日运营报告脚本（由 Docker/cron 显式调用，不使用 pm2）
  * 1. 拉取所有已发布视频的最新数据并写入 media_platform_stats
- * 2. 生成汇总卡片推送到飞书审核群
+ * 2. 生成汇总数据；没有用户级收件人时不发送通知
  */
 import { fetchAndSaveStats, sendDailyReport } from "@acme/api";
 

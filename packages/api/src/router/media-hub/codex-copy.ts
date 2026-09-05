@@ -20,6 +20,12 @@ interface VideoPromptInput {
   durationSeconds: number;
   hasReferenceImage: boolean;
   language: "zh" | "en";
+  dialogues?: {
+    segment: number;
+    speakerId: "S1" | "S2" | "S3" | "S4";
+    language: "zh" | "en";
+    text: string;
+  }[];
 }
 
 interface ImagePromptInput {
@@ -53,6 +59,10 @@ function requestedTextLanguage(language: "zh" | "en"): string {
   return language === "zh" ? "Simplified Chinese" : "English";
 }
 
+function h3DialogueLanguage(language: "zh" | "en"): string {
+  return language === "zh" ? "Mandarin Chinese" : "English";
+}
+
 function compactLines(lines: (string | undefined)[]): string {
   return lines.filter((line): line is string => Boolean(line)).join("\n");
 }
@@ -62,6 +72,7 @@ export function buildVideoPromptOptimizationPrompt(
 ): string {
   const segmentCount = h3SegmentCount(input.durationSeconds);
   const preservedLanguage = requestedTextLanguage(input.language);
+  const dialogues = input.dialogues ?? [];
   return compactLines([
     "You are optimizing a production prompt for MiniMax H3 (Hailuo 3) video generation.",
     "Do not inspect files, browse, or use tools. Work only from the content below.",
@@ -77,6 +88,14 @@ export function buildVideoPromptOptimizationPrompt(
     "Each generated segment is at most 15 seconds. Build a concrete chronological shot timeline. Start with [Shot 1] and no timestamp. Introduce every later shot as [Shot N] At 00:SS.mmm, the camera cuts to ... using a strictly increasing timestamp. For each shot specify composition, subjects, environment, actions, camera type/amplitude/speed, synchronized diegetic sound, transition, and ending composition.",
     "Every segment prompt must use these top-level fields in this exact order: integrated_multimodal_description, overall_soundscape, non_diegetic_music.",
     "Put dialogue and synchronized diegetic sound in integrated_multimodal_description. Format requested speech as <d>[Language] exact dialogue</d> with a stable speaker ID such as (S1). In overall_soundscape, summarize ambience, physical-action sounds, and non-verbal human sounds without repeating dialogue or singing. In non_diegetic_music, specify instrumentation, tempo/rhythm, and dynamic development; use N/A when there is no audience-only score.",
+    dialogues.length > 0
+      ? "The dedicated dialogue editor below is authoritative. Include every listed line exactly once, in its assigned segment and original order, using the exact speaker ID, H3 language label, and wording shown. Do not paraphrase, translate, merge, split, omit, or invent dialogue. Place each exact tagged line in integrated_multimodal_description at a physically achievable moment."
+      : undefined,
+    ...dialogues.map(
+      (dialogue) =>
+        `Dedicated dialogue — segment ${dialogue.segment}/${segmentCount}: (${dialogue.speakerId}) <d>[${h3DialogueLanguage(dialogue.language)}] ${dialogue.text}</d>`,
+    ),
+    "If speech, reading, or singing is only implied but the user did not supply exact words, do not invent words and do not request indistinct, unintelligible, murmured, or placeholder vocals. Direct the subject to mouth or act silently and explicitly state that there is no dialogue.",
     segmentCount > 1
       ? `Return exactly ${segmentCount} self-contained prompts. Mark them exactly as === SEGMENT 1/${segmentCount} === through === SEGMENT ${segmentCount}/${segmentCount} ===. Repeat stable identity and style constraints in later prompts, start each later segment from the prior ending composition, and continue action and motion without a reset.`
       : "Return one self-contained prompt without a segment marker.",

@@ -1,7 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod/v4";
 
-import { mediaH3DimensionSchema } from "@acme/validators";
+import {
+  MEDIA_H3_DEFAULT_DURATION_SECONDS,
+  MEDIA_H3_DEFAULT_HEIGHT,
+  MEDIA_H3_DEFAULT_QUALITY_PRESET,
+  MEDIA_H3_DEFAULT_WIDTH,
+  MEDIA_H3_PROMPT_MAX_LENGTH,
+  mediaH3DimensionSchema,
+} from "@acme/validators";
 
 import {
   agentJson,
@@ -11,15 +18,23 @@ import {
 } from "~/lib/agent-api";
 
 const createGenerationBody = z.object({
-  prompt: z.string().trim().min(1).max(16000),
+  prompt: z.string().trim().min(1).max(MEDIA_H3_PROMPT_MAX_LENGTH),
   language: z.enum(["zh", "en"]).default("en"),
   title: z.string().trim().max(200).optional(),
-  duration_seconds: z.number().int().min(5).max(60).default(30),
-  quality_preset: z.enum(["fast", "balanced", "quality"]).default("balanced"),
+  duration_seconds: z
+    .number()
+    .int()
+    .min(5)
+    .max(60)
+    .default(MEDIA_H3_DEFAULT_DURATION_SECONDS),
+  quality_preset: z
+    .enum(["fast", "balanced", "quality"])
+    .default(MEDIA_H3_DEFAULT_QUALITY_PRESET),
+  generation_profile: z.string().trim().min(1).max(200).optional(),
   seed: z.number().int().min(0).max(2_147_483_643).optional(),
   scheduled_at: z.iso.datetime().nullable().optional(),
-  width: mediaH3DimensionSchema.default(1344),
-  height: mediaH3DimensionSchema.default(768),
+  width: mediaH3DimensionSchema.default(MEDIA_H3_DEFAULT_WIDTH),
+  height: mediaH3DimensionSchema.default(MEDIA_H3_DEFAULT_HEIGHT),
   first_frame: z
     .object({
       storage_key: z.string().min(1),
@@ -52,6 +67,7 @@ async function handleGet(request: Request): Promise<Response> {
       .enum([
         "scheduled",
         "queued",
+        "waiting_for_gpu",
         "running",
         "succeeded",
         "failed",
@@ -80,6 +96,7 @@ async function handlePost(request: Request): Promise<Response> {
       title: input.title,
       durationSeconds: input.duration_seconds,
       qualityPreset: input.quality_preset,
+      h3Profile: input.generation_profile,
       seed: input.seed,
       scheduledAt: input.scheduled_at ? new Date(input.scheduled_at) : null,
       width: input.width,

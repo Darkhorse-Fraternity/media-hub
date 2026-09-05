@@ -6,6 +6,7 @@ import {
   h3SegmentCount,
   h3SegmentPrompts,
   h3StepsForPreset,
+  validateH3GenerationPrompt,
 } from "./h3-generation-config";
 
 describe("H3 generation configuration", () => {
@@ -38,5 +39,36 @@ describe("H3 generation configuration", () => {
     expect(prompts[0]).toContain("Establish the subject");
     expect(prompts[1]).toContain("exact ending frame");
     expect(prompts[1]).toContain("A robot follows a dog.");
+  });
+
+  it("rejects long prompts without complete optimized segments", () => {
+    expect(validateH3GenerationPrompt("A robot follows a dog.", 30)).toEqual([
+      expect.stringContaining("2 个完整分段"),
+    ]);
+  });
+
+  it("rejects ambiguous generated speech and accepts exact H3 dialogue", () => {
+    expect(
+      validateH3GenerationPrompt(
+        "integrated_multimodal_description: [Shot 1] A child murmurs indistinct reading sounds.\noverall_soundscape: Quiet room.\nnon_diegetic_music: N/A",
+        15,
+      ),
+    ).toEqual([expect.stringContaining("含混人声")]);
+
+    expect(
+      validateH3GenerationPrompt(
+        "integrated_multimodal_description: [Shot 1] The child (S2) <d>[Mandarin Chinese] 妈妈，我不会。</d>\noverall_soundscape: Quiet room.\nnon_diegetic_music: N/A",
+        15,
+      ),
+    ).toEqual([]);
+  });
+
+  it("requires the three H3 fields in their official order", () => {
+    expect(
+      validateH3GenerationPrompt(
+        "overall_soundscape: Quiet room.\nintegrated_multimodal_description: [Shot 1] A child reads silently.\nnon_diegetic_music: N/A",
+        15,
+      ),
+    ).toEqual([expect.stringContaining("顺序不正确")]);
   });
 });

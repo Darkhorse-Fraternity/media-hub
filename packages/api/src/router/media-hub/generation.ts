@@ -5,17 +5,37 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { and, desc, eq, inArray } from "@acme/db";
+import { and, asc, eq, inArray } from "@acme/db";
 import { db } from "@acme/db/client";
-import { mediaGenerationJob, mediaTask, user as User } from "@acme/db/schema";
+import {
+  mediaGenerationJob,
+  mediaTask,
+  mediaUserPreference,
+  user as User,
+} from "@acme/db/schema";
 import { log } from "@acme/logger";
 import { getMediaHubObject, putMediaHubObject } from "@acme/storage";
 
 import { sendGenerationResultCard } from "./feishu-notify";
 import {
+  GenerationOutputValidationError,
+  validateGeneratedVideoOutput,
+} from "./generation-output-validation";
+import {
+  GenerationSpeechValidationError,
+  validateGeneratedDialogue,
+} from "./generation-speech-validation";
+import {
+  acquireGenerationGpuLease,
+  cancelGenerationGpuRequest,
+  generationGpuRequestId,
+  GpuBrokerError,
+  releaseGenerationGpuLease,
+  startGenerationGpuHeartbeat,
+} from "./gpu-resource-broker";
+import {
   H3_FPS,
   H3_I2VA_ALIGNMENT,
-  H3_PROFILE,
   H3_SEGMENT_FRAMES,
   h3SegmentCount,
   h3SegmentPrompts,
@@ -24,18 +44,18 @@ import {
   checksumProviderValue,
   providerOrchestrationRunId,
 } from "./provider-contract";
-import { requestGenerationProvider } from "./provider-request";
+import {
+  ProviderRequestError,
+  requestGenerationProvider,
+} from "./provider-request";
 
 const execFileAsync = promisify(execFile);
 const PROVIDER_CONTRACT = "ydc_generated_media_provider_request.v1";
-const EDIT_PROFILE = "platform-h3-ref2va-edit-v1";
-const FEISHU_VIDEO_MAX_BYTES = 29_000_000;
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 let recoveryStarted = false;
 let providerHealthCache:
   | { expiresAt: number; value: MediaGenerationProviderHealth }
   | undefined;
-let generationRunChain: Promise<void> = Promise.resolve();
 
 export interface MediaGenerationProviderHealth {
   status: "healthy" | "unreachable" | "misconfigured";
@@ -43,6 +63,70 @@ export interface MediaGenerationProviderHealth {
   checkedAt: string;
   message: string;
   providerVersion: string | null;
+  profiles: MediaGenerationProviderProfile[];
+}
+
+export interface MediaGenerationProviderProfile {
+  id: string;
+  kind: "generate" | "edit";
+  adapter: string | null;
+  workflowVersion: string | null;
+  modelVersion: string | null;
+  maxReferenceImages: number | null;
+  minimumSteps: number | null;
+}
+
+interface ProviderHealthProfile {
+  id?: string;
+  kind?: string;
+  adapter?: string;
+  workflow_version?: string;
+  model_version?: string;
+  max_reference_images?: number;
+  minimum_steps?: number;
+}
+
+function normalizeProviderProfiles(
+  profileIds: string[] | undefined,
+  details: ProviderHealthProfile[] | undefined,
+): MediaGenerationProviderProfile[] {
+  const detailById = new Map(
+    (details ?? [])
+      .filter(
+        (profile): profile is ProviderHealthProfile & { id: string } =>
+          typeof profile.id === "string",
+      )
+      .map((profile) => [profile.id, profile]),
+  );
+  return (profileIds ?? [])
+    .filter((id) => {
+      const kind = detailById.get(id)?.kind;
+      if (kind) return kind === "generate" || kind === "edit";
+      return !id.includes("hidream");
+    })
+    .map((id) => {
+      const detail = detailById.get(id);
+      const kind =
+        detail?.kind === "edit" ||
+        (!detail?.kind && id.toLowerCase().includes("ref2va"))
+          ? "edit"
+          : "generate";
+      return {
+        id,
+        kind,
+        adapter: detail?.adapter ?? null,
+        workflowVersion: detail?.workflow_version ?? null,
+        modelVersion: detail?.model_version ?? null,
+        maxReferenceImages:
+          typeof detail?.max_reference_images === "number"
+            ? detail.max_reference_images
+            : null,
+        minimumSteps:
+          typeof detail?.minimum_steps === "number"
+            ? detail.minimum_steps
+            : null,
+      };
+    });
 }
 
 interface ProviderSample {
@@ -55,9 +139,59 @@ interface ProviderJob {
   job_id: string;
   status: string;
   error_message?: string;
+  error_code?: string;
+  failure_stage?: string;
+  retryable?: boolean;
   model_version?: string;
   workflow_version?: string;
   samples?: ProviderSample[];
+}
+
+class GenerationProviderJobError extends Error {
+  readonly code: string;
+  readonly failureStage: string;
+  readonly retryable: boolean;
+
+  constructor(job: ProviderJob) {
+    super(job.error_message ?? `生成任务${job.status}`);
+    this.name = "GenerationProviderJobError";
+    this.code = job.error_code ?? `provider_job_${job.status}`;
+    this.failureStage = job.failure_stage ?? "provider_execution";
+    this.retryable = job.retryable ?? job.status === "failed";
+  }
+}
+
+function structuredGenerationFailure(error: unknown): {
+  code: string;
+  failureStage: string;
+  retryable: boolean;
+} {
+  if (
+    error instanceof GenerationProviderJobError ||
+    error instanceof GenerationOutputValidationError ||
+    error instanceof GenerationSpeechValidationError ||
+    error instanceof GpuBrokerError
+  ) {
+    return {
+      code: error.code,
+      failureStage: error.failureStage,
+      retryable: error.retryable,
+    };
+  }
+  if (error instanceof ProviderRequestError) {
+    return {
+      code: error.status
+        ? `provider_http_${error.status}`
+        : "provider_transport_failed",
+      failureStage: "provider_transport",
+      retryable: error.retryable,
+    };
+  }
+  return {
+    code: "generation_pipeline_failed",
+    failureStage: "media_hub_orchestration",
+    retryable: true,
+  };
 }
 
 function providerConfig() {
@@ -113,6 +247,7 @@ export async function getMediaGenerationProviderHealth(
       status?: string;
       contract?: string;
       profiles?: string[];
+      profile_details?: ProviderHealthProfile[];
       provider_version?: string;
     }>(
       "/healthz",
@@ -130,15 +265,18 @@ export async function getMediaGenerationProviderHealth(
         `H3 Provider 协议不匹配：${health.contract ?? "unknown"}`,
       );
     }
-    if (!health.profiles?.includes(H3_PROFILE)) {
-      throw new Error(`H3 Provider 未启用 ${H3_PROFILE}`);
-    }
+    const profiles = normalizeProviderProfiles(
+      health.profiles,
+      health.profile_details,
+    );
+    if (!profiles.length) throw new Error("H3 Provider 未注册可用工作流");
     value = {
       status: "healthy",
       latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
       checkedAt,
       message: "H3 Provider 链路正常",
       providerVersion: health.provider_version ?? null,
+      profiles,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -148,6 +286,7 @@ export async function getMediaGenerationProviderHealth(
       checkedAt,
       message,
       providerVersion: null,
+      profiles: [],
     };
   }
 
@@ -287,7 +426,7 @@ async function createEditProviderJob(
     }),
   );
   const generationSpec = {
-    profile: EDIT_PROFILE,
+    profile: job.profile,
     parameters: {
       behavior_prompts: { main: segment.prompt },
       negative_prompt: "",
@@ -329,15 +468,19 @@ async function createEditProviderJob(
   });
 }
 
-async function waitForProviderJob(providerJobId: string): Promise<ProviderJob> {
+async function waitForProviderJob(
+  providerJobId: string,
+  assertLeaseHealthy: () => void = () => undefined,
+): Promise<ProviderJob> {
   const deadline = Date.now() + 60 * 60 * 1000;
   while (Date.now() < deadline) {
+    assertLeaseHealthy();
     const current = await providerRequest<ProviderJob>(
       `/v1/generated-media/jobs/${encodeURIComponent(providerJobId)}`,
     );
     if (["succeeded", "failed", "canceled"].includes(current.status)) {
       if (current.status !== "succeeded") {
-        throw new Error(current.error_message ?? `生成任务${current.status}`);
+        throw new GenerationProviderJobError(current);
       }
       return current;
     }
@@ -428,6 +571,7 @@ interface GenerationPipelineResult {
 
 async function runVideoGenerationPipeline(
   job: typeof mediaGenerationJob.$inferSelect,
+  assertLeaseHealthy: () => void,
 ): Promise<GenerationPipelineResult> {
   const totalSegments = h3SegmentCount(job.durationSeconds);
   const prompts = h3SegmentPrompts(job.prompt, totalSegments);
@@ -438,6 +582,7 @@ async function runVideoGenerationPipeline(
   let workflowVersion: string | null = null;
 
   for (const [segmentIndex, segmentPrompt] of prompts.entries()) {
+    assertLeaseHealthy();
     const current = await db.query.mediaGenerationJob.findFirst({
       where: eq(mediaGenerationJob.id, job.id),
       columns: { status: true },
@@ -478,7 +623,10 @@ async function runVideoGenerationPipeline(
       throw new Error("生成任务已停止");
     }
 
-    const completed = await waitForProviderJob(submitted.job_id);
+    const completed = await waitForProviderJob(
+      submitted.job_id,
+      assertLeaseHealthy,
+    );
     modelVersion = completed.model_version ?? modelVersion;
     workflowVersion = completed.workflow_version ?? workflowVersion;
     const segmentVideo = await joinVideoSamples(completed.samples ?? []);
@@ -613,6 +761,7 @@ async function mergeEditedSegments(
 
 async function runVideoEditPipeline(
   job: typeof mediaGenerationJob.$inferSelect,
+  assertLeaseHealthy: () => void,
 ): Promise<GenerationPipelineResult> {
   const sourceJob = job.sourceGenerationJobId
     ? await db.query.mediaGenerationJob.findFirst({
@@ -637,6 +786,7 @@ async function runVideoEditPipeline(
     );
     const editedPaths: string[] = [];
     for (const [index, segment] of job.editSegments.entries()) {
+      assertLeaseHealthy();
       const current = await db.query.mediaGenerationJob.findFirst({
         where: eq(mediaGenerationJob.id, job.id),
         columns: { status: true },
@@ -668,7 +818,10 @@ async function runVideoEditPipeline(
           updatedAt: new Date(),
         })
         .where(eq(mediaGenerationJob.id, job.id));
-      const completed = await waitForProviderJob(submitted.job_id);
+      const completed = await waitForProviderJob(
+        submitted.job_id,
+        assertLeaseHealthy,
+      );
       modelVersion = completed.model_version ?? modelVersion;
       workflowVersion = completed.workflow_version ?? workflowVersion;
       await writeFile(
@@ -692,51 +845,6 @@ async function runVideoEditPipeline(
       modelVersion,
       workflowVersion,
     };
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
-export async function prepareFeishuVideo(video: Buffer): Promise<Buffer> {
-  if (video.length <= FEISHU_VIDEO_MAX_BYTES) return video;
-
-  const dir = await mkdtemp(join(tmpdir(), "media-hub-feishu-"));
-  try {
-    const inputPath = join(dir, "input.mp4");
-    const outputPath = join(dir, "feishu.mp4");
-    await writeFile(inputPath, video);
-    const ffmpeg = process.env.FFMPEG_PATH ?? "ffmpeg";
-    await execFileAsync(ffmpeg, [
-      "-i",
-      inputPath,
-      "-vf",
-      "scale=720:-2:force_original_aspect_ratio=decrease",
-      "-c:v",
-      "libx264",
-      "-preset",
-      "veryfast",
-      "-crf",
-      "30",
-      "-maxrate",
-      "2M",
-      "-bufsize",
-      "4M",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "96k",
-      "-movflags",
-      "+faststart",
-      outputPath,
-      "-y",
-      "-loglevel",
-      "error",
-    ]);
-    const prepared = await readFile(outputPath);
-    if (prepared.length > FEISHU_VIDEO_MAX_BYTES) {
-      throw new Error("飞书通知视频压缩后仍超过 30 MB");
-    }
-    return prepared;
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -786,10 +894,16 @@ function eightyChars(value: string): number {
 }
 
 async function runGenerationJob(jobId: string): Promise<void> {
-  const startedAt = new Date();
+  const claimedAt = new Date();
+  const brokerRequestId = generationGpuRequestId(jobId);
   const [job] = await db
     .update(mediaGenerationJob)
-    .set({ status: "running", startedAt, updatedAt: startedAt })
+    .set({
+      status: "waiting_for_gpu",
+      gpuBrokerRequestId: brokerRequestId,
+      gpuBrokerLeaseId: null,
+      updatedAt: claimedAt,
+    })
     .where(
       and(
         eq(mediaGenerationJob.id, jobId),
@@ -798,6 +912,7 @@ async function runGenerationJob(jobId: string): Promise<void> {
     )
     .returning();
   if (!job) return;
+  let startedAt = job.startedAt ?? claimedAt;
   if (job.seed === null) {
     job.seed = fallbackJobSeed(job);
     await db
@@ -810,15 +925,24 @@ async function runGenerationJob(jobId: string): Promise<void> {
     status: "succeeded" | "failed",
     finishedAt: Date,
     errorMessage?: string,
+    errorCode?: string,
+    failureStage?: string,
+    errorRetryable?: boolean,
     video?: Buffer,
     providerJobId?: string,
     modelVersion?: string | null,
     workflowVersion?: string | null,
   ) => {
-    const creator = await db.query.user.findFirst({
-      where: eq(User.id, job.createdBy),
-      columns: { name: true, email: true },
-    });
+    const [creator, recipientPreference] = await Promise.all([
+      db.query.user.findFirst({
+        where: eq(User.id, job.createdBy),
+        columns: { name: true, email: true },
+      }),
+      db.query.mediaUserPreference.findFirst({
+        where: eq(mediaUserPreference.userId, job.createdBy),
+        columns: { feishuWebhookUrl: true },
+      }),
+    ]);
     const appUrl = process.env.APP_URL?.replace(/\/$/, "");
     await sendGenerationResultCard({
       jobId: job.id,
@@ -853,21 +977,115 @@ async function runGenerationJob(jobId: string): Promise<void> {
         ? `${creator.name} (${creator.email})`
         : job.createdBy,
       errorMessage,
+      errorCode,
+      failureStage,
+      errorRetryable,
       videoUrl: appUrl ? `${appUrl}/#generation-job-${job.id}` : undefined,
-      video,
+      recipientWebhookUrl: recipientPreference?.feishuWebhookUrl,
     });
   };
 
+  let gpuLease: Awaited<ReturnType<typeof acquireGenerationGpuLease>> = null;
+  let gpuHeartbeat: ReturnType<typeof startGenerationGpuHeartbeat> | null =
+    null;
+  const releaseGpuLease = async () => {
+    await gpuHeartbeat?.stop();
+    gpuHeartbeat = null;
+    const lease = gpuLease;
+    gpuLease = null;
+    if (!lease) return;
+    try {
+      await releaseGenerationGpuLease(lease);
+    } catch (error) {
+      log.error("GPU Broker lease release failed", {
+        code: "GPU_BROKER_RELEASE_FAILED",
+        job_id: job.id,
+        lease_id: lease.leaseId,
+        err: error instanceof Error ? error : new Error(String(error)),
+      });
+    }
+    await db
+      .update(mediaGenerationJob)
+      .set({ gpuBrokerLeaseId: null, updatedAt: new Date() })
+      .where(eq(mediaGenerationJob.id, job.id));
+  };
   try {
+    gpuLease = await acquireGenerationGpuLease({
+      jobId: job.id,
+      kind: job.kind,
+      durationSeconds: job.durationSeconds,
+      isStillWaiting: async () => {
+        const current = await db.query.mediaGenerationJob.findFirst({
+          where: eq(mediaGenerationJob.id, job.id),
+          columns: { status: true },
+        });
+        return current?.status === "waiting_for_gpu";
+      },
+    });
+    const currentAfterWait = await db.query.mediaGenerationJob.findFirst({
+      where: eq(mediaGenerationJob.id, job.id),
+      columns: { status: true },
+    });
+    if (currentAfterWait?.status !== "waiting_for_gpu") return;
+
+    startedAt = job.startedAt ?? new Date();
+    job.startedAt = startedAt;
+    const [runningUpdate] = await db
+      .update(mediaGenerationJob)
+      .set({
+        status: "running",
+        startedAt,
+        gpuBrokerLeaseId: gpuLease?.leaseId ?? null,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(mediaGenerationJob.id, job.id),
+          eq(mediaGenerationJob.status, "waiting_for_gpu"),
+        ),
+      )
+      .returning({ id: mediaGenerationJob.id });
+    if (!runningUpdate) return;
+    if (gpuLease) gpuHeartbeat = startGenerationGpuHeartbeat(gpuLease);
+    const assertLeaseHealthy = () => gpuHeartbeat?.assertHealthy();
+
     const providerHealth = await getMediaGenerationProviderHealth(true);
     if (providerHealth.status !== "healthy") {
       throw new Error(`H3 生成链路安全检查失败：${providerHealth.message}`);
     }
+    const expectedProfileKind = job.kind === "edit" ? "edit" : "generate";
+    const activeProfile = providerHealth.profiles.find(
+      (profile) => profile.id === job.profile,
+    );
+    if (!activeProfile) {
+      throw new Error(`H3 Provider 未启用任务工作流 ${job.profile}`);
+    }
+    if (activeProfile.kind !== expectedProfileKind) {
+      throw new Error(
+        `H3 工作流 ${job.profile} 不支持${job.kind === "edit" ? "视频编辑" : "视频生成"}`,
+      );
+    }
     const result =
       job.kind === "edit"
-        ? await runVideoEditPipeline(job)
-        : await runVideoGenerationPipeline(job);
+        ? await runVideoEditPipeline(job, assertLeaseHealthy)
+        : await runVideoGenerationPipeline(job, assertLeaseHealthy);
     const { video, providerJobIds, modelVersion, workflowVersion } = result;
+    assertLeaseHealthy();
+    await validateGeneratedVideoOutput(video, {
+      durationSeconds: job.durationSeconds,
+      width: job.width,
+      height: job.height,
+      fps: job.fps,
+    });
+    const speechValidation = await validateGeneratedDialogue(
+      video,
+      job.prompt,
+      job.language,
+    );
+    assertLeaseHealthy();
+    // The H3 and validation stages are complete. Do not hold the shared GPU
+    // while storing the file, creating a draft, or sending notifications.
+    await releaseGpuLease();
     const currentBeforeFinalize = await db.query.mediaGenerationJob.findFirst({
       where: eq(mediaGenerationJob.id, jobId),
       columns: { status: true },
@@ -887,6 +1105,8 @@ async function runGenerationJob(jobId: string): Promise<void> {
         providerJobIds,
         modelVersion,
         workflowVersion,
+        asrTranscript: speechValidation?.transcript ?? null,
+        asrMatchPercent: speechValidation?.matchPercent ?? null,
         finishedAt,
         updatedAt: finishedAt,
       })
@@ -899,12 +1119,14 @@ async function runGenerationJob(jobId: string): Promise<void> {
       .returning({ id: mediaGenerationJob.id });
     if (!completedUpdate) return;
     try {
-      const feishuVideo = await prepareFeishuVideo(video);
       await notifyResult(
         "succeeded",
         finishedAt,
         undefined,
-        feishuVideo,
+        undefined,
+        undefined,
+        undefined,
+        video,
         providerJobIds.join(", "),
         modelVersion,
         workflowVersion,
@@ -929,18 +1151,29 @@ async function runGenerationJob(jobId: string): Promise<void> {
     const errorMessage = (
       error instanceof Error ? error.message : String(error)
     ).slice(0, 1000);
+    const structuredFailure = structuredGenerationFailure(error);
     const finishedAt = new Date();
     await db
       .update(mediaGenerationJob)
       .set({
         status: "failed",
         errorMessage,
+        errorCode: structuredFailure.code,
+        failureStage: structuredFailure.failureStage,
+        errorRetryable: structuredFailure.retryable,
         finishedAt,
         updatedAt: finishedAt,
       })
       .where(eq(mediaGenerationJob.id, jobId));
     try {
-      await notifyResult("failed", finishedAt, errorMessage);
+      await notifyResult(
+        "failed",
+        finishedAt,
+        errorMessage,
+        structuredFailure.code,
+        structuredFailure.failureStage,
+        structuredFailure.retryable,
+      );
     } catch (notificationError) {
       log.error("Media generation failure notification failed", {
         code: "MEDIA_GENERATION_RESULT_CARD_FAILED",
@@ -952,6 +1185,8 @@ async function runGenerationJob(jobId: string): Promise<void> {
             : new Error(String(notificationError)),
       });
     }
+  } finally {
+    await releaseGpuLease();
   }
 }
 
@@ -969,9 +1204,7 @@ export function scheduleMediaGenerationJob(
       // Only remove this callback's timer. A failed job may be retried while
       // its previous Feishu notification is still finishing.
       if (timers.get(jobId) === timer) timers.delete(jobId);
-      generationRunChain = generationRunChain
-        .catch(() => undefined)
-        .then(() => runGenerationJob(jobId));
+      void runGenerationJob(jobId);
     },
     Math.min(delay, 2_147_483_647),
   );
@@ -998,13 +1231,15 @@ export function startMediaGenerationScheduler(): void {
       where: inArray(mediaGenerationJob.status, [
         "scheduled",
         "queued",
+        "waiting_for_gpu",
         "running",
       ]),
-      orderBy: desc(mediaGenerationJob.createdAt),
+      // FIFO recovery prevents newer jobs from jumping ahead after a restart.
+      orderBy: asc(mediaGenerationJob.createdAt),
     })
     .then(async (jobs) => {
       for (const job of jobs) {
-        if (job.status === "running") {
+        if (["waiting_for_gpu", "running"].includes(job.status)) {
           await db
             .update(mediaGenerationJob)
             .set({ status: "queued", updatedAt: new Date() })
@@ -1039,7 +1274,7 @@ export async function cancelMediaGenerationJob(jobId: string): Promise<void> {
   const timer = timers.get(jobId);
   if (timer) clearTimeout(timer);
   timers.delete(jobId);
-  await db
+  const [canceledJob] = await db
     .update(mediaGenerationJob)
     .set({ status: "canceled", finishedAt: new Date(), updatedAt: new Date() })
     .where(
@@ -1047,5 +1282,14 @@ export async function cancelMediaGenerationJob(jobId: string): Promise<void> {
         eq(mediaGenerationJob.id, jobId),
         eq(mediaGenerationJob.status, job.status),
       ),
-    );
+    )
+    .returning({ gpuBrokerRequestId: mediaGenerationJob.gpuBrokerRequestId });
+  if (job.status === "waiting_for_gpu" && canceledJob?.gpuBrokerRequestId) {
+    try {
+      await cancelGenerationGpuRequest(canceledJob.gpuBrokerRequestId);
+    } catch {
+      // The request may have been granted concurrently; runGenerationJob's
+      // finally block will release that lease after observing canceled state.
+    }
+  }
 }

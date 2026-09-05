@@ -62,7 +62,12 @@ async function handleDelete(
   try {
     const { caller } = await createAgentApiCaller(request);
     const job = await caller.mediaHub.generation.getById({ id: jobId });
-    const result = ["scheduled", "queued", "running"].includes(job.status)
+    const result = [
+      "scheduled",
+      "queued",
+      "waiting_for_gpu",
+      "running",
+    ].includes(job.status)
       ? await caller.mediaHub.generation.cancel({ id: jobId })
       : await caller.mediaHub.generation.remove({ id: jobId });
     return agentJson(result);

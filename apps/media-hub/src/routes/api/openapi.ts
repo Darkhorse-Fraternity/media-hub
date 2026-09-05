@@ -1,5 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 
+import {
+  MEDIA_H3_DEFAULT_DURATION_SECONDS,
+  MEDIA_H3_DEFAULT_HEIGHT,
+  MEDIA_H3_DEFAULT_QUALITY_PRESET,
+  MEDIA_H3_DEFAULT_WIDTH,
+  MEDIA_H3_PROMPT_MAX_LENGTH,
+} from "@acme/validators";
+
 function openApiDocument(request: Request) {
   const origin = new URL(request.url).origin;
   const bearerSecurity = [{ bearerAuth: [] }];
@@ -32,7 +40,10 @@ function openApiDocument(request: Request) {
           type: "object",
           required: ["prompt"],
           properties: {
-            prompt: { type: "string", maxLength: 5000 },
+            prompt: {
+              type: "string",
+              maxLength: MEDIA_H3_PROMPT_MAX_LENGTH,
+            },
             language: {
               type: "string",
               enum: ["zh", "en"],
@@ -45,19 +56,35 @@ function openApiDocument(request: Request) {
               type: "integer",
               minimum: 5,
               maximum: 60,
-              default: 30,
+              default: MEDIA_H3_DEFAULT_DURATION_SECONDS,
+            },
+            quality_preset: {
+              type: "string",
+              enum: ["fast", "balanced", "quality"],
+              default: MEDIA_H3_DEFAULT_QUALITY_PRESET,
+            },
+            generation_profile: {
+              type: "string",
+              maxLength: 200,
+              description:
+                "Optional H3 generation workflow for this job. Omit to use the administrator default.",
+            },
+            seed: {
+              type: "integer",
+              minimum: 0,
+              maximum: 2147483643,
             },
             scheduled_at: { type: ["string", "null"], format: "date-time" },
             width: {
               type: "integer",
-              default: 960,
+              default: MEDIA_H3_DEFAULT_WIDTH,
               minimum: 64,
               maximum: 1344,
               multipleOf: 32,
             },
             height: {
               type: "integer",
-              default: 544,
+              default: MEDIA_H3_DEFAULT_HEIGHT,
               minimum: 64,
               maximum: 1344,
               multipleOf: 32,
@@ -158,7 +185,44 @@ function openApiDocument(request: Request) {
                     { $ref: "#/components/schemas/CreateGeneration" },
                     {
                       type: "object",
-                      properties: { has_reference_image: { type: "boolean" } },
+                      properties: {
+                        has_reference_image: { type: "boolean" },
+                        dialogues: {
+                          type: "array",
+                          maxItems: 12,
+                          description:
+                            "Authoritative verbatim dialogue lines for H3 original audio.",
+                          items: {
+                            type: "object",
+                            required: [
+                              "segment",
+                              "speaker_id",
+                              "language",
+                              "text",
+                            ],
+                            properties: {
+                              segment: {
+                                type: "integer",
+                                minimum: 1,
+                                maximum: 4,
+                              },
+                              speaker_id: {
+                                type: "string",
+                                enum: ["S1", "S2", "S3", "S4"],
+                              },
+                              language: {
+                                type: "string",
+                                enum: ["zh", "en"],
+                              },
+                              text: {
+                                type: "string",
+                                minLength: 1,
+                                maxLength: 300,
+                              },
+                            },
+                          },
+                        },
+                      },
                     },
                   ],
                 },
@@ -440,7 +504,7 @@ function openApiDocument(request: Request) {
         post: {
           operationId: "resendGenerationNotification",
           summary:
-            "Send the completed video and generation parameters to Feishu again",
+            "Send the generation result to the owner's Feishu Webhook again",
           parameters: [
             {
               name: "jobId",

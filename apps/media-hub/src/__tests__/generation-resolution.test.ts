@@ -47,4 +47,19 @@ describe("H3 generation resolutions", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("accepts an optional per-job H3 workflow override", () => {
+    expect(
+      createMediaGenerationSchema.parse({
+        prompt: "A robot",
+        h3Profile: "  platform-h3-i2v-official-base-v1  ",
+      }).h3Profile,
+    ).toBe("platform-h3-i2v-official-base-v1");
+    expect(
+      createMediaGenerationSchema.safeParse({
+        prompt: "A robot",
+        h3Profile: "   ",
+      }).success,
+    ).toBe(false);
+  });
 });

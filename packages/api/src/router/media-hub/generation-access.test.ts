@@ -50,9 +50,10 @@ describe("media generation access", () => {
     expect(isCancelableMediaGenerationStatus("succeeded")).toBe(false);
   });
 
-  it("treats scheduled, queued, and running jobs as active queue entries", () => {
+  it("treats scheduled, queued, GPU-waiting, and running jobs as active queue entries", () => {
     expect(isActiveMediaGenerationStatus("scheduled")).toBe(true);
     expect(isActiveMediaGenerationStatus("queued")).toBe(true);
+    expect(isActiveMediaGenerationStatus("waiting_for_gpu")).toBe(true);
     expect(isActiveMediaGenerationStatus("running")).toBe(true);
     expect(isActiveMediaGenerationStatus("succeeded")).toBe(false);
     expect(isActiveMediaGenerationStatus("failed")).toBe(false);

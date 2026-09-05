@@ -113,6 +113,34 @@
       "when": 1788268226409,
       "tag": "0015_small_ironclad",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1788488006327,
+      "tag": "0016_dashing_umar",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1788512040047,
+      "tag": "0017_red_venom",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1788515662027,
+      "tag": "0018_milky_peter_quill",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1788568095145,
+      "tag": "0019_sharp_killmonger",
+      "breakpoints": true
     }
   ]
 }

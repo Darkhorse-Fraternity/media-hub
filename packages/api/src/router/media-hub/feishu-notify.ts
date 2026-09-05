@@ -1,22 +1,7 @@
-import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { promisify } from "node:util";
-import { Agent, FormData, fetch as undiciFetch } from "undici";
+import { Agent, fetch as undiciFetch } from "undici";
 
 import { log } from "@acme/logger";
 
-import { resolveMediaSystemSetting } from "./system-settings";
-
-/**
- * Media Hub 专属飞书通知出口。
- * 独立飞书应用（独立 App ID / Secret / Chat），与 alert-bot 完全隔离。
- */
-
-let cachedToken = "";
-let tokenExpiresAt = 0;
-const execFileAsync = promisify(execFile);
 const directDispatcher = new Agent({
   allowH2: false,
   connect: { timeout: 15_000, ALPNProtocols: ["http/1.1"] },
@@ -30,228 +15,6 @@ async function feishuFetch(url: string, init: RequestInit = {}) {
   return (await undiciFetch(url, requestInit)) as unknown as Response;
 }
 
-async function getTenantAccessToken(): Promise<string> {
-  const appId = process.env.MEDIA_HUB_FEISHU_APP_ID;
-  const appSecret = process.env.MEDIA_HUB_FEISHU_APP_SECRET;
-  if (!appId || !appSecret) {
-    throw new Error(
-      "Missing MEDIA_HUB_FEISHU_APP_ID / MEDIA_HUB_FEISHU_APP_SECRET",
-    );
-  }
-  if (cachedToken && Date.now() < tokenExpiresAt) {
-    return cachedToken;
-  }
-  const res = await feishuFetch(
-    "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
-    },
-  );
-  const data = (await res.json()) as {
-    code: number;
-    msg: string;
-    tenant_access_token: string;
-    expire: number;
-  };
-  if (data.code !== 0) {
-    throw new Error(`Feishu tenant_access_token failed: ${data.msg}`);
-  }
-  cachedToken = data.tenant_access_token;
-  tokenExpiresAt = Date.now() + (data.expire - 300) * 1000;
-  return cachedToken;
-}
-
-interface SendCardOptions {
-  /** chat_id (oc_xxx) — 必填 */
-  chatId: string;
-  /** 卡片 JSON（飞书 v1 格式 string） */
-  cardJson: string;
-}
-
-interface SendMessageOptions {
-  chatId: string;
-  msgType: "interactive" | "media";
-  content: string;
-}
-
-async function sendMessage({
-  chatId,
-  msgType,
-  content,
-}: SendMessageOptions): Promise<void> {
-  const token = await getTenantAccessToken();
-  const res = await feishuFetch(
-    "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ receive_id: chatId, msg_type: msgType, content }),
-    },
-  );
-  const json = (await res.json()) as { code: number; msg: string };
-  if (json.code !== 0) {
-    throw new Error(`Feishu send ${msgType} failed: ${json.msg}`);
-  }
-}
-
-async function sendCard({ chatId, cardJson }: SendCardOptions): Promise<void> {
-  await sendMessage({ chatId, msgType: "interactive", content: cardJson });
-}
-
-async function uploadFeishuVideo(input: {
-  video: Buffer;
-  fileName: string;
-  durationSeconds: number;
-}): Promise<string> {
-  const token = await getTenantAccessToken();
-  const form = new FormData();
-  form.append("file_type", "mp4");
-  form.append("file_name", input.fileName);
-  form.append("duration", String(Math.round(input.durationSeconds * 1000)));
-  form.append(
-    "file",
-    new Blob([new Uint8Array(input.video)], { type: "video/mp4" }),
-    input.fileName,
-  );
-  const res = await feishuFetch(
-    "https://open.feishu.cn/open-apis/im/v1/files",
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-      body: form,
-    },
-  );
-  const json = (await res.json()) as {
-    code: number;
-    msg: string;
-    data?: { file_key?: string };
-  };
-  const fileKey = json.data?.file_key;
-  if (json.code !== 0 || !fileKey) {
-    const logId = res.headers.get("x-tt-logid") ?? "unknown-log-id";
-    throw new Error(
-      `Feishu upload video failed (${json.code}, ${logId}): ${json.msg}`,
-    );
-  }
-  return fileKey;
-}
-
-async function createFeishuVideoThumbnail(
-  video: Buffer,
-  durationSeconds: number,
-): Promise<Buffer> {
-  const dir = await mkdtemp(join(tmpdir(), "media-hub-feishu-thumbnail-"));
-  try {
-    const inputPath = join(dir, "video.mp4");
-    const outputPath = join(dir, "thumbnail.jpg");
-    const thumbnailSecond = Math.min(1, Math.max(0.1, durationSeconds - 0.1));
-    await writeFile(inputPath, video);
-    await execFileAsync(process.env.FFMPEG_PATH ?? "ffmpeg", [
-      "-i",
-      inputPath,
-      "-ss",
-      thumbnailSecond.toFixed(3),
-      "-frames:v",
-      "1",
-      "-vf",
-      "scale=960:960:force_original_aspect_ratio=decrease",
-      "-q:v",
-      "3",
-      outputPath,
-      "-y",
-      "-loglevel",
-      "error",
-    ]);
-    return await readFile(outputPath);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
-async function uploadFeishuImage(image: Buffer): Promise<string> {
-  const token = await getTenantAccessToken();
-  const form = new FormData();
-  form.append("image_type", "message");
-  form.append(
-    "image",
-    new Blob([new Uint8Array(image)], { type: "image/jpeg" }),
-    "video-thumbnail.jpg",
-  );
-  const res = await feishuFetch(
-    "https://open.feishu.cn/open-apis/im/v1/images",
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-      body: form,
-    },
-  );
-  const json = (await res.json()) as {
-    code: number;
-    msg: string;
-    data?: { image_key?: string };
-  };
-  const imageKey = json.data?.image_key;
-  if (json.code !== 0 || !imageKey) {
-    const logId = res.headers.get("x-tt-logid") ?? "unknown-log-id";
-    throw new Error(
-      `Feishu upload video thumbnail failed (${json.code}, ${logId}): ${json.msg}`,
-    );
-  }
-  return imageKey;
-}
-
-export function buildFeishuVideoContent(
-  fileKey: string,
-  imageKey: string,
-): string {
-  return JSON.stringify({ file_key: fileKey, image_key: imageKey });
-}
-
-async function sendPlayableVideo(input: {
-  chatId: string;
-  video: Buffer;
-  fileName: string;
-  durationSeconds: number;
-}): Promise<void> {
-  const thumbnail = await createFeishuVideoThumbnail(
-    input.video,
-    input.durationSeconds,
-  );
-  const [fileKey, imageKey] = await Promise.all([
-    uploadFeishuVideo(input),
-    uploadFeishuImage(thumbnail),
-  ]);
-  await sendMessage({
-    chatId: input.chatId,
-    msgType: "media",
-    content: buildFeishuVideoContent(fileKey, imageKey),
-  });
-}
-
-function safeVideoFileName(label: string): string {
-  return `${label.replace(/[\\/:*?"<>|]/g, "-").slice(0, 120)}.mp4`;
-}
-
-function normalizeUnknownError(error: unknown): Error {
-  if (error instanceof Error) return error;
-  if (typeof error === "string") return new Error(error);
-  return new Error("Unknown Feishu media notification error");
-}
-
-/** 直接向审核群发送任意卡片（供定时报告等场景使用） */
-export async function sendToReviewChat(cardJson: string): Promise<void> {
-  const { feishuReviewChatId: chatId } = await resolveMediaSystemSetting();
-  if (!chatId) {
-    throw new Error("MEDIA_HUB_REVIEW_CHAT_ID not set");
-  }
-  await sendCard({ chatId, cardJson });
-}
-
 interface GenerationCancellationAlertInput {
   jobId: string;
   title: string | null;
@@ -259,15 +22,16 @@ interface GenerationCancellationAlertInput {
   previousStatus: string;
   createdByLabel: string;
   canceledByLabel: string;
+  recipientWebhookUrl?: string | null;
 }
 
-/** 生成任务被取消时向审核群报警；未配置群时只保留后端审计日志。 */
+/** 生成任务被取消时只通知任务创建人配置的 Webhook。 */
 export async function sendGenerationCancellationAlert(
   input: GenerationCancellationAlertInput,
 ): Promise<void> {
-  const { feishuReviewChatId: chatId } = await resolveMediaSystemSetting();
-  if (!chatId) {
-    log.warn("MEDIA_HUB_REVIEW_CHAT_ID not set, skipping cancel alert", {
+  const webhookUrl = input.recipientWebhookUrl?.trim();
+  if (!webhookUrl) {
+    log.info("User Feishu Webhook not set, skipping cancel alert", {
       code: "MEDIA_GENERATION_CANCEL_ALERT_SKIPPED",
       job_id: input.jobId,
     });
@@ -332,7 +96,7 @@ export async function sendGenerationCancellationAlert(
     ],
   };
 
-  await sendCard({ chatId, cardJson: JSON.stringify(card) });
+  await sendIncomingWebhookCard(webhookUrl, card);
 }
 
 export interface GenerationResultCardInput {
@@ -361,8 +125,54 @@ export interface GenerationResultCardInput {
   videoBytes?: number;
   createdByLabel: string;
   errorMessage?: string | null;
+  errorCode?: string | null;
+  failureStage?: string | null;
+  errorRetryable?: boolean | null;
   videoUrl?: string;
-  video?: Buffer;
+  /** 用户级机器人 Webhook；未配置时不发送。 */
+  recipientWebhookUrl?: string | null;
+}
+
+export type GenerationNotificationDestination =
+  | { kind: "user_webhook"; webhookUrl: string }
+  | { kind: "disabled" };
+
+export function resolveGenerationNotificationDestination(
+  recipientWebhookUrl: string | null | undefined,
+): GenerationNotificationDestination {
+  const webhookUrl = recipientWebhookUrl?.trim();
+  if (webhookUrl) return { kind: "user_webhook", webhookUrl };
+  return { kind: "disabled" };
+}
+
+async function sendIncomingWebhookCard(
+  webhookUrl: string,
+  card: Record<string, unknown>,
+): Promise<void> {
+  if (
+    !/^https:\/\/open\.feishu\.cn\/open-apis\/bot\/v2\/hook\/[A-Za-z0-9-]+$/i.test(
+      webhookUrl,
+    )
+  ) {
+    throw new Error("Invalid user Feishu Webhook URL");
+  }
+  const response = await feishuFetch(webhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ msg_type: "interactive", card }),
+  });
+  const payload = (await response.json()) as {
+    code?: number;
+    msg?: string;
+    StatusCode?: number;
+    StatusMessage?: string;
+  };
+  const code = payload.code ?? payload.StatusCode ?? -1;
+  if (!response.ok || code !== 0) {
+    throw new Error(
+      `Feishu user Webhook failed (${code}): ${payload.msg ?? payload.StatusMessage ?? response.statusText}`,
+    );
+  }
 }
 
 function formatElapsedSeconds(seconds: number): string {
@@ -512,6 +322,27 @@ export function buildGenerationResultCard(input: GenerationResultCardInput) {
       },
     });
   }
+  if (!succeeded && (input.errorCode || input.failureStage)) {
+    elements.push({
+      tag: "div",
+      fields: [
+        {
+          is_short: true,
+          text: {
+            tag: "lark_md",
+            content: `**错误码**\n${input.errorCode ?? "unknown"}`,
+          },
+        },
+        {
+          is_short: true,
+          text: {
+            tag: "lark_md",
+            content: `**失败阶段 / 可重试**\n${input.failureStage ?? "unknown"} · ${input.errorRetryable ? "是" : "否"}`,
+          },
+        },
+      ],
+    });
+  }
   if (succeeded && input.videoUrl) {
     elements.push(
       { tag: "hr" },
@@ -550,50 +381,32 @@ export function buildGenerationResultCard(input: GenerationResultCardInput) {
 export async function sendGenerationResultCard(
   input: GenerationResultCardInput,
 ): Promise<void> {
-  const { feishuReviewChatId: chatId } = await resolveMediaSystemSetting();
-  if (!chatId) {
-    log.warn("MEDIA_HUB_REVIEW_CHAT_ID not set, skipping generation result", {
+  const destination = resolveGenerationNotificationDestination(
+    input.recipientWebhookUrl,
+  );
+  if (destination.kind === "disabled") {
+    log.info("User Feishu Webhook not set, skipping generation result", {
       code: "MEDIA_GENERATION_RESULT_SKIPPED",
       job_id: input.jobId,
       status: input.status,
     });
     return;
   }
-  let mediaError: unknown;
-  if (input.status === "succeeded" && input.video) {
-    try {
-      await sendPlayableVideo({
-        chatId,
-        video: input.video,
-        fileName: safeVideoFileName(
-          input.title?.trim() ?? `media-hub-${input.jobId}`,
-        ),
-        durationSeconds: input.durationSeconds,
-      });
-    } catch (error) {
-      mediaError = error;
-    }
-  }
 
-  await sendCard({
-    chatId,
-    cardJson: JSON.stringify(buildGenerationResultCard(input)),
-  });
-  if (mediaError) {
-    throw normalizeUnknownError(mediaError);
-  }
+  const card = buildGenerationResultCard(input);
+  await sendIncomingWebhookCard(destination.webhookUrl, card);
 }
 
 interface PublishResultCardInput {
   taskId: string;
   title: string;
-  video?: Buffer;
   videoBytes?: number;
   durationSeconds?: number;
   fps?: number;
   width?: number;
   height?: number;
   providerJobId?: string | null;
+  recipientWebhookUrl?: string | null;
   /** 每个平台的最终结果 */
   targets: {
     platform: string;
@@ -634,9 +447,9 @@ function formatPublishError(platform: string, errorMessage: string | null) {
 export async function sendPublishResultCard(
   input: PublishResultCardInput,
 ): Promise<void> {
-  const { feishuReviewChatId: chatId } = await resolveMediaSystemSetting();
-  if (!chatId) {
-    log.warn("MEDIA_HUB_REVIEW_CHAT_ID not set, skipping publish result", {
+  const webhookUrl = input.recipientWebhookUrl?.trim();
+  if (!webhookUrl) {
+    log.info("User Feishu Webhook not set, skipping publish result", {
       code: "MEDIA_PUBLISH_RESULT_SKIPPED",
       task_id: input.taskId,
     });
@@ -719,21 +532,5 @@ export async function sendPublishResultCard(
       },
     ],
   };
-  let mediaError: unknown;
-  if (input.video && input.durationSeconds) {
-    try {
-      await sendPlayableVideo({
-        chatId,
-        video: input.video,
-        fileName: safeVideoFileName(input.title),
-        durationSeconds: input.durationSeconds,
-      });
-    } catch (error) {
-      mediaError = error;
-    }
-  }
-  await sendCard({ chatId, cardJson: JSON.stringify(card) });
-  if (mediaError) {
-    throw normalizeUnknownError(mediaError);
-  }
+  await sendIncomingWebhookCard(webhookUrl, card);
 }

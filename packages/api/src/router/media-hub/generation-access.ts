@@ -3,6 +3,7 @@ export const editableMediaGenerationStatuses = ["scheduled", "queued"] as const;
 export const activeMediaGenerationStatuses = [
   "scheduled",
   "queued",
+  "waiting_for_gpu",
   "running",
 ] as const;
 

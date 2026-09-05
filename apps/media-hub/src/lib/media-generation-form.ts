@@ -17,6 +17,81 @@ export interface ReferenceImageDraft {
   role: ReferenceImageRole;
 }
 
+export interface H3DialogueLine {
+  segment: number;
+  speakerId: "S1" | "S2" | "S3" | "S4";
+  language: "zh" | "en";
+  text: string;
+}
+
+function h3DialogueTag(dialogue: H3DialogueLine): string {
+  const language = dialogue.language === "zh" ? "Mandarin Chinese" : "English";
+  return `(${dialogue.speakerId}) <d>[${language}] ${dialogue.text.trim()}</d>`;
+}
+
+export function h3PromptContainsDialogues(
+  prompt: string,
+  dialogues: H3DialogueLine[],
+  durationSeconds: number,
+): boolean {
+  if (dialogues.length === 0) return true;
+  const segmentCount = Math.max(1, Math.ceil(durationSeconds / 15));
+  const markers = [
+    ...prompt.matchAll(/^===\s*SEGMENT\s+(\d+)\s*\/\s*(\d+)\s*===\s*$/gim),
+  ];
+  const segmentBodies = new Map<number, string>();
+  if (segmentCount === 1 && markers.length === 0) {
+    segmentBodies.set(1, prompt);
+  } else {
+    markers.forEach((marker, index) => {
+      const start = marker.index + marker[0].length;
+      const end = markers[index + 1]?.index ?? prompt.length;
+      segmentBodies.set(Number(marker[1]), prompt.slice(start, end));
+    });
+  }
+  return dialogues.every((dialogue) =>
+    segmentBodies.get(dialogue.segment)?.includes(h3DialogueTag(dialogue)),
+  );
+}
+
+const h3PromptFields = [
+  "integrated_multimodal_description:",
+  "overall_soundscape:",
+  "non_diegetic_music:",
+] as const;
+
+/**
+ * Decide whether the browser should normalize a prompt before submitting it.
+ * The API remains the authoritative validator; this avoids a predictable
+ * round-trip failure for raw or incomplete long-form prompts.
+ */
+export function shouldOptimizeH3PromptBeforeSubmit(
+  prompt: string,
+  durationSeconds: number,
+): boolean {
+  const fieldIndexes = h3PromptFields.map((field) => prompt.indexOf(field));
+  const fieldsAreCompleteAndOrdered = fieldIndexes.every(
+    (index, fieldIndex) =>
+      index >= 0 &&
+      (fieldIndex === 0 || index > (fieldIndexes[fieldIndex - 1] ?? -1)),
+  );
+  if (!fieldsAreCompleteAndOrdered) return true;
+
+  const segmentCount = Math.max(1, Math.ceil(durationSeconds / 15));
+  if (segmentCount === 1) return false;
+
+  const markers = [
+    ...prompt.matchAll(/^===\s*SEGMENT\s+(\d+)\s*\/\s*(\d+)\s*===\s*$/gim),
+  ];
+  return !(
+    markers.length === segmentCount &&
+    markers.every(
+      (marker, index) =>
+        Number(marker[1]) === index + 1 && Number(marker[2]) === segmentCount,
+    )
+  );
+}
+
 interface UploadedReferenceImage {
   key: string;
   contentType: ReferenceImageContentType;
