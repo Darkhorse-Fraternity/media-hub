@@ -357,6 +357,186 @@ export const createMediaGenerationSchema = z.object({
   height: mediaH3DimensionSchema.default(MEDIA_H3_DEFAULT_HEIGHT),
 });
 
+export const mediaVideoScriptDialogueSchema = z.object({
+  id: z.string().trim().min(1).max(100),
+  atSeconds: z.number().min(0).max(15),
+  speakerId: z.enum(["S1", "S2", "S3", "S4"]),
+  language: mediaContentLanguageEnum,
+  text: z.string().trim().min(1).max(300),
+});
+
+export const mediaVideoScriptContinuityBibleSchema = z
+  .object({
+    characters: z.string().trim().max(3000).default(""),
+    wardrobeAndProps: z.string().trim().max(3000).default(""),
+    locationsAndLighting: z.string().trim().max(3000).default(""),
+    visualRules: z.string().trim().max(3000).default(""),
+  })
+  .default({
+    characters: "",
+    wardrobeAndProps: "",
+    locationsAndLighting: "",
+    visualRules: "",
+  });
+
+const mediaVideoScriptShotFields = {
+  title: z.string().trim().min(1).max(120),
+  durationSeconds: z.number().int().min(5).max(15),
+  visualDescription: z.string().trim().min(1).max(5000),
+  cameraDirection: z.string().trim().max(1000).default(""),
+  continuity: z.string().trim().max(1000).default(""),
+  soundscape: z.string().trim().max(1000).default(""),
+  music: z.string().trim().max(1000).default("N/A"),
+  dialogues: z.array(mediaVideoScriptDialogueSchema).max(6).default([]),
+  firstFrameAssetId: z.string().trim().min(1).optional(),
+} satisfies z.ZodRawShape;
+
+function validateScriptShotDialogueTiming(
+  value: {
+    durationSeconds: number;
+    dialogues: { atSeconds: number }[];
+  },
+  context: z.RefinementCtx,
+) {
+  value.dialogues.forEach((dialogue, index) => {
+    if (dialogue.atSeconds >= value.durationSeconds) {
+      context.addIssue({
+        code: "custom",
+        message: "台词时间必须早于镜头结束时间",
+        path: ["dialogues", index, "atSeconds"],
+      });
+    }
+  });
+}
+
+export const mediaVideoScriptDraftShotSchema = z
+  .object(mediaVideoScriptShotFields)
+  .superRefine(validateScriptShotDialogueTiming);
+
+export const mediaVideoScriptShotSchema = z
+  .object({
+    id: z.string().trim().min(1).max(100),
+    ...mediaVideoScriptShotFields,
+  })
+  .superRefine(validateScriptShotDialogueTiming);
+
+export const createMediaVideoScriptSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  brief: z.string().trim().min(1).max(10_000),
+  language: mediaContentLanguageEnum.default("zh"),
+  width: mediaH3DimensionSchema.default(MEDIA_H3_DEFAULT_WIDTH),
+  height: mediaH3DimensionSchema.default(MEDIA_H3_DEFAULT_HEIGHT),
+  defaultProfile: z.string().trim().min(1).max(200).optional(),
+  continuityBible: mediaVideoScriptContinuityBibleSchema,
+  shots: z.array(mediaVideoScriptShotSchema).max(12).default([]),
+});
+
+export const updateMediaVideoScriptSchema = createMediaVideoScriptSchema.extend(
+  {
+    id: z.string().trim().min(1),
+    version: z.number().int().min(1),
+  },
+);
+
+export const mediaVideoScriptIdSchema = z.object({
+  id: z.string().trim().min(1),
+});
+
+export const mediaVideoScriptListSchema = z.object({
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(100).default(30),
+});
+
+export const draftMediaVideoScriptSchema = z.object({
+  title: z.string().trim().max(200).optional(),
+  brief: z.string().trim().min(1).max(10_000),
+  language: mediaContentLanguageEnum.default("zh"),
+  targetDurationSeconds: z.number().int().min(5).max(180).default(30),
+  shotCount: z.number().int().min(1).max(12).optional(),
+});
+
+export const generateMediaVideoScriptSchema = z.object({
+  id: z.string().trim().min(1),
+  shotIds: z.array(z.string().trim().min(1)).max(12).default([]),
+  qualityPreset: mediaH3QualityPresetEnum.default(
+    MEDIA_H3_DEFAULT_QUALITY_PRESET,
+  ),
+  h3Profile: z.string().trim().min(1).max(200).optional(),
+});
+
+export const bridgeMediaVideoScriptFrameSchema = z.object({
+  id: z.string().trim().min(1),
+  sourceShotId: z.string().trim().min(1),
+  version: z.number().int().min(1),
+});
+
+export const analyzeMediaVideoScriptSchema = z.object({
+  shots: z.array(mediaVideoScriptShotSchema).max(12),
+});
+
+export type MediaVideoScriptDialogue = z.infer<
+  typeof mediaVideoScriptDialogueSchema
+>;
+export type MediaVideoScriptContinuityBible = z.infer<
+  typeof mediaVideoScriptContinuityBibleSchema
+>;
+export type MediaVideoScriptShot = z.infer<typeof mediaVideoScriptShotSchema>;
+
+export interface MediaVideoScriptIssue {
+  code: "long_shot" | "dialogue_too_fast";
+  shotId: string;
+  dialogueId?: string;
+  message: string;
+  suggestedSplitCount?: number;
+}
+
+function spokenUnitCount(text: string, language: "zh" | "en"): number {
+  if (language === "zh") {
+    return [...text].filter((character) => /[\p{L}\p{N}]/u.test(character))
+      .length;
+  }
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+export function analyzeMediaVideoScriptShots(
+  shots: MediaVideoScriptShot[],
+): MediaVideoScriptIssue[] {
+  const issues: MediaVideoScriptIssue[] = [];
+  for (const shot of shots) {
+    if (shot.durationSeconds > 10) {
+      issues.push({
+        code: "long_shot",
+        shotId: shot.id,
+        message: `${shot.durationSeconds} 秒长镜头只适合单一动作；复杂动作或多人互动建议拆镜。`,
+        suggestedSplitCount: 2,
+      });
+    }
+    const dialogues = [...shot.dialogues].sort(
+      (left, right) => left.atSeconds - right.atSeconds,
+    );
+    dialogues.forEach((dialogue, index) => {
+      const endAt = dialogues[index + 1]?.atSeconds ?? shot.durationSeconds;
+      const availableSeconds = Math.max(0.5, endAt - dialogue.atSeconds);
+      const units = spokenUnitCount(dialogue.text, dialogue.language);
+      const comfortableRate = dialogue.language === "zh" ? 4 : 2.5;
+      const requiredSeconds = units / comfortableRate;
+      if (requiredSeconds <= availableSeconds) return;
+      const suggestedSplitCount = Math.max(
+        2,
+        Math.ceil(requiredSeconds / availableSeconds),
+      );
+      issues.push({
+        code: "dialogue_too_fast",
+        shotId: shot.id,
+        dialogueId: dialogue.id,
+        message: `${dialogue.language === "zh" ? `${units} 个字` : `${units} 个词`}需要约 ${requiredSeconds.toFixed(1)} 秒，当前仅有 ${availableSeconds.toFixed(1)} 秒。建议延长镜头或拆成 ${suggestedSplitCount} 句/镜。`,
+        suggestedSplitCount,
+      });
+    });
+  }
+  return issues;
+}
+
 export const mediaImageDimensionSchema = z
   .number()
   .int()

@@ -41,6 +41,12 @@ export function MediaHubAccountMenu({
         </div>
         <nav className="grid gap-1 py-2" aria-label="管理菜单">
           <Link
+            to="/scripts"
+            className="rounded-lg px-3 py-2 text-sm text-slate-300 transition hover:bg-slate-800 hover:text-amber-200"
+          >
+            视频脚本
+          </Link>
+          <Link
             to="/platforms"
             className="rounded-lg px-3 py-2 text-sm text-slate-300 transition hover:bg-slate-800 hover:text-cyan-200"
           >

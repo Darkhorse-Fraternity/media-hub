@@ -1205,6 +1205,12 @@ function MediaHubDashboard({
                 : "CHECKING"}
             </span>
             <Link
+              to="/scripts"
+              className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-300 transition hover:border-amber-400/50 hover:text-amber-200 focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:outline-none"
+            >
+              脚本模式
+            </Link>
+            <Link
               to="/images"
               className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-300 transition hover:border-violet-400/50 hover:text-violet-200 focus-visible:ring-2 focus-visible:ring-violet-300 focus-visible:outline-none"
             >

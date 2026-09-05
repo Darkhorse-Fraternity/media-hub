@@ -90,6 +90,7 @@ export function handleAgentApiError(error: unknown): Response {
       FORBIDDEN: 403,
       NOT_FOUND: 404,
       CONFLICT: 409,
+      PRECONDITION_FAILED: 412,
       TOO_MANY_REQUESTS: 429,
     };
     return agentJson(

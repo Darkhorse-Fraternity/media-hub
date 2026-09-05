@@ -8,6 +8,7 @@ import { mediaInstagramRouter } from "./oauth-instagram";
 import { mediaSettingsRouter } from "./settings";
 import { mediaTaskRouter } from "./task";
 import { mediaUploadRouter } from "./upload";
+import { mediaVideoScriptRouter } from "./video-script";
 import { mediaYouTubeRouter } from "./youtube";
 
 export const mediaHubRouter = createTRPCRouter({
@@ -21,4 +22,5 @@ export const mediaHubRouter = createTRPCRouter({
   settings: mediaSettingsRouter,
   generation: mediaGenerationRouter,
   image: mediaImageRouter,
+  script: mediaVideoScriptRouter,
 });

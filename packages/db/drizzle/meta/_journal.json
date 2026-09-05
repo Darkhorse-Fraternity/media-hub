@@ -141,6 +141,20 @@
       "when": 1788568095145,
       "tag": "0019_sharp_killmonger",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1788580490628,
+      "tag": "0020_serious_silverclaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1788583993243,
+      "tag": "0021_third_whistler",
+      "breakpoints": true
     }
   ]
 }

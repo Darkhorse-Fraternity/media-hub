@@ -22,7 +22,7 @@ function openApiDocument(request: Request) {
     openapi: "3.1.0",
     info: {
       title: "Pumpkii Media Hub Agent API",
-      version: "1.1.0",
+      version: "1.3.0",
       description:
         "Bearer-token API for agents to optimize prompts, create and manage MiniMax H3 generation jobs, retrieve videos, and publish to configured platform accounts.",
     },
@@ -168,6 +168,164 @@ function openApiDocument(request: Request) {
             },
           },
         },
+        VideoScriptDialogue: {
+          type: "object",
+          required: ["at_seconds", "speaker_id", "language", "text"],
+          properties: {
+            id: { type: "string" },
+            at_seconds: { type: "number", minimum: 0, maximum: 15 },
+            speaker_id: { type: "string", enum: ["S1", "S2", "S3", "S4"] },
+            language: { type: "string", enum: ["zh", "en"] },
+            text: { type: "string", minLength: 1, maxLength: 300 },
+          },
+        },
+        VideoScriptContinuityBible: {
+          type: "object",
+          properties: {
+            characters: { type: "string", maxLength: 3000 },
+            wardrobe_and_props: { type: "string", maxLength: 3000 },
+            locations_and_lighting: { type: "string", maxLength: 3000 },
+            visual_rules: { type: "string", maxLength: 3000 },
+          },
+        },
+        VideoScriptShot: {
+          type: "object",
+          required: ["title", "duration_seconds", "visual_description"],
+          properties: {
+            id: { type: "string" },
+            title: { type: "string", maxLength: 120 },
+            duration_seconds: {
+              type: "integer",
+              minimum: 5,
+              maximum: 15,
+            },
+            visual_description: { type: "string", maxLength: 5000 },
+            camera_direction: { type: "string", maxLength: 1000 },
+            continuity: { type: "string", maxLength: 1000 },
+            soundscape: { type: "string", maxLength: 1000 },
+            music: { type: "string", maxLength: 1000, default: "N/A" },
+            dialogues: {
+              type: "array",
+              maxItems: 6,
+              items: { $ref: "#/components/schemas/VideoScriptDialogue" },
+            },
+            first_frame_asset_id: { type: "string" },
+          },
+        },
+        CreateVideoScript: {
+          type: "object",
+          required: ["title", "brief"],
+          properties: {
+            title: { type: "string", maxLength: 200 },
+            brief: { type: "string", maxLength: 10000 },
+            language: { type: "string", enum: ["zh", "en"], default: "zh" },
+            width: {
+              type: "integer",
+              minimum: 64,
+              maximum: 1344,
+              multipleOf: 32,
+              default: MEDIA_H3_DEFAULT_WIDTH,
+            },
+            height: {
+              type: "integer",
+              minimum: 64,
+              maximum: 1344,
+              multipleOf: 32,
+              default: MEDIA_H3_DEFAULT_HEIGHT,
+            },
+            default_profile: { type: "string", maxLength: 200 },
+            continuity_bible: {
+              $ref: "#/components/schemas/VideoScriptContinuityBible",
+            },
+            shots: {
+              type: "array",
+              maxItems: 12,
+              items: { $ref: "#/components/schemas/VideoScriptShot" },
+            },
+          },
+        },
+        PatchVideoScript: {
+          type: "object",
+          required: ["version"],
+          properties: {
+            version: { type: "integer", minimum: 1 },
+            title: { type: "string", maxLength: 200 },
+            brief: { type: "string", maxLength: 10000 },
+            language: { type: "string", enum: ["zh", "en"] },
+            width: {
+              type: "integer",
+              minimum: 64,
+              maximum: 1344,
+              multipleOf: 32,
+            },
+            height: {
+              type: "integer",
+              minimum: 64,
+              maximum: 1344,
+              multipleOf: 32,
+            },
+            default_profile: { type: ["string", "null"], maxLength: 200 },
+            continuity_bible: {
+              $ref: "#/components/schemas/VideoScriptContinuityBible",
+            },
+            shots: {
+              type: "array",
+              maxItems: 12,
+              items: { $ref: "#/components/schemas/VideoScriptShot" },
+            },
+          },
+        },
+        DraftVideoScript: {
+          type: "object",
+          required: ["brief"],
+          properties: {
+            title: { type: "string", maxLength: 200 },
+            brief: { type: "string", maxLength: 10000 },
+            language: { type: "string", enum: ["zh", "en"], default: "zh" },
+            target_duration_seconds: {
+              type: "integer",
+              minimum: 5,
+              maximum: 180,
+              default: 30,
+            },
+            shot_count: { type: "integer", minimum: 1, maximum: 12 },
+          },
+        },
+        GenerateVideoScript: {
+          type: "object",
+          properties: {
+            shot_ids: {
+              type: "array",
+              maxItems: 12,
+              description: "Empty or omitted means every shot.",
+              items: { type: "string" },
+            },
+            quality_preset: {
+              type: "string",
+              enum: ["fast", "balanced", "quality"],
+              default: "balanced",
+            },
+            generation_profile: { type: "string", maxLength: 200 },
+          },
+        },
+        AnalyzeVideoScript: {
+          type: "object",
+          required: ["shots"],
+          properties: {
+            shots: {
+              type: "array",
+              maxItems: 12,
+              items: { $ref: "#/components/schemas/VideoScriptShot" },
+            },
+          },
+        },
+        CarryVideoScriptFinalFrame: {
+          type: "object",
+          required: ["version"],
+          properties: {
+            version: { type: "integer", minimum: 1 },
+          },
+        },
       },
     },
     security: bearerSecurity,
@@ -270,6 +428,217 @@ function openApiDocument(request: Request) {
           },
           responses: {
             "201": { description: "Generation job created" },
+            ...errorResponses,
+          },
+        },
+      },
+      "/api/v1/generation-profiles": {
+        get: {
+          operationId: "listGenerationProfiles",
+          summary:
+            "List available H3 generation workflows and the admin default",
+          responses: {
+            "200": { description: "H3 generation profiles" },
+            ...errorResponses,
+          },
+        },
+      },
+      "/api/v1/image-assets": {
+        get: {
+          operationId: "listImageAssets",
+          summary:
+            "List the current user's private image assets for script frames",
+          parameters: [
+            {
+              name: "limit",
+              in: "query",
+              schema: {
+                type: "integer",
+                minimum: 1,
+                maximum: 100,
+                default: 100,
+              },
+            },
+          ],
+          responses: {
+            "200": { description: "Private image assets" },
+            ...errorResponses,
+          },
+        },
+      },
+      "/api/v1/scripts": {
+        get: {
+          operationId: "listVideoScripts",
+          summary: "List the current user's video scripts",
+          parameters: [
+            {
+              name: "page",
+              in: "query",
+              schema: { type: "integer", default: 1 },
+            },
+            {
+              name: "page_size",
+              in: "query",
+              schema: { type: "integer", default: 30, maximum: 100 },
+            },
+          ],
+          responses: {
+            "200": { description: "Video script page" },
+            ...errorResponses,
+          },
+        },
+        post: {
+          operationId: "createVideoScript",
+          summary: "Create a structured video script",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/CreateVideoScript" },
+              },
+            },
+          },
+          responses: {
+            "201": { description: "Video script created" },
+            ...errorResponses,
+          },
+        },
+      },
+      "/api/v1/scripts/draft": {
+        post: {
+          operationId: "draftVideoScript",
+          summary: "Generate a structured script draft from a creative brief",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/DraftVideoScript" },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Generated script draft" },
+            ...errorResponses,
+          },
+        },
+      },
+      "/api/v1/scripts/analyze": {
+        post: {
+          operationId: "analyzeVideoScript",
+          summary: "Check shot duration and original-dialogue speaking pace",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/AnalyzeVideoScript" },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Shot-level production warnings" },
+            ...errorResponses,
+          },
+        },
+      },
+      "/api/v1/scripts/{scriptId}": {
+        parameters: [
+          {
+            name: "scriptId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        get: {
+          operationId: "getVideoScript",
+          summary: "Get a script, its shots, and related generation jobs",
+          responses: {
+            "200": { description: "Video script" },
+            ...errorResponses,
+          },
+        },
+        patch: {
+          operationId: "updateVideoScript",
+          summary: "Update a script using optimistic version locking",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/PatchVideoScript" },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Video script updated" },
+            ...errorResponses,
+          },
+        },
+        delete: {
+          operationId: "deleteVideoScript",
+          summary: "Soft-delete a video script",
+          responses: {
+            "200": { description: "Video script deleted" },
+            ...errorResponses,
+          },
+        },
+      },
+      "/api/v1/scripts/{scriptId}/generate": {
+        post: {
+          operationId: "generateVideoScriptShots",
+          summary: "Queue selected or all script shots as independent H3 jobs",
+          parameters: [
+            {
+              name: "scriptId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/GenerateVideoScript" },
+              },
+            },
+          },
+          responses: {
+            "201": { description: "Shot generation jobs queued" },
+            ...errorResponses,
+          },
+        },
+      },
+      "/api/v1/scripts/{scriptId}/shots/{shotId}/carry-final-frame": {
+        post: {
+          operationId: "carryVideoScriptFinalFrame",
+          summary:
+            "Extract the latest successful shot's final frame and set it as the next shot's first frame",
+          parameters: [
+            {
+              name: "scriptId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "shotId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/CarryVideoScriptFinalFrame",
+                },
+              },
+            },
+          },
+          responses: {
+            "201": { description: "Final frame stored and next shot updated" },
             ...errorResponses,
           },
         },

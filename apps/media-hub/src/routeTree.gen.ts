@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as ScriptsRouteImport } from './routes/scripts'
 import { Route as PlatformsRouteImport } from './routes/platforms'
 import { Route as ImagesRouteImport } from './routes/images'
 import { Route as IndexRouteImport } from './routes/index'
@@ -22,26 +23,39 @@ import { Route as AdminUsersRouteImport } from './routes/admin.users'
 import { Route as OauthYoutubeCallbackRouteImport } from './routes/oauth/youtube/callback'
 import { Route as OauthInstagramCallbackRouteImport } from './routes/oauth/instagram/callback'
 import { Route as GenerationsJobIdEditRouteImport } from './routes/generations.$jobId.edit'
+import { Route as ApiV1ScriptsRouteImport } from './routes/api/v1/scripts'
 import { Route as ApiV1PlatformAccountsRouteImport } from './routes/api/v1/platform-accounts'
+import { Route as ApiV1ImageAssetsRouteImport } from './routes/api/v1/image-assets'
 import { Route as ApiV1GenerationsRouteImport } from './routes/api/v1/generations'
+import { Route as ApiV1GenerationProfilesRouteImport } from './routes/api/v1/generation-profiles'
 import { Route as ApiTrpcSplatRouteImport } from './routes/api/trpc.$'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth.$'
 import { Route as ApiV1UploadsPresignRouteImport } from './routes/api/v1/uploads/presign'
+import { Route as ApiV1ScriptsDraftRouteImport } from './routes/api/v1/scripts/draft'
+import { Route as ApiV1ScriptsAnalyzeRouteImport } from './routes/api/v1/scripts/analyze'
+import { Route as ApiV1ScriptsScriptIdRouteImport } from './routes/api/v1/scripts/$scriptId'
 import { Route as ApiV1PromptsOptimizeRouteImport } from './routes/api/v1/prompts/optimize'
 import { Route as ApiV1GenerationsJobIdRouteImport } from './routes/api/v1/generations/$jobId'
 import { Route as ApiMediaHubUploadsReferenceImageRouteImport } from './routes/api/media-hub/uploads/reference-image'
 import { Route as ApiMediaHubUploadsImageAssetRouteImport } from './routes/api/media-hub/uploads/image-asset'
 import { Route as ApiMediaHubImagesAssetIdRouteImport } from './routes/api/media-hub/images/$assetId'
+import { Route as ApiV1ScriptsScriptIdGenerateRouteImport } from './routes/api/v1/scripts/$scriptId/generate'
 import { Route as ApiV1GenerationsJobIdVideoRouteImport } from './routes/api/v1/generations/$jobId/video'
 import { Route as ApiV1GenerationsJobIdRetryRouteImport } from './routes/api/v1/generations/$jobId/retry'
 import { Route as ApiV1GenerationsJobIdPublishRouteImport } from './routes/api/v1/generations/$jobId/publish'
 import { Route as ApiV1GenerationsJobIdNotifyRouteImport } from './routes/api/v1/generations/$jobId/notify'
 import { Route as ApiV1GenerationsJobIdEditsRouteImport } from './routes/api/v1/generations/$jobId/edits'
 import { Route as ApiMediaHubGenerationJobIdVideoRouteImport } from './routes/api/media-hub/generation/$jobId/video'
+import { Route as ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRouteImport } from './routes/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ScriptsRoute = ScriptsRouteImport.update({
+  id: '/scripts',
+  path: '/scripts',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PlatformsRoute = PlatformsRouteImport.update({
@@ -104,14 +118,29 @@ const GenerationsJobIdEditRoute = GenerationsJobIdEditRouteImport.update({
   path: '/generations/$jobId/edit',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiV1ScriptsRoute = ApiV1ScriptsRouteImport.update({
+  id: '/api/v1/scripts',
+  path: '/api/v1/scripts',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiV1PlatformAccountsRoute = ApiV1PlatformAccountsRouteImport.update({
   id: '/api/v1/platform-accounts',
   path: '/api/v1/platform-accounts',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiV1ImageAssetsRoute = ApiV1ImageAssetsRouteImport.update({
+  id: '/api/v1/image-assets',
+  path: '/api/v1/image-assets',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiV1GenerationsRoute = ApiV1GenerationsRouteImport.update({
   id: '/api/v1/generations',
   path: '/api/v1/generations',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiV1GenerationProfilesRoute = ApiV1GenerationProfilesRouteImport.update({
+  id: '/api/v1/generation-profiles',
+  path: '/api/v1/generation-profiles',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiTrpcSplatRoute = ApiTrpcSplatRouteImport.update({
@@ -128,6 +157,21 @@ const ApiV1UploadsPresignRoute = ApiV1UploadsPresignRouteImport.update({
   id: '/api/v1/uploads/presign',
   path: '/api/v1/uploads/presign',
   getParentRoute: () => rootRouteImport,
+} as any)
+const ApiV1ScriptsDraftRoute = ApiV1ScriptsDraftRouteImport.update({
+  id: '/draft',
+  path: '/draft',
+  getParentRoute: () => ApiV1ScriptsRoute,
+} as any)
+const ApiV1ScriptsAnalyzeRoute = ApiV1ScriptsAnalyzeRouteImport.update({
+  id: '/analyze',
+  path: '/analyze',
+  getParentRoute: () => ApiV1ScriptsRoute,
+} as any)
+const ApiV1ScriptsScriptIdRoute = ApiV1ScriptsScriptIdRouteImport.update({
+  id: '/$scriptId',
+  path: '/$scriptId',
+  getParentRoute: () => ApiV1ScriptsRoute,
 } as any)
 const ApiV1PromptsOptimizeRoute = ApiV1PromptsOptimizeRouteImport.update({
   id: '/api/v1/prompts/optimize',
@@ -156,6 +200,12 @@ const ApiMediaHubImagesAssetIdRoute =
     id: '/api/media-hub/images/$assetId',
     path: '/api/media-hub/images/$assetId',
     getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiV1ScriptsScriptIdGenerateRoute =
+  ApiV1ScriptsScriptIdGenerateRouteImport.update({
+    id: '/generate',
+    path: '/generate',
+    getParentRoute: () => ApiV1ScriptsScriptIdRoute,
   } as any)
 const ApiV1GenerationsJobIdVideoRoute =
   ApiV1GenerationsJobIdVideoRouteImport.update({
@@ -193,11 +243,18 @@ const ApiMediaHubGenerationJobIdVideoRoute =
     path: '/api/media-hub/generation/$jobId/video',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute =
+  ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRouteImport.update({
+    id: '/shots/$shotId/carry-final-frame',
+    path: '/shots/$shotId/carry-final-frame',
+    getParentRoute: () => ApiV1ScriptsScriptIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/images': typeof ImagesRoute
   '/platforms': typeof PlatformsRoute
+  '/scripts': typeof ScriptsRoute
   '/settings': typeof SettingsRoute
   '/admin/users': typeof AdminUsersRoute
   '/api/health': typeof ApiHealthRoute
@@ -207,8 +264,11 @@ export interface FileRoutesByFullPath {
   '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
+  '/api/v1/generation-profiles': typeof ApiV1GenerationProfilesRoute
   '/api/v1/generations': typeof ApiV1GenerationsRouteWithChildren
+  '/api/v1/image-assets': typeof ApiV1ImageAssetsRoute
   '/api/v1/platform-accounts': typeof ApiV1PlatformAccountsRoute
+  '/api/v1/scripts': typeof ApiV1ScriptsRouteWithChildren
   '/generations/$jobId/edit': typeof GenerationsJobIdEditRoute
   '/oauth/instagram/callback': typeof OauthInstagramCallbackRoute
   '/oauth/youtube/callback': typeof OauthYoutubeCallbackRoute
@@ -217,6 +277,9 @@ export interface FileRoutesByFullPath {
   '/api/media-hub/uploads/reference-image': typeof ApiMediaHubUploadsReferenceImageRoute
   '/api/v1/generations/$jobId': typeof ApiV1GenerationsJobIdRouteWithChildren
   '/api/v1/prompts/optimize': typeof ApiV1PromptsOptimizeRoute
+  '/api/v1/scripts/$scriptId': typeof ApiV1ScriptsScriptIdRouteWithChildren
+  '/api/v1/scripts/analyze': typeof ApiV1ScriptsAnalyzeRoute
+  '/api/v1/scripts/draft': typeof ApiV1ScriptsDraftRoute
   '/api/v1/uploads/presign': typeof ApiV1UploadsPresignRoute
   '/api/media-hub/generation/$jobId/video': typeof ApiMediaHubGenerationJobIdVideoRoute
   '/api/v1/generations/$jobId/edits': typeof ApiV1GenerationsJobIdEditsRoute
@@ -224,11 +287,14 @@ export interface FileRoutesByFullPath {
   '/api/v1/generations/$jobId/publish': typeof ApiV1GenerationsJobIdPublishRoute
   '/api/v1/generations/$jobId/retry': typeof ApiV1GenerationsJobIdRetryRoute
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
+  '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
+  '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/images': typeof ImagesRoute
   '/platforms': typeof PlatformsRoute
+  '/scripts': typeof ScriptsRoute
   '/settings': typeof SettingsRoute
   '/admin/users': typeof AdminUsersRoute
   '/api/health': typeof ApiHealthRoute
@@ -238,8 +304,11 @@ export interface FileRoutesByTo {
   '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
+  '/api/v1/generation-profiles': typeof ApiV1GenerationProfilesRoute
   '/api/v1/generations': typeof ApiV1GenerationsRouteWithChildren
+  '/api/v1/image-assets': typeof ApiV1ImageAssetsRoute
   '/api/v1/platform-accounts': typeof ApiV1PlatformAccountsRoute
+  '/api/v1/scripts': typeof ApiV1ScriptsRouteWithChildren
   '/generations/$jobId/edit': typeof GenerationsJobIdEditRoute
   '/oauth/instagram/callback': typeof OauthInstagramCallbackRoute
   '/oauth/youtube/callback': typeof OauthYoutubeCallbackRoute
@@ -248,6 +317,9 @@ export interface FileRoutesByTo {
   '/api/media-hub/uploads/reference-image': typeof ApiMediaHubUploadsReferenceImageRoute
   '/api/v1/generations/$jobId': typeof ApiV1GenerationsJobIdRouteWithChildren
   '/api/v1/prompts/optimize': typeof ApiV1PromptsOptimizeRoute
+  '/api/v1/scripts/$scriptId': typeof ApiV1ScriptsScriptIdRouteWithChildren
+  '/api/v1/scripts/analyze': typeof ApiV1ScriptsAnalyzeRoute
+  '/api/v1/scripts/draft': typeof ApiV1ScriptsDraftRoute
   '/api/v1/uploads/presign': typeof ApiV1UploadsPresignRoute
   '/api/media-hub/generation/$jobId/video': typeof ApiMediaHubGenerationJobIdVideoRoute
   '/api/v1/generations/$jobId/edits': typeof ApiV1GenerationsJobIdEditsRoute
@@ -255,12 +327,15 @@ export interface FileRoutesByTo {
   '/api/v1/generations/$jobId/publish': typeof ApiV1GenerationsJobIdPublishRoute
   '/api/v1/generations/$jobId/retry': typeof ApiV1GenerationsJobIdRetryRoute
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
+  '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
+  '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/images': typeof ImagesRoute
   '/platforms': typeof PlatformsRoute
+  '/scripts': typeof ScriptsRoute
   '/settings': typeof SettingsRoute
   '/admin/users': typeof AdminUsersRoute
   '/api/health': typeof ApiHealthRoute
@@ -270,8 +345,11 @@ export interface FileRoutesById {
   '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
+  '/api/v1/generation-profiles': typeof ApiV1GenerationProfilesRoute
   '/api/v1/generations': typeof ApiV1GenerationsRouteWithChildren
+  '/api/v1/image-assets': typeof ApiV1ImageAssetsRoute
   '/api/v1/platform-accounts': typeof ApiV1PlatformAccountsRoute
+  '/api/v1/scripts': typeof ApiV1ScriptsRouteWithChildren
   '/generations/$jobId/edit': typeof GenerationsJobIdEditRoute
   '/oauth/instagram/callback': typeof OauthInstagramCallbackRoute
   '/oauth/youtube/callback': typeof OauthYoutubeCallbackRoute
@@ -280,6 +358,9 @@ export interface FileRoutesById {
   '/api/media-hub/uploads/reference-image': typeof ApiMediaHubUploadsReferenceImageRoute
   '/api/v1/generations/$jobId': typeof ApiV1GenerationsJobIdRouteWithChildren
   '/api/v1/prompts/optimize': typeof ApiV1PromptsOptimizeRoute
+  '/api/v1/scripts/$scriptId': typeof ApiV1ScriptsScriptIdRouteWithChildren
+  '/api/v1/scripts/analyze': typeof ApiV1ScriptsAnalyzeRoute
+  '/api/v1/scripts/draft': typeof ApiV1ScriptsDraftRoute
   '/api/v1/uploads/presign': typeof ApiV1UploadsPresignRoute
   '/api/media-hub/generation/$jobId/video': typeof ApiMediaHubGenerationJobIdVideoRoute
   '/api/v1/generations/$jobId/edits': typeof ApiV1GenerationsJobIdEditsRoute
@@ -287,6 +368,8 @@ export interface FileRoutesById {
   '/api/v1/generations/$jobId/publish': typeof ApiV1GenerationsJobIdPublishRoute
   '/api/v1/generations/$jobId/retry': typeof ApiV1GenerationsJobIdRetryRoute
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
+  '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
+  '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -294,6 +377,7 @@ export interface FileRouteTypes {
     | '/'
     | '/images'
     | '/platforms'
+    | '/scripts'
     | '/settings'
     | '/admin/users'
     | '/api/health'
@@ -303,8 +387,11 @@ export interface FileRouteTypes {
     | '/legal/terms-of-service'
     | '/api/auth/$'
     | '/api/trpc/$'
+    | '/api/v1/generation-profiles'
     | '/api/v1/generations'
+    | '/api/v1/image-assets'
     | '/api/v1/platform-accounts'
+    | '/api/v1/scripts'
     | '/generations/$jobId/edit'
     | '/oauth/instagram/callback'
     | '/oauth/youtube/callback'
@@ -313,6 +400,9 @@ export interface FileRouteTypes {
     | '/api/media-hub/uploads/reference-image'
     | '/api/v1/generations/$jobId'
     | '/api/v1/prompts/optimize'
+    | '/api/v1/scripts/$scriptId'
+    | '/api/v1/scripts/analyze'
+    | '/api/v1/scripts/draft'
     | '/api/v1/uploads/presign'
     | '/api/media-hub/generation/$jobId/video'
     | '/api/v1/generations/$jobId/edits'
@@ -320,11 +410,14 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/publish'
     | '/api/v1/generations/$jobId/retry'
     | '/api/v1/generations/$jobId/video'
+    | '/api/v1/scripts/$scriptId/generate'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/images'
     | '/platforms'
+    | '/scripts'
     | '/settings'
     | '/admin/users'
     | '/api/health'
@@ -334,8 +427,11 @@ export interface FileRouteTypes {
     | '/legal/terms-of-service'
     | '/api/auth/$'
     | '/api/trpc/$'
+    | '/api/v1/generation-profiles'
     | '/api/v1/generations'
+    | '/api/v1/image-assets'
     | '/api/v1/platform-accounts'
+    | '/api/v1/scripts'
     | '/generations/$jobId/edit'
     | '/oauth/instagram/callback'
     | '/oauth/youtube/callback'
@@ -344,6 +440,9 @@ export interface FileRouteTypes {
     | '/api/media-hub/uploads/reference-image'
     | '/api/v1/generations/$jobId'
     | '/api/v1/prompts/optimize'
+    | '/api/v1/scripts/$scriptId'
+    | '/api/v1/scripts/analyze'
+    | '/api/v1/scripts/draft'
     | '/api/v1/uploads/presign'
     | '/api/media-hub/generation/$jobId/video'
     | '/api/v1/generations/$jobId/edits'
@@ -351,11 +450,14 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/publish'
     | '/api/v1/generations/$jobId/retry'
     | '/api/v1/generations/$jobId/video'
+    | '/api/v1/scripts/$scriptId/generate'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
   id:
     | '__root__'
     | '/'
     | '/images'
     | '/platforms'
+    | '/scripts'
     | '/settings'
     | '/admin/users'
     | '/api/health'
@@ -365,8 +467,11 @@ export interface FileRouteTypes {
     | '/legal/terms-of-service'
     | '/api/auth/$'
     | '/api/trpc/$'
+    | '/api/v1/generation-profiles'
     | '/api/v1/generations'
+    | '/api/v1/image-assets'
     | '/api/v1/platform-accounts'
+    | '/api/v1/scripts'
     | '/generations/$jobId/edit'
     | '/oauth/instagram/callback'
     | '/oauth/youtube/callback'
@@ -375,6 +480,9 @@ export interface FileRouteTypes {
     | '/api/media-hub/uploads/reference-image'
     | '/api/v1/generations/$jobId'
     | '/api/v1/prompts/optimize'
+    | '/api/v1/scripts/$scriptId'
+    | '/api/v1/scripts/analyze'
+    | '/api/v1/scripts/draft'
     | '/api/v1/uploads/presign'
     | '/api/media-hub/generation/$jobId/video'
     | '/api/v1/generations/$jobId/edits'
@@ -382,12 +490,15 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/publish'
     | '/api/v1/generations/$jobId/retry'
     | '/api/v1/generations/$jobId/video'
+    | '/api/v1/scripts/$scriptId/generate'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ImagesRoute: typeof ImagesRoute
   PlatformsRoute: typeof PlatformsRoute
+  ScriptsRoute: typeof ScriptsRoute
   SettingsRoute: typeof SettingsRoute
   AdminUsersRoute: typeof AdminUsersRoute
   ApiHealthRoute: typeof ApiHealthRoute
@@ -397,8 +508,11 @@ export interface RootRouteChildren {
   LegalTermsOfServiceRoute: typeof LegalTermsOfServiceRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiTrpcSplatRoute: typeof ApiTrpcSplatRoute
+  ApiV1GenerationProfilesRoute: typeof ApiV1GenerationProfilesRoute
   ApiV1GenerationsRoute: typeof ApiV1GenerationsRouteWithChildren
+  ApiV1ImageAssetsRoute: typeof ApiV1ImageAssetsRoute
   ApiV1PlatformAccountsRoute: typeof ApiV1PlatformAccountsRoute
+  ApiV1ScriptsRoute: typeof ApiV1ScriptsRouteWithChildren
   GenerationsJobIdEditRoute: typeof GenerationsJobIdEditRoute
   OauthInstagramCallbackRoute: typeof OauthInstagramCallbackRoute
   OauthYoutubeCallbackRoute: typeof OauthYoutubeCallbackRoute
@@ -417,6 +531,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/scripts': {
+      id: '/scripts'
+      path: '/scripts'
+      fullPath: '/scripts'
+      preLoaderRoute: typeof ScriptsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/platforms': {
@@ -503,6 +624,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GenerationsJobIdEditRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/v1/scripts': {
+      id: '/api/v1/scripts'
+      path: '/api/v1/scripts'
+      fullPath: '/api/v1/scripts'
+      preLoaderRoute: typeof ApiV1ScriptsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/v1/platform-accounts': {
       id: '/api/v1/platform-accounts'
       path: '/api/v1/platform-accounts'
@@ -510,11 +638,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiV1PlatformAccountsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/v1/image-assets': {
+      id: '/api/v1/image-assets'
+      path: '/api/v1/image-assets'
+      fullPath: '/api/v1/image-assets'
+      preLoaderRoute: typeof ApiV1ImageAssetsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/v1/generations': {
       id: '/api/v1/generations'
       path: '/api/v1/generations'
       fullPath: '/api/v1/generations'
       preLoaderRoute: typeof ApiV1GenerationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/generation-profiles': {
+      id: '/api/v1/generation-profiles'
+      path: '/api/v1/generation-profiles'
+      fullPath: '/api/v1/generation-profiles'
+      preLoaderRoute: typeof ApiV1GenerationProfilesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/trpc/$': {
@@ -537,6 +679,27 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/v1/uploads/presign'
       preLoaderRoute: typeof ApiV1UploadsPresignRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/scripts/draft': {
+      id: '/api/v1/scripts/draft'
+      path: '/draft'
+      fullPath: '/api/v1/scripts/draft'
+      preLoaderRoute: typeof ApiV1ScriptsDraftRouteImport
+      parentRoute: typeof ApiV1ScriptsRoute
+    }
+    '/api/v1/scripts/analyze': {
+      id: '/api/v1/scripts/analyze'
+      path: '/analyze'
+      fullPath: '/api/v1/scripts/analyze'
+      preLoaderRoute: typeof ApiV1ScriptsAnalyzeRouteImport
+      parentRoute: typeof ApiV1ScriptsRoute
+    }
+    '/api/v1/scripts/$scriptId': {
+      id: '/api/v1/scripts/$scriptId'
+      path: '/$scriptId'
+      fullPath: '/api/v1/scripts/$scriptId'
+      preLoaderRoute: typeof ApiV1ScriptsScriptIdRouteImport
+      parentRoute: typeof ApiV1ScriptsRoute
     }
     '/api/v1/prompts/optimize': {
       id: '/api/v1/prompts/optimize'
@@ -572,6 +735,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/media-hub/images/$assetId'
       preLoaderRoute: typeof ApiMediaHubImagesAssetIdRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/scripts/$scriptId/generate': {
+      id: '/api/v1/scripts/$scriptId/generate'
+      path: '/generate'
+      fullPath: '/api/v1/scripts/$scriptId/generate'
+      preLoaderRoute: typeof ApiV1ScriptsScriptIdGenerateRouteImport
+      parentRoute: typeof ApiV1ScriptsScriptIdRoute
     }
     '/api/v1/generations/$jobId/video': {
       id: '/api/v1/generations/$jobId/video'
@@ -615,6 +785,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiMediaHubGenerationJobIdVideoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': {
+      id: '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
+      path: '/shots/$shotId/carry-final-frame'
+      fullPath: '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
+      preLoaderRoute: typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRouteImport
+      parentRoute: typeof ApiV1ScriptsScriptIdRoute
+    }
   }
 }
 
@@ -650,10 +827,41 @@ const ApiV1GenerationsRouteChildren: ApiV1GenerationsRouteChildren = {
 const ApiV1GenerationsRouteWithChildren =
   ApiV1GenerationsRoute._addFileChildren(ApiV1GenerationsRouteChildren)
 
+interface ApiV1ScriptsScriptIdRouteChildren {
+  ApiV1ScriptsScriptIdGenerateRoute: typeof ApiV1ScriptsScriptIdGenerateRoute
+  ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute: typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
+}
+
+const ApiV1ScriptsScriptIdRouteChildren: ApiV1ScriptsScriptIdRouteChildren = {
+  ApiV1ScriptsScriptIdGenerateRoute: ApiV1ScriptsScriptIdGenerateRoute,
+  ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute:
+    ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute,
+}
+
+const ApiV1ScriptsScriptIdRouteWithChildren =
+  ApiV1ScriptsScriptIdRoute._addFileChildren(ApiV1ScriptsScriptIdRouteChildren)
+
+interface ApiV1ScriptsRouteChildren {
+  ApiV1ScriptsScriptIdRoute: typeof ApiV1ScriptsScriptIdRouteWithChildren
+  ApiV1ScriptsAnalyzeRoute: typeof ApiV1ScriptsAnalyzeRoute
+  ApiV1ScriptsDraftRoute: typeof ApiV1ScriptsDraftRoute
+}
+
+const ApiV1ScriptsRouteChildren: ApiV1ScriptsRouteChildren = {
+  ApiV1ScriptsScriptIdRoute: ApiV1ScriptsScriptIdRouteWithChildren,
+  ApiV1ScriptsAnalyzeRoute: ApiV1ScriptsAnalyzeRoute,
+  ApiV1ScriptsDraftRoute: ApiV1ScriptsDraftRoute,
+}
+
+const ApiV1ScriptsRouteWithChildren = ApiV1ScriptsRoute._addFileChildren(
+  ApiV1ScriptsRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ImagesRoute: ImagesRoute,
   PlatformsRoute: PlatformsRoute,
+  ScriptsRoute: ScriptsRoute,
   SettingsRoute: SettingsRoute,
   AdminUsersRoute: AdminUsersRoute,
   ApiHealthRoute: ApiHealthRoute,
@@ -663,8 +871,11 @@ const rootRouteChildren: RootRouteChildren = {
   LegalTermsOfServiceRoute: LegalTermsOfServiceRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiTrpcSplatRoute: ApiTrpcSplatRoute,
+  ApiV1GenerationProfilesRoute: ApiV1GenerationProfilesRoute,
   ApiV1GenerationsRoute: ApiV1GenerationsRouteWithChildren,
+  ApiV1ImageAssetsRoute: ApiV1ImageAssetsRoute,
   ApiV1PlatformAccountsRoute: ApiV1PlatformAccountsRoute,
+  ApiV1ScriptsRoute: ApiV1ScriptsRouteWithChildren,
   GenerationsJobIdEditRoute: GenerationsJobIdEditRoute,
   OauthInstagramCallbackRoute: OauthInstagramCallbackRoute,
   OauthYoutubeCallbackRoute: OauthYoutubeCallbackRoute,

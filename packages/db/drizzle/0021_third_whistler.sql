@@ -1,0 +1,1 @@
+ALTER TABLE "media_video_script" ADD COLUMN "continuity_bible" jsonb DEFAULT '{"characters":"","wardrobeAndProps":"","locationsAndLighting":"","visualRules":""}'::jsonb NOT NULL;

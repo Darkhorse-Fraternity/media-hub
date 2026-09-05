@@ -48,6 +48,7 @@ import {
   ProviderRequestError,
   requestGenerationProvider,
 } from "./provider-request";
+import { extractMediaGenerationLastFrame } from "./video-frame";
 
 const execFileAsync = promisify(execFile);
 const PROVIDER_CONTRACT = "ydc_generated_media_provider_request.v1";
@@ -535,33 +536,6 @@ async function joinVideoSamples(samples: ProviderSample[]): Promise<Buffer> {
   }
 }
 
-async function extractLastFrame(video: Buffer): Promise<Buffer> {
-  const dir = await mkdtemp(join(tmpdir(), "media-hub-h3-frame-"));
-  try {
-    const inputPath = join(dir, "segment.mp4");
-    const outputPath = join(dir, "last-frame.png");
-    await writeFile(inputPath, video);
-    const ffmpeg = process.env.FFMPEG_PATH ?? "ffmpeg";
-    await execFileAsync(ffmpeg, [
-      "-sseof",
-      "-0.1",
-      "-i",
-      inputPath,
-      "-frames:v",
-      "1",
-      "-f",
-      "image2",
-      outputPath,
-      "-y",
-      "-loglevel",
-      "error",
-    ]);
-    return await readFile(outputPath);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
 interface GenerationPipelineResult {
   video: Buffer;
   providerJobIds: string[];
@@ -635,7 +609,7 @@ async function runVideoGenerationPipeline(
       content_type: "video/mp4",
     });
     if (segmentIndex + 1 < totalSegments) {
-      continuationFrame = await extractLastFrame(segmentVideo);
+      continuationFrame = await extractMediaGenerationLastFrame(segmentVideo);
     }
   }
 
