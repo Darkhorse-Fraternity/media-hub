@@ -360,7 +360,7 @@ function SettingsWorkspace({
                 </div>
                 <SettingField
                   label="飞书通知 Webhook"
-                  hint="兼容卡片通知；只配置 Webhook 时不支持直接播放视频。"
+                  hint="推荐方式。生成完成后发送结果卡片和可外网访问的视频直链，无需群 ID。"
                 >
                   <input
                     type="url"
@@ -378,7 +378,7 @@ function SettingsWorkspace({
                 </SettingField>
                 <SettingField
                   label="飞书接收群 Chat ID"
-                  hint="可播放视频通知使用；请先把 Pumpkii Media Hub 应用机器人加入同一群。配置后视频和卡片都只发到这个群。"
+                  hint="可选备用。未配置 Webhook 时，应用机器人可通过群 ID 发送飞书原生视频和卡片。"
                 >
                   <input
                     value={preferenceDraft.feishuChatId}

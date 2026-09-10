@@ -410,9 +410,9 @@ export interface GenerationResultCardInput {
   failureStage?: string | null;
   errorRetryable?: boolean | null;
   videoUrl?: string;
-  /** 用户级机器人 Webhook；未配置时不发送。 */
+  /** 用户级机器人 Webhook；默认发送卡片和外网视频直链。 */
   recipientWebhookUrl?: string | null;
-  /** 用户级飞书群；配置后可发送原生可播放视频，优先于 Webhook。 */
+  /** 用户级飞书群；仅在未配置 Webhook 时用于原生视频消息。 */
   recipientChatId?: string | null;
   video?: Buffer;
 }
@@ -426,10 +426,10 @@ export function resolveGenerationNotificationDestination(
   recipientChatId: string | null | undefined,
   recipientWebhookUrl: string | null | undefined,
 ): GenerationNotificationDestination {
-  const chatId = recipientChatId?.trim();
-  if (chatId) return { kind: "app_chat", chatId };
   const webhookUrl = recipientWebhookUrl?.trim();
   if (webhookUrl) return { kind: "user_webhook", webhookUrl };
+  const chatId = recipientChatId?.trim();
+  if (chatId) return { kind: "app_chat", chatId };
   return { kind: "disabled" };
 }
 
@@ -639,7 +639,7 @@ export function buildGenerationResultCard(input: GenerationResultCardInput) {
         actions: [
           {
             tag: "button",
-            text: { tag: "plain_text", content: "▶ 打开 Media Hub 查看视频" },
+            text: { tag: "plain_text", content: "▶ 打开视频播放器" },
             type: "primary",
             url: input.videoUrl,
           },

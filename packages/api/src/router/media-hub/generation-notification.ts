@@ -6,17 +6,25 @@ import {
   user as User,
 } from "@acme/db/schema";
 import { log } from "@acme/logger";
-import { getMediaHubObject } from "@acme/storage";
+import {
+  getMediaHubObject,
+  getMediaHubPresignedDownloadUrl,
+  putMediaHubObject,
+} from "@acme/storage";
 
 import {
   prepareFeishuNotificationVideo,
   sendGenerationResultCard,
 } from "./feishu-notify";
-import { generationNotificationRetryDelayMs } from "./generation-notification-core";
+import {
+  buildGenerationVideoPlayerHtml,
+  generationNotificationRetryDelayMs,
+} from "./generation-notification-core";
 
 const NOTIFICATION_SWEEP_INTERVAL_MS = 30_000;
 const NOTIFICATION_STALE_AFTER_MS = 2 * 60_000;
 const NOTIFICATION_MAX_ATTEMPTS = 8;
+const FEISHU_VIDEO_LINK_EXPIRES_SECONDS = 7 * 24 * 60 * 60;
 let notificationSchedulerStarted = false;
 
 export async function deliverGenerationResultNotification(
@@ -76,14 +84,55 @@ export async function deliverGenerationResultNotification(
       return "disabled";
     }
 
-    const appUrl = process.env.APP_URL?.replace(/\/$/, "");
+    const useNativeVideo = Boolean(recipientChatId && !recipientWebhookUrl);
+    const directVideoUrl =
+      job.status === "succeeded" && job.outputStorageKey
+        ? await getMediaHubPresignedDownloadUrl(
+            job.outputStorageKey,
+            FEISHU_VIDEO_LINK_EXPIRES_SECONDS,
+          )
+        : undefined;
+    let videoUrl = directVideoUrl;
+    if (directVideoUrl) {
+      try {
+        const trimmedTitle = job.title?.trim();
+        const playerStorageKey = `media-hub/notification-players/${job.createdBy}/${job.id}.html`;
+        await putMediaHubObject(
+          playerStorageKey,
+          Buffer.from(
+            buildGenerationVideoPlayerHtml({
+              title:
+                trimmedTitle && trimmedTitle.length > 0
+                  ? trimmedTitle
+                  : `Media Hub 视频 ${job.id}`,
+              videoUrl: directVideoUrl,
+            }),
+          ),
+          "text/html; charset=utf-8",
+        );
+        videoUrl = await getMediaHubPresignedDownloadUrl(
+          playerStorageKey,
+          FEISHU_VIDEO_LINK_EXPIRES_SECONDS,
+        );
+      } catch (error) {
+        log.warn(
+          "Failed to prepare Feishu video player, using direct video URL",
+          {
+            code: "MEDIA_GENERATION_PLAYER_FALLBACK",
+            job_id: job.id,
+            err: error instanceof Error ? error : new Error(String(error)),
+          },
+        );
+      }
+    }
     const storedVideo =
-      job.status === "succeeded" && recipientChatId && job.outputStorageKey
+      job.status === "succeeded" && useNativeVideo && job.outputStorageKey
         ? await getMediaHubObject(job.outputStorageKey)
         : undefined;
-    const video = storedVideo
-      ? await prepareFeishuNotificationVideo(storedVideo)
-      : undefined;
+    const video =
+      storedVideo && useNativeVideo
+        ? await prepareFeishuNotificationVideo(storedVideo)
+        : undefined;
     await sendGenerationResultCard({
       jobId: job.id,
       title: job.title,
@@ -132,10 +181,7 @@ export async function deliverGenerationResultNotification(
       errorRetryable: job.errorRetryable,
       video,
       videoBytes: video?.length,
-      videoUrl:
-        job.status === "succeeded" && appUrl
-          ? `${appUrl}/#generation-job-${job.id}`
-          : undefined,
+      videoUrl,
       recipientWebhookUrl,
       recipientChatId,
     });

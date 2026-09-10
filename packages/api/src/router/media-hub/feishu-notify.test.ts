@@ -25,16 +25,18 @@ describe("buildGenerationResultCard", () => {
       providerJobId: "provider-job-1",
       videoBytes: 12_500_000,
       createdByLabel: "Service (service@punpkii.com)",
-      videoUrl: "https://media.example.com/#generation-job-job-1",
+      videoUrl: "https://cdn.example.com/videos/job-1.mp4?signature=test",
     });
 
     expect(card.header.template).toBe("green");
     expect(card.header.title.content).toContain("视频生成完成");
     expect(JSON.stringify(card)).toContain("1 分 35 秒");
-    expect(JSON.stringify(card)).toContain("打开 Media Hub 查看视频");
-    expect(JSON.stringify(card)).toContain(
-      "https://media.example.com/#generation-job-job-1",
-    );
+    expect(JSON.stringify(card)).toContain("打开视频播放器");
+    expect(
+      JSON.stringify(card).match(
+        /https:\/\/cdn\.example\.com\/videos\/job-1\.mp4\?signature=test/g,
+      ),
+    ).toHaveLength(1);
     expect(JSON.stringify(card)).toContain("960 × 544 · 24 FPS");
     expect(JSON.stringify(card)).toContain("内容语言");
     expect(JSON.stringify(card)).toContain("中文");
@@ -87,12 +89,18 @@ describe("buildGenerationResultCard", () => {
     });
   });
 
-  it("prefers a user-scoped app chat so playable video and card stay together", () => {
+  it("prefers the account Webhook and uses app chat only as a fallback", () => {
     expect(
       resolveGenerationNotificationDestination(
         "oc_user_target",
         "https://open.feishu.cn/open-apis/bot/v2/hook/user-hook",
       ),
+    ).toEqual({
+      kind: "user_webhook",
+      webhookUrl: "https://open.feishu.cn/open-apis/bot/v2/hook/user-hook",
+    });
+    expect(
+      resolveGenerationNotificationDestination("oc_user_target", ""),
     ).toEqual({ kind: "app_chat", chatId: "oc_user_target" });
     expect(buildFeishuVideoContent("file_video", "img_cover")).toBe(
       '{"file_key":"file_video","image_key":"img_cover"}',
