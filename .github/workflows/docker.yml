@@ -36,3 +36,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+      - name: Deploy Media Hub to test-xm
+        if: github.ref == 'refs/heads/main'
+        env:
+          PORTAINER_WEBHOOK_URL: ${{ secrets.PORTAINER_WIND_MEDIA_HUB_WEBHOOK_URL }}
+        run: curl --fail --silent --show-error --retry 3 --request POST "$PORTAINER_WEBHOOK_URL"
