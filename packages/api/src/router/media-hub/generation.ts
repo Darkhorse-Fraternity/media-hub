@@ -38,11 +38,14 @@ import {
 } from "./provider-request";
 import { extractMediaGenerationLastFrame } from "./video-frame";
 import { maybeAssembleCompletedVideoScript } from "./video-script-assembly";
+import { isMediaGenerationWorkerEnabled } from "./worker-config";
 
 const execFileAsync = promisify(execFile);
 const PROVIDER_CONTRACT = "ydc_generated_media_provider_request.v1";
+const GENERATION_QUEUE_SWEEP_INTERVAL_MS = 5_000;
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 let recoveryStarted = false;
+let generationQueueSweepRunning = false;
 let providerHealthCache:
   | { expiresAt: number; value: MediaGenerationProviderHealth }
   | undefined;
@@ -1042,6 +1045,7 @@ export function scheduleMediaGenerationJob(
   jobId: string,
   scheduledAt?: Date | null,
 ): void {
+  if (!isMediaGenerationWorkerEnabled()) return;
   if (timers.has(jobId)) return;
   const delay = Math.max(
     0,
@@ -1059,6 +1063,19 @@ export function scheduleMediaGenerationJob(
   timers.set(jobId, timer);
 }
 
+async function scheduleQueuedMediaGenerationJobs(): Promise<void> {
+  const jobs = await db.query.mediaGenerationJob.findMany({
+    where: inArray(mediaGenerationJob.status, ["scheduled", "queued"]),
+    orderBy: asc(mediaGenerationJob.createdAt),
+  });
+  for (const job of jobs) {
+    scheduleMediaGenerationJob(
+      job.id,
+      job.status === "scheduled" ? job.scheduledAt : null,
+    );
+  }
+}
+
 /** 编辑排队任务后，清除旧计时器并按新时间重新调度。 */
 export function rescheduleMediaGenerationJob(
   jobId: string,
@@ -1072,6 +1089,7 @@ export function rescheduleMediaGenerationJob(
 
 /** 进程重启后恢复尚未执行的定时任务。 */
 export function startMediaGenerationScheduler(): void {
+  if (!isMediaGenerationWorkerEnabled()) return;
   if (recoveryStarted) return;
   recoveryStarted = true;
   void db.query.mediaGenerationJob
@@ -1122,9 +1140,29 @@ export function startMediaGenerationScheduler(): void {
         );
       }
     })
-    .catch(() => {
-      recoveryStarted = false;
+    .catch((error: unknown) => {
+      log.error("Media generation scheduler recovery failed", {
+        code: "MEDIA_GENERATION_SCHEDULER_RECOVERY_FAILED",
+        err: error instanceof Error ? error : new Error(String(error)),
+      });
     });
+
+  const sweep = () => {
+    if (generationQueueSweepRunning) return;
+    generationQueueSweepRunning = true;
+    void scheduleQueuedMediaGenerationJobs()
+      .catch((error: unknown) => {
+        log.error("Media generation queue sweep failed", {
+          code: "MEDIA_GENERATION_QUEUE_SWEEP_FAILED",
+          err: error instanceof Error ? error : new Error(String(error)),
+        });
+      })
+      .finally(() => {
+        generationQueueSweepRunning = false;
+      });
+  };
+  const interval = setInterval(sweep, GENERATION_QUEUE_SWEEP_INTERVAL_MS);
+  interval.unref();
 }
 
 export async function cancelMediaGenerationJob(jobId: string): Promise<void> {

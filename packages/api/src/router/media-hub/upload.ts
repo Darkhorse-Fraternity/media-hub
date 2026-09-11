@@ -30,7 +30,7 @@ function safeFilenameSuffix(filename: string): string {
 }
 
 export const mediaUploadRouter = {
-  /** 拿一个预签名 PUT URL，前端直传美区 S3 */
+  /** 获取预签名 PUT URL，前端直传 Media Hub 对象存储。 */
   presign: protectedProcedure
     .input(mediaUploadPresignSchema)
     .mutation(async ({ ctx, input }) => {

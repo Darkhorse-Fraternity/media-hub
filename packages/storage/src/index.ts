@@ -111,9 +111,8 @@ export async function deleteObject(key: string): Promise<void> {
 }
 
 // ============================================================
-// Media Hub: 独立的 US S3 客户端（跟报销 MinIO 完全隔离）
-// 视频文件必须放美区，因为发布到 YouTube/IG/TikTok 是跨境调用，
-// 国内 MinIO → US API 走太慢，美区 S3 → US API 同区秒传。
+// Media Hub: 独立的 S3 兼容客户端，与其他业务 bucket 隔离。
+// 当前本地与线上环境统一使用共享 MinIO，通过 MEDIA_HUB_S3_* 配置连接。
 // ============================================================
 
 let mediaHubClient: S3Client | null = null;
@@ -123,7 +122,7 @@ function getMediaHubClient(): S3Client {
     const region = process.env.MEDIA_HUB_S3_REGION ?? "us-east-1";
     const accessKey = process.env.MEDIA_HUB_S3_ACCESS_KEY;
     const secretKey = process.env.MEDIA_HUB_S3_SECRET_KEY;
-    /** 可选：用 R2/其他 S3 兼容服务时填；AWS S3 留空走默认 endpoint */
+    /** MinIO/R2 等 S3 兼容服务需要填写；留空时使用 AWS S3 默认 endpoint。 */
     const endpoint = process.env.MEDIA_HUB_S3_ENDPOINT;
 
     if (!accessKey || !secretKey) {

@@ -38,7 +38,7 @@ interface YouTubeVideoResource {
 }
 
 /**
- * 用 resumable upload 把视频从美区 S3 直接 streaming 上传到 YouTube。
+ * 用 resumable upload 把视频从 Media Hub 对象存储直接 streaming 上传到 YouTube。
  * 不读进内存，避免 1.5GB OOM。
  */
 export async function publishToYouTube(

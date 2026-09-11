@@ -8,7 +8,7 @@ Pumpkii Media Hub 是独立的视频生成、审核与多平台发布服务。�
 - pnpm 10.19+
 - PostgreSQL
 - FFmpeg
-- AWS S3 或兼容 S3 的对象存储
+- MinIO（S3 兼容对象存储）
 - 可访问的 H3 Provider
 
 ## 本地启动
@@ -70,7 +70,7 @@ apps/media-hub/     TanStack Start Web 应用与 API 路由
 packages/api/       Media Hub tRPC、生成、发布与通知逻辑
 packages/auth/      Better Auth 配置
 packages/db/        Drizzle schema 与迁移
-packages/storage/   S3 媒体存储
+packages/storage/   MinIO/S3 兼容媒体存储
 packages/ui/        共用 UI 基础组件
 packages/validators/ 输入验证 schema
 tooling/            TypeScript、ESLint、Prettier、Tailwind 配置
@@ -83,6 +83,7 @@ tooling/            TypeScript、ESLint、Prettier、Tailwind 配置
 - `APP_URL`、OAuth Redirect URI 和 `TRUSTED_ORIGINS` 必须使用部署后的正式域名。
 - `MEDIA_HUB_CRYPTO_KEY` 用于平台 Token 加密，迁移环境时必须保持一致。
 - 视频与参考图片保存在 `MEDIA_HUB_S3_BUCKET`；数据库只保存对象 Key。
+- 共享数据库的多个实例中，仅一个实例应设置 `MEDIA_HUB_GENERATION_WORKER_ENABLED=true`；本地 UI 开发实例设置为 `false`。
 - H3 Provider Token、S3 Secret、OAuth Secret 和飞书 Secret 不应提交到 Git。
 
 ## License

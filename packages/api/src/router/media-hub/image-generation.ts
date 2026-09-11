@@ -20,9 +20,11 @@ import {
   providerOrchestrationRunId,
 } from "./provider-contract";
 import { requestGenerationProvider } from "./provider-request";
+import { isMediaGenerationWorkerEnabled } from "./worker-config";
 
 export const HIDREAM_IMAGE_PROFILE = "platform-hidream-o1-image-v1";
 const PROVIDER_CONTRACT = "ydc_generated_media_provider_request.v1";
+const IMAGE_QUEUE_SWEEP_INTERVAL_MS = 5_000;
 const MAX_IMAGE_OUTPUT_BYTES = 25_000_000;
 const IMAGE_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
@@ -45,6 +47,7 @@ interface ProviderJob {
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 let recoveryStarted = false;
 let imageRunChain: Promise<void> = Promise.resolve();
+let imageQueueSweepRunning = false;
 
 function providerConfig() {
   const baseUrl = process.env.MEDIA_HUB_GENERATION_PROVIDER_URL?.trim();
@@ -276,6 +279,7 @@ async function runImageJob(jobId: string): Promise<void> {
 }
 
 export function scheduleMediaImageJob(jobId: string): void {
+  if (!isMediaGenerationWorkerEnabled()) return;
   if (timers.has(jobId)) return;
   const timer = setTimeout(() => {
     if (timers.get(jobId) === timer) timers.delete(jobId);
@@ -286,7 +290,16 @@ export function scheduleMediaImageJob(jobId: string): void {
   timers.set(jobId, timer);
 }
 
+async function scheduleQueuedMediaImageJobs(): Promise<void> {
+  const jobs = await db.query.mediaImageJob.findMany({
+    where: eq(mediaImageJob.status, "queued"),
+    orderBy: asc(mediaImageJob.createdAt),
+  });
+  jobs.forEach((job) => scheduleMediaImageJob(job.id));
+}
+
 export function startMediaImageScheduler(): void {
+  if (!isMediaGenerationWorkerEnabled()) return;
   if (recoveryStarted) return;
   recoveryStarted = true;
   void db.query.mediaImageJob
@@ -305,9 +318,29 @@ export function startMediaImageScheduler(): void {
         scheduleMediaImageJob(job.id);
       }
     })
-    .catch(() => {
-      recoveryStarted = false;
+    .catch((error: unknown) => {
+      log.error("Media image scheduler recovery failed", {
+        code: "MEDIA_IMAGE_SCHEDULER_RECOVERY_FAILED",
+        err: error instanceof Error ? error : new Error(String(error)),
+      });
     });
+
+  const sweep = () => {
+    if (imageQueueSweepRunning) return;
+    imageQueueSweepRunning = true;
+    void scheduleQueuedMediaImageJobs()
+      .catch((error: unknown) => {
+        log.error("Media image queue sweep failed", {
+          code: "MEDIA_IMAGE_QUEUE_SWEEP_FAILED",
+          err: error instanceof Error ? error : new Error(String(error)),
+        });
+      })
+      .finally(() => {
+        imageQueueSweepRunning = false;
+      });
+  };
+  const interval = setInterval(sweep, IMAGE_QUEUE_SWEEP_INTERVAL_MS);
+  interval.unref();
 }
 
 export async function cancelMediaImageJob(jobId: string): Promise<void> {
