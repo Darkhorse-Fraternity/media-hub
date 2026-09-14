@@ -41,6 +41,20 @@ const publishBody = z.object({
               .default(null),
           })
           .optional(),
+        douyin: z
+          .object({
+            private_status: z
+              .union([z.literal(0), z.literal(1), z.literal(2)])
+              .default(0),
+            allow_download: z.boolean().default(true),
+            cover_time_seconds: z
+              .number()
+              .min(0)
+              .max(3_600)
+              .nullable()
+              .default(null),
+          })
+          .optional(),
       }),
     )
     .min(1)
@@ -73,6 +87,13 @@ async function handlePost(request: Request, jobId: string): Promise<Response> {
           ? {
               shareToFeed: target.instagram.share_to_feed,
               thumbOffsetMs: target.instagram.thumb_offset_ms,
+            }
+          : undefined,
+        douyin: target.douyin
+          ? {
+              privateStatus: target.douyin.private_status,
+              allowDownload: target.douyin.allow_download,
+              coverTimeSeconds: target.douyin.cover_time_seconds,
             }
           : undefined,
       })),

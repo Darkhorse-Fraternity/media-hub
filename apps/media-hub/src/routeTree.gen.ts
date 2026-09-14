@@ -25,6 +25,7 @@ import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as AdminUsersRouteImport } from './routes/admin.users'
 import { Route as OauthYoutubeCallbackRouteImport } from './routes/oauth/youtube/callback'
 import { Route as OauthInstagramCallbackRouteImport } from './routes/oauth/instagram/callback'
+import { Route as OauthDouyinCallbackRouteImport } from './routes/oauth/douyin/callback'
 import { Route as GenerationsJobIdEditRouteImport } from './routes/generations.$jobId.edit'
 import { Route as ApiV1ScriptsRouteImport } from './routes/api/v1/scripts'
 import { Route as ApiV1PlatformAccountsRouteImport } from './routes/api/v1/platform-accounts'
@@ -44,6 +45,7 @@ import { Route as ApiMediaHubUploadsImageAssetRouteImport } from './routes/api/m
 import { Route as ApiMediaHubImagesAssetIdRouteImport } from './routes/api/media-hub/images/$assetId'
 import { Route as ApiV1ScriptsScriptIdGenerateRouteImport } from './routes/api/v1/scripts/$scriptId/generate'
 import { Route as ApiV1ScriptsScriptIdAssembleRouteImport } from './routes/api/v1/scripts/$scriptId/assemble'
+import { Route as ApiV1GenerationsJobIdXiaohongshuPackageRouteImport } from './routes/api/v1/generations/$jobId/xiaohongshu-package'
 import { Route as ApiV1GenerationsJobIdVideoRouteImport } from './routes/api/v1/generations/$jobId/video'
 import { Route as ApiV1GenerationsJobIdRetryRouteImport } from './routes/api/v1/generations/$jobId/retry'
 import { Route as ApiV1GenerationsJobIdPublishRouteImport } from './routes/api/v1/generations/$jobId/publish'
@@ -132,6 +134,11 @@ const OauthYoutubeCallbackRoute = OauthYoutubeCallbackRouteImport.update({
 const OauthInstagramCallbackRoute = OauthInstagramCallbackRouteImport.update({
   id: '/oauth/instagram/callback',
   path: '/oauth/instagram/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OauthDouyinCallbackRoute = OauthDouyinCallbackRouteImport.update({
+  id: '/oauth/douyin/callback',
+  path: '/oauth/douyin/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GenerationsJobIdEditRoute = GenerationsJobIdEditRouteImport.update({
@@ -234,6 +241,12 @@ const ApiV1ScriptsScriptIdAssembleRoute =
     path: '/assemble',
     getParentRoute: () => ApiV1ScriptsScriptIdRoute,
   } as any)
+const ApiV1GenerationsJobIdXiaohongshuPackageRoute =
+  ApiV1GenerationsJobIdXiaohongshuPackageRouteImport.update({
+    id: '/xiaohongshu-package',
+    path: '/xiaohongshu-package',
+    getParentRoute: () => ApiV1GenerationsJobIdRoute,
+  } as any)
 const ApiV1GenerationsJobIdVideoRoute =
   ApiV1GenerationsJobIdVideoRouteImport.update({
     id: '/video',
@@ -312,6 +325,7 @@ export interface FileRoutesByFullPath {
   '/api/v1/platform-accounts': typeof ApiV1PlatformAccountsRoute
   '/api/v1/scripts': typeof ApiV1ScriptsRouteWithChildren
   '/generations/$jobId/edit': typeof GenerationsJobIdEditRoute
+  '/oauth/douyin/callback': typeof OauthDouyinCallbackRoute
   '/oauth/instagram/callback': typeof OauthInstagramCallbackRoute
   '/oauth/youtube/callback': typeof OauthYoutubeCallbackRoute
   '/api/media-hub/images/$assetId': typeof ApiMediaHubImagesAssetIdRoute
@@ -329,6 +343,7 @@ export interface FileRoutesByFullPath {
   '/api/v1/generations/$jobId/publish': typeof ApiV1GenerationsJobIdPublishRoute
   '/api/v1/generations/$jobId/retry': typeof ApiV1GenerationsJobIdRetryRoute
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
+  '/api/v1/generations/$jobId/xiaohongshu-package': typeof ApiV1GenerationsJobIdXiaohongshuPackageRoute
   '/api/v1/scripts/$scriptId/assemble': typeof ApiV1ScriptsScriptIdAssembleRoute
   '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
@@ -358,6 +373,7 @@ export interface FileRoutesByTo {
   '/api/v1/platform-accounts': typeof ApiV1PlatformAccountsRoute
   '/api/v1/scripts': typeof ApiV1ScriptsRouteWithChildren
   '/generations/$jobId/edit': typeof GenerationsJobIdEditRoute
+  '/oauth/douyin/callback': typeof OauthDouyinCallbackRoute
   '/oauth/instagram/callback': typeof OauthInstagramCallbackRoute
   '/oauth/youtube/callback': typeof OauthYoutubeCallbackRoute
   '/api/media-hub/images/$assetId': typeof ApiMediaHubImagesAssetIdRoute
@@ -375,6 +391,7 @@ export interface FileRoutesByTo {
   '/api/v1/generations/$jobId/publish': typeof ApiV1GenerationsJobIdPublishRoute
   '/api/v1/generations/$jobId/retry': typeof ApiV1GenerationsJobIdRetryRoute
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
+  '/api/v1/generations/$jobId/xiaohongshu-package': typeof ApiV1GenerationsJobIdXiaohongshuPackageRoute
   '/api/v1/scripts/$scriptId/assemble': typeof ApiV1ScriptsScriptIdAssembleRoute
   '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
@@ -405,6 +422,7 @@ export interface FileRoutesById {
   '/api/v1/platform-accounts': typeof ApiV1PlatformAccountsRoute
   '/api/v1/scripts': typeof ApiV1ScriptsRouteWithChildren
   '/generations/$jobId/edit': typeof GenerationsJobIdEditRoute
+  '/oauth/douyin/callback': typeof OauthDouyinCallbackRoute
   '/oauth/instagram/callback': typeof OauthInstagramCallbackRoute
   '/oauth/youtube/callback': typeof OauthYoutubeCallbackRoute
   '/api/media-hub/images/$assetId': typeof ApiMediaHubImagesAssetIdRoute
@@ -422,6 +440,7 @@ export interface FileRoutesById {
   '/api/v1/generations/$jobId/publish': typeof ApiV1GenerationsJobIdPublishRoute
   '/api/v1/generations/$jobId/retry': typeof ApiV1GenerationsJobIdRetryRoute
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
+  '/api/v1/generations/$jobId/xiaohongshu-package': typeof ApiV1GenerationsJobIdXiaohongshuPackageRoute
   '/api/v1/scripts/$scriptId/assemble': typeof ApiV1ScriptsScriptIdAssembleRoute
   '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
@@ -453,6 +472,7 @@ export interface FileRouteTypes {
     | '/api/v1/platform-accounts'
     | '/api/v1/scripts'
     | '/generations/$jobId/edit'
+    | '/oauth/douyin/callback'
     | '/oauth/instagram/callback'
     | '/oauth/youtube/callback'
     | '/api/media-hub/images/$assetId'
@@ -470,6 +490,7 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/publish'
     | '/api/v1/generations/$jobId/retry'
     | '/api/v1/generations/$jobId/video'
+    | '/api/v1/generations/$jobId/xiaohongshu-package'
     | '/api/v1/scripts/$scriptId/assemble'
     | '/api/v1/scripts/$scriptId/generate'
     | '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
@@ -499,6 +520,7 @@ export interface FileRouteTypes {
     | '/api/v1/platform-accounts'
     | '/api/v1/scripts'
     | '/generations/$jobId/edit'
+    | '/oauth/douyin/callback'
     | '/oauth/instagram/callback'
     | '/oauth/youtube/callback'
     | '/api/media-hub/images/$assetId'
@@ -516,6 +538,7 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/publish'
     | '/api/v1/generations/$jobId/retry'
     | '/api/v1/generations/$jobId/video'
+    | '/api/v1/generations/$jobId/xiaohongshu-package'
     | '/api/v1/scripts/$scriptId/assemble'
     | '/api/v1/scripts/$scriptId/generate'
     | '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
@@ -545,6 +568,7 @@ export interface FileRouteTypes {
     | '/api/v1/platform-accounts'
     | '/api/v1/scripts'
     | '/generations/$jobId/edit'
+    | '/oauth/douyin/callback'
     | '/oauth/instagram/callback'
     | '/oauth/youtube/callback'
     | '/api/media-hub/images/$assetId'
@@ -562,6 +586,7 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/publish'
     | '/api/v1/generations/$jobId/retry'
     | '/api/v1/generations/$jobId/video'
+    | '/api/v1/generations/$jobId/xiaohongshu-package'
     | '/api/v1/scripts/$scriptId/assemble'
     | '/api/v1/scripts/$scriptId/generate'
     | '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
@@ -592,6 +617,7 @@ export interface RootRouteChildren {
   ApiV1PlatformAccountsRoute: typeof ApiV1PlatformAccountsRoute
   ApiV1ScriptsRoute: typeof ApiV1ScriptsRouteWithChildren
   GenerationsJobIdEditRoute: typeof GenerationsJobIdEditRoute
+  OauthDouyinCallbackRoute: typeof OauthDouyinCallbackRoute
   OauthInstagramCallbackRoute: typeof OauthInstagramCallbackRoute
   OauthYoutubeCallbackRoute: typeof OauthYoutubeCallbackRoute
   ApiMediaHubImagesAssetIdRoute: typeof ApiMediaHubImagesAssetIdRoute
@@ -714,6 +740,13 @@ declare module '@tanstack/react-router' {
       path: '/oauth/instagram/callback'
       fullPath: '/oauth/instagram/callback'
       preLoaderRoute: typeof OauthInstagramCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/oauth/douyin/callback': {
+      id: '/oauth/douyin/callback'
+      path: '/oauth/douyin/callback'
+      fullPath: '/oauth/douyin/callback'
+      preLoaderRoute: typeof OauthDouyinCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/generations/$jobId/edit': {
@@ -849,6 +882,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiV1ScriptsScriptIdAssembleRouteImport
       parentRoute: typeof ApiV1ScriptsScriptIdRoute
     }
+    '/api/v1/generations/$jobId/xiaohongshu-package': {
+      id: '/api/v1/generations/$jobId/xiaohongshu-package'
+      path: '/xiaohongshu-package'
+      fullPath: '/api/v1/generations/$jobId/xiaohongshu-package'
+      preLoaderRoute: typeof ApiV1GenerationsJobIdXiaohongshuPackageRouteImport
+      parentRoute: typeof ApiV1GenerationsJobIdRoute
+    }
     '/api/v1/generations/$jobId/video': {
       id: '/api/v1/generations/$jobId/video'
       path: '/video'
@@ -921,6 +961,7 @@ interface ApiV1GenerationsJobIdRouteChildren {
   ApiV1GenerationsJobIdPublishRoute: typeof ApiV1GenerationsJobIdPublishRoute
   ApiV1GenerationsJobIdRetryRoute: typeof ApiV1GenerationsJobIdRetryRoute
   ApiV1GenerationsJobIdVideoRoute: typeof ApiV1GenerationsJobIdVideoRoute
+  ApiV1GenerationsJobIdXiaohongshuPackageRoute: typeof ApiV1GenerationsJobIdXiaohongshuPackageRoute
 }
 
 const ApiV1GenerationsJobIdRouteChildren: ApiV1GenerationsJobIdRouteChildren = {
@@ -929,6 +970,8 @@ const ApiV1GenerationsJobIdRouteChildren: ApiV1GenerationsJobIdRouteChildren = {
   ApiV1GenerationsJobIdPublishRoute: ApiV1GenerationsJobIdPublishRoute,
   ApiV1GenerationsJobIdRetryRoute: ApiV1GenerationsJobIdRetryRoute,
   ApiV1GenerationsJobIdVideoRoute: ApiV1GenerationsJobIdVideoRoute,
+  ApiV1GenerationsJobIdXiaohongshuPackageRoute:
+    ApiV1GenerationsJobIdXiaohongshuPackageRoute,
 }
 
 const ApiV1GenerationsJobIdRouteWithChildren =
@@ -1020,6 +1063,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiV1PlatformAccountsRoute: ApiV1PlatformAccountsRoute,
   ApiV1ScriptsRoute: ApiV1ScriptsRouteWithChildren,
   GenerationsJobIdEditRoute: GenerationsJobIdEditRoute,
+  OauthDouyinCallbackRoute: OauthDouyinCallbackRoute,
   OauthInstagramCallbackRoute: OauthInstagramCallbackRoute,
   OauthYoutubeCallbackRoute: OauthYoutubeCallbackRoute,
   ApiMediaHubImagesAssetIdRoute: ApiMediaHubImagesAssetIdRoute,

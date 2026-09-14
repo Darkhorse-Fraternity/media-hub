@@ -146,6 +146,11 @@ const agentApiEndpoints = [
   ["POST", "/api/v1/generations/{jobId}/retry", "重试失败任务"],
   ["GET", "/api/v1/platform-accounts", "查询可发布的平台账号"],
   ["POST", "/api/v1/generations/{jobId}/publish", "发布已完成的视频"],
+  [
+    "POST",
+    "/api/v1/generations/{jobId}/xiaohongshu-package",
+    "准备小红书投稿包",
+  ],
   ["POST", "/api/v1/generations/{jobId}/notify", "重新发送生成通知"],
 ] as const;
 
@@ -174,6 +179,7 @@ function createDialogueDraftId(): string {
 
 type PublishTiming = "now" | "scheduled";
 type YouTubePrivacyStatus = "public" | "unlisted" | "private";
+type DouyinPrivateStatus = 0 | 1 | 2;
 
 interface PublishTargetDraft {
   title: string;
@@ -189,6 +195,9 @@ interface PublishTargetDraft {
   youtubeNotifySubscribers: boolean;
   instagramShareToFeed: boolean;
   instagramThumbOffsetSeconds: string;
+  douyinPrivateStatus: DouyinPrivateStatus;
+  douyinAllowDownload: boolean;
+  douyinCoverTimeSeconds: string;
 }
 
 interface StoredPublishPlan {
@@ -206,6 +215,11 @@ interface StoredPublishPlan {
   instagram: {
     shareToFeed: boolean;
     thumbOffsetMs: number | null;
+  };
+  douyin: {
+    privateStatus: DouyinPrivateStatus;
+    allowDownload: boolean;
+    coverTimeSeconds: number | null;
   };
 }
 
@@ -272,7 +286,28 @@ function createPublishTargetDraft(
       plan?.instagram.thumbOffsetMs === undefined
         ? ""
         : String(plan.instagram.thumbOffsetMs / 1000),
+    douyinPrivateStatus: plan?.douyin.privateStatus ?? 0,
+    douyinAllowDownload: plan?.douyin.allowDownload ?? true,
+    douyinCoverTimeSeconds:
+      plan?.douyin.coverTimeSeconds === null ||
+      plan?.douyin.coverTimeSeconds === undefined
+        ? ""
+        : String(plan.douyin.coverTimeSeconds),
   };
+}
+
+function platformDisplayName(platform: string): string {
+  if (platform === "youtube") return "YouTube";
+  if (platform === "instagram") return "Instagram";
+  if (platform === "douyin") return "抖音";
+  return platform;
+}
+
+function platformBadgeClass(platform: string): string {
+  if (platform === "youtube") return "bg-red-400/10 text-red-300";
+  if (platform === "instagram") return "bg-fuchsia-400/10 text-fuchsia-300";
+  if (platform === "douyin") return "bg-cyan-400/10 text-cyan-200";
+  return "bg-slate-400/10 text-slate-300";
 }
 
 function resolveScheduleEditorValues(
@@ -817,6 +852,9 @@ function MediaHubDashboard({
       },
     }),
   );
+  const xiaohongshuPackageMutation = useMutation(
+    trpc.mediaHub.generation.prepareXiaohongshuPackage.mutationOptions(),
+  );
   const optimizePromptMutation = useMutation(
     trpc.mediaHub.ai.optimizePrompt.mutationOptions(),
   );
@@ -1021,7 +1059,7 @@ function MediaHubDashboard({
     if (historyPage > historyPageCount) setHistoryPage(historyPageCount);
   }, [historyPage, historyPageCount]);
   const platformAccounts = (accountsQuery.data ?? []).filter((account) =>
-    ["youtube", "instagram"].includes(account.platform),
+    ["youtube", "instagram", "douyin"].includes(account.platform),
   );
 
   const beginEditingJob = (job: DetailedGenerationJob) => {
@@ -1126,7 +1164,7 @@ function MediaHubDashboard({
         ? trimmedTitle
         : job.prompt.slice(0, 60);
     const confirmed = window.confirm(
-      `⚠️ 永久删除“${label}”的本地记录吗？\n\nMedia Hub 中的视频文件、参考图片、任务和发布记录都会被删除，且无法恢复。已经发布到平台的内容会继续保留，不会从 YouTube 或 Instagram 删除。`,
+      `⚠️ 永久删除“${label}”的本地记录吗？\n\nMedia Hub 中的视频文件、参考图片、任务和发布记录都会被删除，且无法恢复。已经发布到平台的内容会继续保留，不会从 YouTube、Instagram 或抖音删除。`,
     );
     if (!confirmed) return;
     setJobActionMessages((current) => ({
@@ -2013,6 +2051,24 @@ function MediaHubDashboard({
                               ：{generationElapsed}
                             </p>
                           )}
+                          {job.audioValidationStatus && (
+                            <p
+                              className={`mt-1 text-xs ${
+                                job.audioValidationStatus === "verified"
+                                  ? "text-emerald-300/80"
+                                  : job.audioValidationStatus === "mismatch"
+                                    ? "text-rose-300/80"
+                                    : "text-amber-300/80"
+                              }`}
+                            >
+                              原声对白验收：
+                              {job.audioValidationStatus === "verified"
+                                ? `已验证${job.asrMatchPercent === null ? "" : ` · 匹配度 ${job.asrMatchPercent}%`}`
+                                : job.audioValidationStatus === "mismatch"
+                                  ? "不匹配 · 已保留原片"
+                                  : "未验证 · 已保留原片"}
+                            </p>
+                          )}
                           <p className="mt-1 text-[11px] text-slate-600">
                             创建人：
                             {job.creator
@@ -2066,6 +2122,50 @@ function MediaHubDashboard({
                                   >
                                     下载视频
                                   </a>
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      xiaohongshuPackageMutation.isPending
+                                    }
+                                    onClick={async (event) => {
+                                      event.currentTarget
+                                        .closest("details")
+                                        ?.removeAttribute("open");
+                                      setJobActionMessages((current) => ({
+                                        ...current,
+                                        [job.id]: "正在准备小红书投稿文案…",
+                                      }));
+                                      try {
+                                        const publishPackage =
+                                          await xiaohongshuPackageMutation.mutateAsync(
+                                            {
+                                              id: job.id,
+                                            },
+                                          );
+                                        await navigator.clipboard.writeText(
+                                          publishPackage.caption,
+                                        );
+                                        setJobActionMessages((current) => ({
+                                          ...current,
+                                          [job.id]:
+                                            "小红书文案已复制。请下载视频，并在小红书 App 内确认发布。",
+                                        }));
+                                      } catch (error) {
+                                        setJobActionMessages((current) => ({
+                                          ...current,
+                                          [job.id]:
+                                            error instanceof Error
+                                              ? error.message
+                                              : "小红书投稿包准备失败",
+                                        }));
+                                      }
+                                    }}
+                                    className="block w-full rounded-lg px-3 py-2 text-left text-xs text-rose-200 transition hover:bg-rose-400/10 hover:text-rose-100 disabled:opacity-45"
+                                  >
+                                    {xiaohongshuPackageMutation.isPending
+                                      ? "正在准备…"
+                                      : "复制小红书投稿文案"}
+                                  </button>
                                   <Link
                                     to="/generations/$jobId/edit"
                                     params={{ jobId: job.id }}
@@ -2375,6 +2475,15 @@ function MediaHubDashboard({
                           )}
                         </div>
                       )}
+                      {job.status === "failed" && job.outputStorageKey && (
+                        <a
+                          href={`/api/media-hub/generation/${encodeURIComponent(job.id)}/video?download=1`}
+                          download
+                          className="mt-3 inline-flex rounded-lg border border-amber-300/40 px-3 py-2 text-xs font-medium text-amber-200 hover:bg-amber-300/10"
+                        >
+                          下载已保留原片
+                        </a>
+                      )}
                       {failedPublishTargets.length > 0 && (
                         <div
                           role="alert"
@@ -2441,7 +2550,7 @@ function MediaHubDashboard({
                               </p>
                             ) : platformAccounts.length === 0 ? (
                               <p className="mt-3 rounded-lg border border-dashed border-slate-700 px-3 py-4 text-center text-xs text-slate-500">
-                                暂无已绑定的 YouTube 或 Instagram 账户。
+                                暂无已绑定的 YouTube、Instagram 或抖音账户。
                               </p>
                             ) : (
                               <div className="mt-3 space-y-2">
@@ -2498,13 +2607,11 @@ function MediaHubDashboard({
                                           className="size-4 rounded border-slate-600 bg-slate-950 accent-cyan-400"
                                         />
                                         <span
-                                          className={`rounded-md px-2 py-1 text-[10px] font-semibold tracking-wide uppercase ${
-                                            account.platform === "youtube"
-                                              ? "bg-red-400/10 text-red-300"
-                                              : "bg-fuchsia-400/10 text-fuchsia-300"
-                                          }`}
+                                          className={`rounded-md px-2 py-1 text-[10px] font-semibold tracking-wide uppercase ${platformBadgeClass(account.platform)}`}
                                         >
-                                          {account.platform}
+                                          {platformDisplayName(
+                                            account.platform,
+                                          )}
                                         </span>
                                         <span className="min-w-0 flex-1 truncate text-xs text-slate-200">
                                           {account.accountLabel}
@@ -2609,7 +2716,9 @@ function MediaHubDashboard({
                                             maxLength={
                                               account.platform === "instagram"
                                                 ? 2200
-                                                : 5000
+                                                : account.platform === "douyin"
+                                                  ? 1000
+                                                  : 5000
                                             }
                                             disabled={isLocked}
                                             value={platformDescription}
@@ -2631,7 +2740,9 @@ function MediaHubDashboard({
                                             {platformDescription.length} /{" "}
                                             {account.platform === "instagram"
                                               ? 2200
-                                              : 5000}
+                                              : account.platform === "douyin"
+                                                ? 1000
+                                                : 5000}
                                           </p>
 
                                           <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3">
@@ -2855,7 +2966,8 @@ function MediaHubDashboard({
                                                 </label>
                                               </div>
                                             </div>
-                                          ) : (
+                                          ) : account.platform ===
+                                            "instagram" ? (
                                             <div className="mt-3 rounded-lg border border-fuchsia-400/15 bg-fuchsia-400/[0.03] p-3">
                                               <p className="text-[10px] font-semibold tracking-[0.14em] text-fuchsia-300/80 uppercase">
                                                 Instagram Reels 设置
@@ -2908,6 +3020,97 @@ function MediaHubDashboard({
                                                     }
                                                     placeholder="自动选择"
                                                     className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs text-slate-200 outline-none focus:border-fuchsia-300 disabled:opacity-60"
+                                                  />
+                                                </label>
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <div className="mt-3 rounded-lg border border-cyan-400/15 bg-cyan-400/[0.03] p-3">
+                                              <p className="text-[10px] font-semibold tracking-[0.14em] text-cyan-300/80 uppercase">
+                                                抖音设置
+                                              </p>
+                                              <div className="mt-2 grid items-end gap-3 sm:grid-cols-3">
+                                                <label className="text-[10px] text-slate-500">
+                                                  可见范围
+                                                  <select
+                                                    value={
+                                                      publishDraft.douyinPrivateStatus
+                                                    }
+                                                    disabled={isLocked}
+                                                    onChange={(event) =>
+                                                      updatePublishDraft(
+                                                        job.id,
+                                                        account.id,
+                                                        fallbackDraft,
+                                                        {
+                                                          douyinPrivateStatus:
+                                                            Number(
+                                                              event.target
+                                                                .value,
+                                                            ) as DouyinPrivateStatus,
+                                                        },
+                                                      )
+                                                    }
+                                                    className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs text-slate-200 outline-none focus:border-cyan-300 disabled:opacity-60"
+                                                  >
+                                                    <option value={0}>
+                                                      公开
+                                                    </option>
+                                                    <option value={1}>
+                                                      仅自己
+                                                    </option>
+                                                    <option value={2}>
+                                                      好友可见
+                                                    </option>
+                                                  </select>
+                                                </label>
+                                                <label className="flex h-9 items-center gap-2 text-[11px] text-slate-400">
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={
+                                                      publishDraft.douyinAllowDownload
+                                                    }
+                                                    disabled={isLocked}
+                                                    onChange={(event) =>
+                                                      updatePublishDraft(
+                                                        job.id,
+                                                        account.id,
+                                                        fallbackDraft,
+                                                        {
+                                                          douyinAllowDownload:
+                                                            event.target
+                                                              .checked,
+                                                        },
+                                                      )
+                                                    }
+                                                    className="accent-cyan-300"
+                                                  />
+                                                  允许下载
+                                                </label>
+                                                <label className="text-[10px] text-slate-500">
+                                                  封面取帧（秒，可选）
+                                                  <input
+                                                    type="number"
+                                                    min="0"
+                                                    max={job.durationSeconds}
+                                                    step="0.1"
+                                                    value={
+                                                      publishDraft.douyinCoverTimeSeconds
+                                                    }
+                                                    disabled={isLocked}
+                                                    onChange={(event) =>
+                                                      updatePublishDraft(
+                                                        job.id,
+                                                        account.id,
+                                                        fallbackDraft,
+                                                        {
+                                                          douyinCoverTimeSeconds:
+                                                            event.target.value,
+                                                        },
+                                                      )
+                                                    }
+                                                    placeholder="自动选择"
+                                                    className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs text-slate-200 outline-none focus:border-cyan-300 disabled:opacity-60"
                                                   />
                                                 </label>
                                               </div>
@@ -2998,6 +3201,9 @@ function MediaHubDashboard({
                                         const thumbOffset = Number(
                                           draft.instagramThumbOffsetSeconds,
                                         );
+                                        const douyinCoverTime = Number(
+                                          draft.douyinCoverTimeSeconds,
+                                        );
                                         return {
                                           accountId,
                                           description:
@@ -3039,6 +3245,22 @@ function MediaHubDashboard({
                                                       ? Math.round(
                                                           thumbOffset * 1000,
                                                         )
+                                                      : null,
+                                                }
+                                              : undefined,
+                                          douyin:
+                                            account?.platform === "douyin"
+                                              ? {
+                                                  privateStatus:
+                                                    draft.douyinPrivateStatus,
+                                                  allowDownload:
+                                                    draft.douyinAllowDownload,
+                                                  coverTimeSeconds:
+                                                    draft.douyinCoverTimeSeconds.trim() &&
+                                                    Number.isFinite(
+                                                      douyinCoverTime,
+                                                    )
+                                                      ? douyinCoverTime
                                                       : null,
                                                 }
                                               : undefined,
@@ -3885,6 +4107,12 @@ export function PlatformAccountManagementPanel({
       onError: (error) => setPlatformMessage(error.message),
     }),
   );
+  const douyinOAuthMutation = useMutation(
+    trpc.mediaHub.douyin.oauthStart.mutationOptions({
+      onSuccess: ({ url }) => window.location.assign(url),
+      onError: (error) => setPlatformMessage(error.message),
+    }),
+  );
   const removeMutation = useMutation(
     trpc.mediaHub.account.remove.mutationOptions({
       onSuccess: () => {
@@ -3905,10 +4133,12 @@ export function PlatformAccountManagementPanel({
   );
 
   const platformAccounts = (accountsQuery.data ?? []).filter((account) =>
-    ["youtube", "instagram"].includes(account.platform),
+    ["youtube", "instagram", "douyin"].includes(account.platform),
   );
   const isStartingOAuth =
-    youtubeOAuthMutation.isPending || instagramOAuthMutation.isPending;
+    youtubeOAuthMutation.isPending ||
+    instagramOAuthMutation.isPending ||
+    douyinOAuthMutation.isPending;
 
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-xl">
@@ -3947,6 +4177,17 @@ export function PlatformAccountManagementPanel({
           >
             {instagramOAuthMutation.isPending ? "正在跳转…" : "绑定 Instagram"}
           </button>
+          <button
+            type="button"
+            disabled={isStartingOAuth}
+            onClick={() => {
+              setPlatformMessage(null);
+              douyinOAuthMutation.mutate({ returnTo: "/platforms" });
+            }}
+            className="rounded-xl border border-cyan-400/30 bg-cyan-400/5 px-3 py-2 text-xs font-medium text-cyan-200 transition hover:bg-cyan-400/10 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            {douyinOAuthMutation.isPending ? "正在跳转…" : "绑定抖音"}
+          </button>
         </div>
       </div>
 
@@ -3959,7 +4200,7 @@ export function PlatformAccountManagementPanel({
           <div className="rounded-xl border border-dashed border-slate-700 px-4 py-8 text-center">
             <p className="text-sm text-slate-300">还没有绑定平台账号</p>
             <p className="mt-1 text-xs text-slate-500">
-              使用上方按钮完成 YouTube 或 Instagram 授权。
+              使用上方按钮完成 YouTube、Instagram 或抖音授权。
             </p>
           </div>
         ) : (
@@ -3978,13 +4219,9 @@ export function PlatformAccountManagementPanel({
                 >
                   <div className="flex items-start gap-3">
                     <span
-                      className={`rounded-md px-2 py-1 text-[10px] font-semibold tracking-wide uppercase ${
-                        account.platform === "youtube"
-                          ? "bg-red-400/10 text-red-300"
-                          : "bg-fuchsia-400/10 text-fuchsia-300"
-                      }`}
+                      className={`rounded-md px-2 py-1 text-[10px] font-semibold tracking-wide uppercase ${platformBadgeClass(account.platform)}`}
                     >
-                      {account.platform}
+                      {platformDisplayName(account.platform)}
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-slate-200">

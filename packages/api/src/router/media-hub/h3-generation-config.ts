@@ -1,3 +1,5 @@
+import type { MediaH3Dialogue } from "@acme/validators";
+
 export const DEFAULT_H3_GENERATION_PROFILE = "platform-h3-i2v-inline-v1";
 export const DEFAULT_H3_EDIT_PROFILE = "platform-h3-ref2va-edit-v1";
 // Backward-compatible alias for callers that still use the original name.
@@ -123,6 +125,126 @@ function parseMarkedSegments(prompt: string): ParsedSegment[] {
       prompt: prompt.slice(start, end).trim(),
     };
   });
+}
+
+function normalizedStructuredDialogues(
+  dialogues: MediaH3Dialogue[],
+): MediaH3Dialogue[] {
+  const normalizedSpeakerByInput = new Map<
+    MediaH3Dialogue["speakerId"],
+    string
+  >();
+  const chronological = dialogues
+    .map((dialogue, inputIndex) => ({ dialogue, inputIndex }))
+    .sort(
+      (left, right) =>
+        left.dialogue.segment - right.dialogue.segment ||
+        left.inputIndex - right.inputIndex,
+    )
+    .map(({ dialogue }) => dialogue);
+  return chronological.map((dialogue) => {
+    let speakerId = normalizedSpeakerByInput.get(dialogue.speakerId);
+    if (!speakerId) {
+      speakerId = `S${normalizedSpeakerByInput.size + 1}`;
+      normalizedSpeakerByInput.set(dialogue.speakerId, speakerId);
+    }
+    return {
+      ...dialogue,
+      speakerId: speakerId as MediaH3Dialogue["speakerId"],
+    };
+  });
+}
+
+function structuredDialogueLine(dialogue: MediaH3Dialogue): string {
+  const language = dialogue.language === "zh" ? "Mandarin Chinese" : "English";
+  const voice = dialogue.voice ? `Voice direction: ${dialogue.voice}. ` : "";
+  const delivery =
+    dialogue.delivery === "off_screen_voiceover"
+      ? "Off-screen voiceover; every visible person keeps their mouth closed: "
+      : "On-screen delivery with natural lip synchronization: ";
+  return `${voice}${delivery}(${dialogue.speakerId}) <d>[${language}] ${dialogue.text}</d>`;
+}
+
+function injectStructuredDialogue(
+  body: string,
+  dialogues: MediaH3Dialogue[],
+): string {
+  const lines = dialogues.map(structuredDialogueLine).join("\n");
+  const dialogueBlock = lines ? `Structured dialogue:\n${lines}` : "";
+  const soundscapeIndex = body.indexOf("overall_soundscape:");
+  const hasCompleteContract = H3_PROMPT_FIELDS.every((field) =>
+    body.includes(field),
+  );
+  if (hasCompleteContract && soundscapeIndex >= 0) {
+    if (!dialogueBlock) return body.trim();
+    return `${body.slice(0, soundscapeIndex).trimEnd()}\n${dialogueBlock}\n${body.slice(soundscapeIndex).trimStart()}`;
+  }
+  return [
+    `integrated_multimodal_description: ${body.trim()}`,
+    dialogueBlock || undefined,
+    dialogues.length
+      ? "overall_soundscape: Preserve synchronized ambience and physical-action sounds without adding dialogue."
+      : "overall_soundscape: No dialogue. Preserve synchronized ambience and physical-action sounds.",
+    "non_diegetic_music: N/A",
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
+/**
+ * Compile authoritative dialogue fields into the H3 prompt without trusting
+ * callers to hand-author speaker order, language tags, or voiceover behavior.
+ */
+export function compileH3StructuredDialoguePrompt(
+  prompt: string,
+  durationSeconds: number,
+  dialogues: MediaH3Dialogue[],
+): { prompt: string; dialogues: MediaH3Dialogue[] } {
+  if (!dialogues.length) return { prompt: prompt.trim(), dialogues: [] };
+  if (/<\/?d>/i.test(prompt)) {
+    throw new Error(
+      "使用 dialogues[] 时 prompt 不能再包含 <d> 标签；逐字对白由服务端统一编译",
+    );
+  }
+  const normalizedDialogues = normalizedStructuredDialogues(dialogues);
+  const segmentCount = h3SegmentCount(durationSeconds);
+  const marked = parseMarkedSegments(prompt);
+  if (marked.length && marked.length !== segmentCount) {
+    throw new Error(
+      `${durationSeconds} 秒视频需要 ${segmentCount} 个完整分段后才能编译结构化对白`,
+    );
+  }
+  if (segmentCount > 1) {
+    const sourceSegments = marked.length
+      ? marked
+      : h3SegmentPrompts(prompt, segmentCount).map((segmentPrompt, index) => ({
+          index: index + 1,
+          total: segmentCount,
+          prompt: segmentPrompt,
+        }));
+    const compiled = sourceSegments.map((segment) => {
+      const segmentDialogues = normalizedDialogues.filter(
+        (dialogue) => dialogue.segment === segment.index,
+      );
+      return `=== SEGMENT ${segment.index}/${segment.total} ===\n${injectStructuredDialogue(segment.prompt, segmentDialogues)}`;
+    });
+    return { prompt: compiled.join("\n\n"), dialogues: normalizedDialogues };
+  }
+  if (marked.length) {
+    const [segment] = marked;
+    if (!segment) throw new Error("单段视频的 SEGMENT 标记不完整");
+    return {
+      prompt: `=== SEGMENT 1/1 ===\n${injectStructuredDialogue(segment.prompt, normalizedDialogues)}`,
+      dialogues: normalizedDialogues,
+    };
+  }
+  return {
+    prompt: injectStructuredDialogue(
+      prompt,
+      normalizedDialogues.filter((dialogue) => dialogue.segment === 1),
+    ),
+    dialogues: normalizedDialogues,
+  };
 }
 
 /**

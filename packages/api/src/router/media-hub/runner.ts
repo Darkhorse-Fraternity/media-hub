@@ -14,6 +14,7 @@ import {
   isMediaPublishPlanDue,
   readMediaPublishPlans,
 } from "./publish-settings";
+import { publishToDouyin } from "./publishers/douyin";
 import { publishToInstagram } from "./publishers/instagram";
 import { publishToYouTube } from "./publishers/youtube";
 
@@ -118,6 +119,27 @@ async function runTarget(
         .set({
           status: "published",
           externalPostId: result.mediaId,
+          externalUrl: result.url,
+          publishedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(mediaPublishTarget.id, targetId));
+    } else if (target.platform === "douyin") {
+      const result = await publishToDouyin({
+        accountId: target.accountId,
+        videoStorageKey: task.videoStorageKey,
+        title: publishPlan?.title ?? task.title,
+        description: target.description ?? task.description,
+        hashtags: publishPlan?.hashtags ?? task.hashtags,
+        privateStatus: publishPlan?.douyin.privateStatus ?? 0,
+        allowDownload: publishPlan?.douyin.allowDownload ?? true,
+        coverTimeSeconds: publishPlan?.douyin.coverTimeSeconds,
+      });
+      await db
+        .update(mediaPublishTarget)
+        .set({
+          status: "published",
+          externalPostId: result.videoId,
           externalUrl: result.url,
           publishedAt: new Date(),
           updatedAt: new Date(),

@@ -1,4 +1,5 @@
 export type YouTubePrivacyStatus = "public" | "unlisted" | "private";
+export type DouyinPrivateStatus = 0 | 1 | 2;
 
 export interface MediaPublishPlan {
   title: string | null;
@@ -15,6 +16,11 @@ export interface MediaPublishPlan {
   instagram: {
     shareToFeed: boolean;
     thumbOffsetMs: number | null;
+  };
+  douyin: {
+    privateStatus: DouyinPrivateStatus;
+    allowDownload: boolean;
+    coverTimeSeconds: number | null;
   };
 }
 
@@ -36,6 +42,11 @@ export const defaultMediaPublishPlan: MediaPublishPlan = {
     shareToFeed: true,
     thumbOffsetMs: null,
   },
+  douyin: {
+    privateStatus: 0,
+    allowDownload: true,
+    coverTimeSeconds: null,
+  },
 };
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -54,6 +65,7 @@ export function normalizeMediaPublishPlan(value: unknown): MediaPublishPlan {
   const plan = isRecord(value) ? value : {};
   const youtube = isRecord(plan.youtube) ? plan.youtube : {};
   const instagram = isRecord(plan.instagram) ? plan.instagram : {};
+  const douyin = isRecord(plan.douyin) ? plan.douyin : {};
   const privacyStatus = ["public", "unlisted", "private"].includes(
     String(youtube.privacyStatus),
   )
@@ -64,6 +76,15 @@ export function normalizeMediaPublishPlan(value: unknown): MediaPublishPlan {
     Number.isInteger(instagram.thumbOffsetMs) &&
     instagram.thumbOffsetMs >= 0
       ? instagram.thumbOffsetMs
+      : null;
+  const privateStatus = [0, 1, 2].includes(Number(douyin.privateStatus))
+    ? (Number(douyin.privateStatus) as DouyinPrivateStatus)
+    : defaultMediaPublishPlan.douyin.privateStatus;
+  const coverTimeSeconds =
+    typeof douyin.coverTimeSeconds === "number" &&
+    Number.isFinite(douyin.coverTimeSeconds) &&
+    douyin.coverTimeSeconds >= 0
+      ? douyin.coverTimeSeconds
       : null;
 
   return {
@@ -97,6 +118,14 @@ export function normalizeMediaPublishPlan(value: unknown): MediaPublishPlan {
         defaultMediaPublishPlan.instagram.shareToFeed,
       ),
       thumbOffsetMs,
+    },
+    douyin: {
+      privateStatus,
+      allowDownload: booleanOr(
+        douyin.allowDownload,
+        defaultMediaPublishPlan.douyin.allowDownload,
+      ),
+      coverTimeSeconds,
     },
   };
 }

@@ -77,7 +77,8 @@ function DataDeletionPage() {
             <p>
               You can also revoke the service's access directly in the relevant
               platform account settings, including Facebook or Instagram Apps
-              and Websites settings.
+              and Websites settings or Douyin's account authorization
+              management.
             </p>
           </section>
         </div>

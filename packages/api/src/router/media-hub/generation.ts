@@ -18,6 +18,7 @@ import {
 } from "./generation-output-validation";
 import {
   GenerationSpeechValidationError,
+  isSpeechValidationInfrastructureError,
   validateGeneratedDialogue,
 } from "./generation-speech-validation";
 import { cancelGenerationGpuRequest } from "./gpu-resource-broker";
@@ -66,6 +67,7 @@ export interface MediaGenerationProviderProfile {
   workflowVersion: string | null;
   modelVersion: string | null;
   maxReferenceImages: number | null;
+  maxReferenceAudios: number;
   minimumSteps: number | null;
 }
 
@@ -76,6 +78,7 @@ interface ProviderHealthProfile {
   workflow_version?: string;
   model_version?: string;
   max_reference_images?: number;
+  max_reference_audios?: number;
   minimum_steps?: number;
 }
 
@@ -114,6 +117,10 @@ function normalizeProviderProfiles(
           typeof detail?.max_reference_images === "number"
             ? detail.max_reference_images
             : null,
+        maxReferenceAudios:
+          typeof detail?.max_reference_audios === "number"
+            ? detail.max_reference_audios
+            : 0,
         minimumSteps:
           typeof detail?.minimum_steps === "number"
             ? detail.minimum_steps
@@ -934,24 +941,76 @@ async function runGenerationJob(jobId: string): Promise<void> {
       height: job.height,
       fps: job.fps,
     });
-    const speechValidation = await validateGeneratedDialogue(
-      video,
-      job.prompt,
-      job.language,
-    );
     const currentBeforeFinalize = await db.query.mediaGenerationJob.findFirst({
       where: eq(mediaGenerationJob.id, jobId),
       columns: { status: true },
     });
     if (currentBeforeFinalize?.status !== "running") return;
-    const finishedAt = new Date();
     const outputStorageKey = `media-hub/${job.kind === "edit" ? "edited" : "generated"}/${job.createdBy}/${job.id}.mp4`;
     await putMediaHubObject(outputStorageKey, video, "video/mp4");
+    const [storedOutput] = await db
+      .update(mediaGenerationJob)
+      .set({
+        outputStorageKey,
+        providerJobIds,
+        modelVersion,
+        workflowVersion,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(mediaGenerationJob.id, jobId),
+          eq(mediaGenerationJob.status, "running"),
+        ),
+      )
+      .returning({ id: mediaGenerationJob.id });
+    if (!storedOutput) return;
+
+    let speechValidation: Awaited<
+      ReturnType<typeof validateGeneratedDialogue>
+    > = null;
+    let audioValidationStatus: "verified" | "unverified" | null = null;
+    let audioValidationError: string | null = null;
+    try {
+      speechValidation = await validateGeneratedDialogue(
+        video,
+        job.prompt,
+        job.language,
+      );
+      if (speechValidation) audioValidationStatus = "verified";
+    } catch (error) {
+      if (isSpeechValidationInfrastructureError(error)) {
+        audioValidationStatus = "unverified";
+        audioValidationError = error.message.slice(0, 1000);
+        log.warn(
+          "H3 dialogue validation unavailable; preserving original video",
+          {
+            code: "MEDIA_GENERATION_AUDIO_UNVERIFIED",
+            job_id: job.id,
+            asr_error_code: error.code,
+            err: error,
+          },
+        );
+      } else if (error instanceof GenerationSpeechValidationError) {
+        await db
+          .update(mediaGenerationJob)
+          .set({
+            audioValidationStatus: "mismatch",
+            audioValidationError: error.message.slice(0, 1000),
+            updatedAt: new Date(),
+          })
+          .where(eq(mediaGenerationJob.id, jobId));
+        throw error;
+      } else {
+        throw error;
+      }
+    }
     // Script shots are intermediate assets. A single publishable draft is
     // created only after every latest shot succeeds and is assembled.
     const mediaTaskId = job.scriptId
       ? null
       : await createDraftFromGeneration(job, outputStorageKey);
+    const finishedAt = new Date();
 
     const [completedUpdate] = await db
       .update(mediaGenerationJob)
@@ -964,6 +1023,8 @@ async function runGenerationJob(jobId: string): Promise<void> {
         workflowVersion,
         asrTranscript: speechValidation?.transcript ?? null,
         asrMatchPercent: speechValidation?.matchPercent ?? null,
+        audioValidationStatus,
+        audioValidationError,
         notificationStatus: job.scriptId ? null : "pending",
         notificationAttempts: 0,
         notificationError: null,

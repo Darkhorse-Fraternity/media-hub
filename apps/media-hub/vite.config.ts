@@ -10,7 +10,10 @@ export default defineConfig({
   server: {
     port: 3051,
     host: true,
-    allowedHosts: ["mediahub.test-xm.pumpkii.click"],
+    allowedHosts: [
+      "mediahub.test-xm.pumpkii.click",
+      "media-hub.test-xm.pumpkii.click",
+    ],
   },
   plugins: [
     tsConfigPaths({

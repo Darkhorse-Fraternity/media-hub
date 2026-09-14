@@ -19,6 +19,15 @@ export interface MediaGenerationReferenceImage {
   role: "style" | "subject";
 }
 
+export interface MediaGenerationDialogue {
+  segment: number;
+  speakerId: "S1" | "S2" | "S3" | "S4";
+  language: "zh" | "en";
+  text: string;
+  voice?: string;
+  delivery: "on_screen" | "off_screen_voiceover";
+}
+
 export interface MediaVideoEditSegment {
   id: string;
   startSeconds: number;
@@ -115,11 +124,11 @@ export const mediaSystemSetting = pgTable("media_system_setting", {
  */
 export const mediaPlatformAccount = pgTable("media_platform_account", {
   id: text("id").primaryKey(),
-  /** 'youtube' | 'instagram' | 'tiktok' */
+  /** 'youtube' | 'instagram' | 'tiktok' | 'douyin' */
   platform: text("platform").notNull(),
   /** 人可读的账号标签，例：Pumpkii Official YouTube */
   accountLabel: text("account_label").notNull(),
-  /** 平台原始账号 ID（YouTube Channel ID / IG Business Account ID / TikTok Open ID） */
+  /** 平台原始账号 ID（YouTube Channel ID / IG Business Account ID / TikTok/Douyin Open ID） */
   externalAccountId: text("external_account_id").notNull(),
   /** 加密后的 access_token */
   accessTokenEnc: text("access_token_enc").notNull(),
@@ -253,6 +262,11 @@ export const mediaGenerationJob = pgTable(
       .$type<MediaGenerationReferenceImage[]>()
       .notNull()
       .default([]),
+    /** Agent API 的权威结构化对白；prompt 保存服务端编译后的 H3 文本。 */
+    dialogues: jsonb("dialogues")
+      .$type<MediaGenerationDialogue[]>()
+      .notNull()
+      .default([]),
     /** 从用户图片素材库选择的资产 ID；只用于引用保护和审计。 */
     inputImageAssetIds: jsonb("input_image_asset_ids")
       .$type<string[]>()
@@ -292,6 +306,10 @@ export const mediaGenerationJob = pgTable(
     /** H3 原始音轨的只读 ASR 验收结果；不会替换原声音轨。 */
     asrTranscript: text("asr_transcript"),
     asrMatchPercent: integer("asr_match_percent"),
+    /** verified | unverified | mismatch；无逐字对白时为空。 */
+    audioValidationStatus: text("audio_validation_status"),
+    /** ASR 缺失、不可达或对白不匹配的可审计说明。 */
+    audioValidationError: text("audio_validation_error"),
     /** pending | sending | delivered | disabled | failed；终态通知独立于生成状态重试。 */
     notificationStatus: text("notification_status"),
     notificationAttempts: integer("notification_attempts").notNull().default(0),
@@ -444,7 +462,7 @@ export const mediaPublishTarget = pgTable("media_publish_target", {
   taskId: text("task_id")
     .notNull()
     .references(() => mediaTask.id, { onDelete: "cascade" }),
-  /** 'youtube' | 'instagram' | 'tiktok' */
+  /** 'youtube' | 'instagram' | 'tiktok' | 'douyin' */
   platform: text("platform").notNull(),
   accountId: text("account_id")
     .notNull()
@@ -453,7 +471,7 @@ export const mediaPublishTarget = pgTable("media_publish_target", {
   description: text("description"),
   /** pending|publishing|published|failed */
   status: text("status").notNull().default("pending"),
-  /** 平台返回的视频/帖子 ID（YouTube videoId / IG media ID / TikTok publish_id） */
+  /** 平台返回的视频/帖子 ID（YouTube videoId / IG media ID / TikTok publish_id / Douyin video_id） */
   externalPostId: text("external_post_id"),
   /** 平台公开 URL */
   externalUrl: text("external_url"),

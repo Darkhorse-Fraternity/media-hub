@@ -133,6 +133,7 @@ class Ref2VAWorkflowTests(unittest.TestCase):
                     "workflow_version": provider.COMFYUI_H3_REF2VA_ADAPTER_KIND,
                     "model_version": "platform-managed",
                     "max_reference_images": 4,
+                    "max_reference_audios": 0,
                     "minimum_steps": 20,
                 }
             ],

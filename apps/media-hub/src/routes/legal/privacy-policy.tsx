@@ -51,12 +51,12 @@ function Section({
 
 function PrivacyPolicyPage() {
   return (
-    <LegalShell title="Privacy Policy" updated="2026-05-05">
+    <LegalShell title="Privacy Policy" updated="2026-09-14">
       <p>
         Pumpkii Media Hub is a private internal tool used by authorized Pumpkii
         staff to publish marketing content to Pumpkii-owned YouTube, Instagram,
-        and TikTok accounts, and to review aggregate performance data for those
-        posts.
+        and Douyin accounts, prepare user-confirmed Xiaohongshu posts, and
+        review aggregate performance data for supported posts.
       </p>
 
       <Section title="Data We Collect">
@@ -93,9 +93,11 @@ function PrivacyPolicyPage() {
       <Section title="Third-Party Platforms">
         <p>
           The service integrates with official APIs from Google YouTube, Meta
-          Instagram, and TikTok. Video files, metadata, OAuth tokens, and
+          Instagram, and Douyin. Video files, metadata, OAuth tokens, and
           aggregate analytics may be sent to or received from those platforms
           only as needed to publish and measure Pumpkii-owned content.
+          Xiaohongshu packages are prepared for a user to confirm in the
+          Xiaohongshu app; Media Hub does not store Xiaohongshu OAuth tokens.
         </p>
       </Section>
 

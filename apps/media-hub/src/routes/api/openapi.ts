@@ -26,7 +26,7 @@ function openApiDocument(request: Request) {
     openapi: "3.1.0",
     info: {
       title: "Pumpkii Media Hub Agent API",
-      version: "1.5.0",
+      version: "1.7.0",
       description:
         "Bearer-token API for agents to optimize prompts, create and manage MiniMax H3 generation jobs, retrieve videos, and publish to configured platform accounts.",
     },
@@ -40,6 +40,32 @@ function openApiDocument(request: Request) {
         },
       },
       schemas: {
+        GenerationDialogue: {
+          type: "object",
+          required: ["segment", "speaker_id", "language", "text"],
+          properties: {
+            segment: { type: "integer", minimum: 1, maximum: 4 },
+            speaker_id: {
+              type: "string",
+              enum: ["S1", "S2", "S3", "S4"],
+              description:
+                "Stable caller-side identity. Media Hub renumbers speakers by first actual utterance.",
+            },
+            language: { type: "string", enum: ["zh", "en"] },
+            text: { type: "string", minLength: 1, maxLength: 300 },
+            voice: {
+              type: "string",
+              maxLength: 500,
+              description:
+                "Optional age, timbre, pace, accent, and emotion direction placed outside the H3 dialogue tag.",
+            },
+            delivery: {
+              type: "string",
+              enum: ["on_screen", "off_screen_voiceover"],
+              default: "on_screen",
+            },
+          },
+        },
         CreateGeneration: {
           type: "object",
           required: ["prompt"],
@@ -120,6 +146,37 @@ function openApiDocument(request: Request) {
                   role: { type: "string", enum: ["style", "subject"] },
                 },
               },
+            },
+            reference_audio: {
+              type: "array",
+              maxItems: 4,
+              description:
+                "Optional standalone voice references. Requests are rejected with 412 when the selected generation profile does not advertise <Audio N> support; current bundled H3 profiles report zero support.",
+              items: {
+                type: "object",
+                required: ["storage_key", "name", "content_type"],
+                properties: {
+                  storage_key: { type: "string" },
+                  name: { type: "string", maxLength: 255 },
+                  content_type: {
+                    type: "string",
+                    enum: [
+                      "audio/aac",
+                      "audio/mp4",
+                      "audio/mpeg",
+                      "audio/wav",
+                      "audio/x-wav",
+                    ],
+                  },
+                },
+              },
+            },
+            dialogues: {
+              type: "array",
+              maxItems: 12,
+              description:
+                "Authoritative dialogue compiled server-side into normalized H3 speaker IDs and language tags. Do not also put <d> tags in prompt.",
+              items: { $ref: "#/components/schemas/GenerationDialogue" },
             },
           },
         },
@@ -395,33 +452,7 @@ function openApiDocument(request: Request) {
                           description:
                             "Authoritative verbatim dialogue lines for H3 original audio.",
                           items: {
-                            type: "object",
-                            required: [
-                              "segment",
-                              "speaker_id",
-                              "language",
-                              "text",
-                            ],
-                            properties: {
-                              segment: {
-                                type: "integer",
-                                minimum: 1,
-                                maximum: 4,
-                              },
-                              speaker_id: {
-                                type: "string",
-                                enum: ["S1", "S2", "S3", "S4"],
-                              },
-                              language: {
-                                type: "string",
-                                enum: ["zh", "en"],
-                              },
-                              text: {
-                                type: "string",
-                                minLength: 1,
-                                maxLength: 300,
-                              },
-                            },
+                            $ref: "#/components/schemas/GenerationDialogue",
                           },
                         },
                       },
@@ -1026,6 +1057,25 @@ function openApiDocument(request: Request) {
                           },
                           youtube: { type: "object" },
                           instagram: { type: "object" },
+                          douyin: {
+                            type: "object",
+                            properties: {
+                              private_status: {
+                                type: "integer",
+                                enum: [0, 1, 2],
+                                default: 0,
+                              },
+                              allow_download: {
+                                type: "boolean",
+                                default: true,
+                              },
+                              cover_time_seconds: {
+                                type: ["number", "null"],
+                                minimum: 0,
+                                maximum: 3600,
+                              },
+                            },
+                          },
                         },
                       },
                     },
@@ -1036,6 +1086,28 @@ function openApiDocument(request: Request) {
           },
           responses: {
             "202": { description: "Publishing queued" },
+            ...errorResponses,
+          },
+        },
+      },
+      "/api/v1/generations/{jobId}/xiaohongshu-package": {
+        post: {
+          operationId: "prepareXiaohongshuPublishPackage",
+          summary:
+            "Prepare a Xiaohongshu caption and temporary video URL for user-confirmed publishing",
+          parameters: [
+            {
+              name: "jobId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          responses: {
+            "200": {
+              description:
+                "Xiaohongshu publish package; final posting requires confirmation in the Xiaohongshu app",
+            },
             ...errorResponses,
           },
         },

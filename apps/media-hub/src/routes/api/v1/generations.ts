@@ -54,6 +54,37 @@ const createGenerationBody = z.object({
     )
     .max(4)
     .default([]),
+  reference_audio: z
+    .array(
+      z.object({
+        storage_key: z.string().min(1),
+        name: z.string().max(255),
+        content_type: z.enum([
+          "audio/aac",
+          "audio/mp4",
+          "audio/mpeg",
+          "audio/wav",
+          "audio/x-wav",
+        ]),
+      }),
+    )
+    .max(4)
+    .default([]),
+  dialogues: z
+    .array(
+      z.object({
+        segment: z.number().int().min(1).max(4),
+        speaker_id: z.enum(["S1", "S2", "S3", "S4"]),
+        language: z.enum(["zh", "en"]),
+        text: z.string().trim().min(1).max(300),
+        voice: z.string().trim().min(1).max(500).optional(),
+        delivery: z
+          .enum(["on_screen", "off_screen_voiceover"])
+          .default("on_screen"),
+      }),
+    )
+    .max(12)
+    .default([]),
 });
 
 async function handleGet(request: Request): Promise<Response> {
@@ -109,6 +140,19 @@ async function handlePost(request: Request): Promise<Response> {
         name: image.name,
         contentType: image.content_type,
         role: image.role,
+      })),
+      referenceAudios: input.reference_audio.map((audio) => ({
+        storageKey: audio.storage_key,
+        name: audio.name,
+        contentType: audio.content_type,
+      })),
+      dialogues: input.dialogues.map((dialogue) => ({
+        segment: dialogue.segment,
+        speakerId: dialogue.speaker_id,
+        language: dialogue.language,
+        text: dialogue.text,
+        voice: dialogue.voice,
+        delivery: dialogue.delivery,
       })),
     });
     return agentJson(result, 201);

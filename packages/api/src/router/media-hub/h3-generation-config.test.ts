@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  compileH3StructuredDialoguePrompt,
   H3_I2VA_ALIGNMENT,
   h3QualityPresets,
   h3SegmentCount,
@@ -70,5 +71,85 @@ describe("H3 generation configuration", () => {
         15,
       ),
     ).toEqual([expect.stringContaining("顺序不正确")]);
+  });
+
+  it("compiles authoritative dialogue with normalized speaker order and language", () => {
+    const compiled = compileH3StructuredDialoguePrompt(
+      "A mother and her son talk in a quiet kitchen.",
+      15,
+      [
+        {
+          segment: 1,
+          speakerId: "S2",
+          language: "zh",
+          text: "先洗手。",
+          voice: "warm adult female voice, calm pace",
+          delivery: "on_screen",
+        },
+        {
+          segment: 1,
+          speakerId: "S1",
+          language: "zh",
+          text: "好，我马上来。",
+          delivery: "off_screen_voiceover",
+        },
+      ],
+    );
+
+    expect(compiled.dialogues.map((dialogue) => dialogue.speakerId)).toEqual([
+      "S1",
+      "S2",
+    ]);
+    expect(compiled.prompt).toContain(
+      "(S1) <d>[Mandarin Chinese] 先洗手。</d>",
+    );
+    expect(compiled.prompt).toContain(
+      "every visible person keeps their mouth closed: (S2) <d>[Mandarin Chinese] 好，我马上来。</d>",
+    );
+    expect(compiled.prompt).not.toContain(
+      "<d>[Mandarin Chinese] warm adult female voice",
+    );
+    expect(validateH3GenerationPrompt(compiled.prompt, 15)).toEqual([]);
+  });
+
+  it("rejects duplicate hand-authored and structured dialogue", () => {
+    expect(() =>
+      compileH3StructuredDialoguePrompt(
+        "A child (S1) <d>[English] Hello.</d>",
+        15,
+        [
+          {
+            segment: 1,
+            speakerId: "S1",
+            language: "en",
+            text: "Hello.",
+            delivery: "on_screen",
+          },
+        ],
+      ),
+    ).toThrow("不能再包含 <d> 标签");
+  });
+
+  it("builds complete segments for a direct multi-segment dialogue request", () => {
+    const compiled = compileH3StructuredDialoguePrompt(
+      "A mother teaches her child to read across two continuous scenes.",
+      30,
+      [
+        {
+          segment: 2,
+          speakerId: "S1",
+          language: "zh",
+          text: "我们再试一次。",
+          delivery: "on_screen",
+        },
+      ],
+    );
+
+    expect(compiled.prompt).toContain("=== SEGMENT 1/2 ===");
+    expect(compiled.prompt).toContain("=== SEGMENT 2/2 ===");
+    expect(compiled.prompt).toContain(
+      "(S1) <d>[Mandarin Chinese] 我们再试一次。</d>",
+    );
+    expect(validateH3GenerationPrompt(compiled.prompt, 30)).toEqual([]);
   });
 });

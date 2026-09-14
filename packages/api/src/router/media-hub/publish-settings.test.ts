@@ -14,6 +14,27 @@ describe("media publish settings", () => {
       defaultMediaPublishPlan,
     );
     expect(defaultMediaPublishPlan.youtube.language).toBe("en");
+    expect(defaultMediaPublishPlan.douyin).toEqual({
+      privateStatus: 0,
+      allowDownload: true,
+      coverTimeSeconds: null,
+    });
+  });
+
+  it("normalizes Douyin-specific publishing controls", () => {
+    expect(
+      normalizeMediaPublishPlan({
+        douyin: {
+          privateStatus: 2,
+          allowDownload: false,
+          coverTimeSeconds: 3.5,
+        },
+      }).douyin,
+    ).toEqual({
+      privateStatus: 2,
+      allowDownload: false,
+      coverTimeSeconds: 3.5,
+    });
   });
 
   it("preserves unrelated AI prompt data when writing publish plans", () => {

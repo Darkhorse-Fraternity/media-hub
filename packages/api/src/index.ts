@@ -6,6 +6,10 @@ export {
   buildInstagramOAuthUrl,
   completeInstagramOAuthCallback,
 } from "./router/media-hub/oauth-instagram";
+export {
+  buildDouyinOAuthUrl,
+  completeDouyinOAuthCallback,
+} from "./router/media-hub/oauth-douyin";
 export { fetchAndSaveStats } from "./router/media-hub/stats-fetcher";
 export { sendDailyReport } from "./router/media-hub/daily-report";
 export { authenticateMediaHubAgentToken } from "./router/media-hub/api-token";

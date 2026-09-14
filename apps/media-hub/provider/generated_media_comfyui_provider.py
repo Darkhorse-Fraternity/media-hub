@@ -1633,6 +1633,10 @@ class ProviderService:
                     "workflow_version": profile.workflow_version,
                     "model_version": profile.model_version,
                     "max_reference_images": max_reference_images,
+                    # Current H3 generation nodes accept images. Ref2VA obtains
+                    # audio only from reference videos and cannot bind a
+                    # standalone <Audio N> artifact yet.
+                    "max_reference_audios": 0,
                     "minimum_steps": minimum_steps,
                 }
             )

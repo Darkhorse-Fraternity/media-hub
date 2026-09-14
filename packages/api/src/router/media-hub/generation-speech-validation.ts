@@ -30,6 +30,17 @@ export class GenerationSpeechValidationError extends Error {
   }
 }
 
+export function isSpeechValidationInfrastructureError(
+  error: unknown,
+): error is GenerationSpeechValidationError {
+  return (
+    error instanceof GenerationSpeechValidationError &&
+    (error.code === "asr_not_configured" ||
+      error.code === "asr_unavailable" ||
+      error.code.startsWith("asr_http_"))
+  );
+}
+
 export function extractExpectedH3Dialogue(prompt: string): string[] {
   return [...prompt.matchAll(/<d>\[[^\]]+]\s*([^<]+?)<\/d>/gi)]
     .map((match) => match[1]?.trim() ?? "")

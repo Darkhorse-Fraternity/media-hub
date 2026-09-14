@@ -13,7 +13,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 interface StatePayload {
   /** 启动 OAuth 的用户 id（callback 时核对） */
   uid: string;
-  /** 'youtube' | 'instagram' | 'tiktok' */
+  /** OAuth 平台 */
   p: string;
   /** 完成后跳回的前端路由 */
   rt: string;
@@ -41,7 +41,7 @@ function sign(b64Payload: string): string {
 
 export function createOAuthState(input: {
   userId: string;
-  platform: "youtube" | "instagram" | "tiktok";
+  platform: "youtube" | "instagram" | "tiktok" | "douyin";
   returnTo: string;
 }): string {
   const payload: StatePayload = {

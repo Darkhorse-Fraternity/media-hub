@@ -85,13 +85,12 @@ export async function deliverGenerationResultNotification(
     }
 
     const useNativeVideo = Boolean(recipientChatId && !recipientWebhookUrl);
-    const directVideoUrl =
-      job.status === "succeeded" && job.outputStorageKey
-        ? await getMediaHubPresignedDownloadUrl(
-            job.outputStorageKey,
-            FEISHU_VIDEO_LINK_EXPIRES_SECONDS,
-          )
-        : undefined;
+    const directVideoUrl = job.outputStorageKey
+      ? await getMediaHubPresignedDownloadUrl(
+          job.outputStorageKey,
+          FEISHU_VIDEO_LINK_EXPIRES_SECONDS,
+        )
+      : undefined;
     let videoUrl = directVideoUrl;
     if (directVideoUrl) {
       try {
@@ -179,6 +178,9 @@ export async function deliverGenerationResultNotification(
       errorCode: job.errorCode,
       failureStage: job.failureStage,
       errorRetryable: job.errorRetryable,
+      audioValidationStatus: job.audioValidationStatus,
+      audioValidationError: job.audioValidationError,
+      asrMatchPercent: job.asrMatchPercent,
       video,
       videoBytes: video?.length,
       videoUrl,

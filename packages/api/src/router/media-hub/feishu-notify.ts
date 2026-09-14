@@ -409,6 +409,9 @@ export interface GenerationResultCardInput {
   errorCode?: string | null;
   failureStage?: string | null;
   errorRetryable?: boolean | null;
+  audioValidationStatus?: string | null;
+  audioValidationError?: string | null;
+  asrMatchPercent?: number | null;
   videoUrl?: string;
   /** 用户级机器人 Webhook；默认发送卡片和外网视频直链。 */
   recipientWebhookUrl?: string | null;
@@ -631,7 +634,22 @@ export function buildGenerationResultCard(input: GenerationResultCardInput) {
       ],
     });
   }
-  if (succeeded && input.videoUrl) {
+  if (input.audioValidationStatus) {
+    const validationLabel =
+      input.audioValidationStatus === "verified"
+        ? `已验证${input.asrMatchPercent === null || input.asrMatchPercent === undefined ? "" : ` · 匹配度 ${input.asrMatchPercent}%`}`
+        : input.audioValidationStatus === "mismatch"
+          ? "不匹配 · 原片已保留"
+          : "未验证 · 原片已保留";
+    elements.push({
+      tag: "div",
+      text: {
+        tag: "lark_md",
+        content: `**原声对白验收**\n${validationLabel}${input.audioValidationError ? `\n${input.audioValidationError.slice(0, 300)}` : ""}`,
+      },
+    });
+  }
+  if (input.videoUrl) {
     elements.push(
       { tag: "hr" },
       {
@@ -639,7 +657,10 @@ export function buildGenerationResultCard(input: GenerationResultCardInput) {
         actions: [
           {
             tag: "button",
-            text: { tag: "plain_text", content: "▶ 打开视频播放器" },
+            text: {
+              tag: "plain_text",
+              content: succeeded ? "▶ 打开视频播放器" : "▶ 查看已保留原片",
+            },
             type: "primary",
             url: input.videoUrl,
           },

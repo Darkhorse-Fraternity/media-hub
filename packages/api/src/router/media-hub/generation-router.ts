@@ -21,6 +21,7 @@ import {
 import {
   createMediaGenerationSchema,
   createMediaVideoEditSchema,
+  MEDIA_H3_PROMPT_MAX_LENGTH,
   mediaGenerationIdSchema,
   mediaGenerationListSchema,
   publishMediaGenerationSchema,
@@ -51,10 +52,12 @@ import {
   startMediaGenerationNotificationScheduler,
 } from "./generation-notification";
 import {
+  compileH3StructuredDialoguePrompt,
   h3StepsForPreset,
   validateH3GenerationPrompt,
 } from "./h3-generation-config";
 import { requireH3Profile } from "./h3-profile";
+import { h3ReferenceAudioCapabilityIssue } from "./h3-reference-audio";
 import { canManageMediaPlatformAccount } from "./platform-account-access";
 import {
   normalizeMediaPublishPlan,
@@ -63,6 +66,7 @@ import {
 } from "./publish-settings";
 import { runPublishForTask, startMediaPublishScheduler } from "./runner";
 import { resolveMediaSystemSetting } from "./system-settings";
+import { buildXiaohongshuPublishPackage } from "./xiaohongshu-package";
 
 startMediaGenerationScheduler();
 startMediaGenerationNotificationScheduler();
@@ -110,8 +114,29 @@ export const mediaGenerationRouter = {
           message: "上传图片后缺少图片类型",
         });
       }
+      let compiledDialogue: ReturnType<
+        typeof compileH3StructuredDialoguePrompt
+      >;
+      try {
+        compiledDialogue = compileH3StructuredDialoguePrompt(
+          input.prompt,
+          input.durationSeconds,
+          input.dialogues,
+        );
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      if (compiledDialogue.prompt.length > MEDIA_H3_PROMPT_MAX_LENGTH) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `编译结构化对白后的提示词不能超过 ${MEDIA_H3_PROMPT_MAX_LENGTH} 个字符`,
+        });
+      }
       const promptIssues = validateH3GenerationPrompt(
-        input.prompt,
+        compiledDialogue.prompt,
         input.durationSeconds,
       );
       if (promptIssues.length) {
@@ -183,6 +208,17 @@ export const mediaGenerationRouter = {
         selectedProfileId,
         "generate",
       );
+      const referenceAudioIssue = h3ReferenceAudioCapabilityIssue(
+        selectedProfileId,
+        input.referenceAudios.length,
+        selectedProfile.maxReferenceAudios,
+      );
+      if (referenceAudioIssue) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: referenceAudioIssue,
+        });
+      }
       if (
         selectedProfile.maxReferenceImages !== null &&
         referenceImages.length > selectedProfile.maxReferenceImages
@@ -197,7 +233,8 @@ export const mediaGenerationRouter = {
       const now = new Date();
       await ctx.db.insert(mediaGenerationJob).values({
         id,
-        prompt: input.prompt,
+        prompt: compiledDialogue.prompt,
+        dialogues: compiledDialogue.dialogues,
         title: input.title,
         language: input.language,
         sourceImageStorageKey:
@@ -615,6 +652,53 @@ export const mediaGenerationRouter = {
       };
     }),
 
+  /** 准备小红书投稿包；按平台要求，最终发布仍由用户在小红书客户端确认。 */
+  prepareXiaohongshuPackage: protectedProcedure
+    .input(mediaGenerationIdSchema)
+    .mutation(async ({ ctx, input }) => {
+      const job = await ctx.db.query.mediaGenerationJob.findFirst({
+        where: eq(mediaGenerationJob.id, input.id),
+      });
+      if (job?.status !== "succeeded" || !job.outputStorageKey) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "只有已完成的视频可以准备小红书投稿包",
+        });
+      }
+      const actorRole = (
+        ctx.session.user as typeof ctx.session.user & { role?: string }
+      ).role;
+      if (
+        !canManageMediaGenerationJob({
+          actorUserId: ctx.session.user.id,
+          actorRole,
+          ownerUserId: job.createdBy,
+        })
+      ) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "生成任务不存在" });
+      }
+      const task = job.mediaTaskId
+        ? await ctx.db.query.mediaTask.findFirst({
+            where: eq(mediaTask.id, job.mediaTaskId),
+          })
+        : null;
+      const publishPackage = buildXiaohongshuPublishPackage({
+        title: task?.title ?? job.title ?? "Media Hub 视频",
+        description: task?.description,
+        hashtags: task?.hashtags,
+      });
+      return {
+        ...publishPackage,
+        videoUrl: await getMediaHubPresignedDownloadUrl(
+          job.outputStorageKey,
+          3600,
+        ),
+        expiresAt: new Date(Date.now() + 3600 * 1000),
+        requiresUserConfirmation: true as const,
+        workflow: "xiaohongshu_app_post_note" as const,
+      };
+    }),
+
   /** 管理员或任务所有者向任务创建人配置的 Webhook 重发生成结果。 */
   resendNotification: protectedProcedure
     .input(mediaGenerationIdSchema)
@@ -743,7 +827,8 @@ export const mediaGenerationRouter = {
         });
       }
       const unsupported = accounts.find(
-        (account) => !["youtube", "instagram"].includes(account.platform),
+        (account) =>
+          !["youtube", "instagram", "douyin"].includes(account.platform),
       );
       if (unsupported) {
         throw new TRPCError({
@@ -798,6 +883,31 @@ export const mediaGenerationRouter = {
           message: "Instagram 发布文案不能超过 2200 个字符",
         });
       }
+      const overlongDouyinText = accounts.find((account) => {
+        if (account.platform !== "douyin") return false;
+        const targetInput = inputByAccountId.get(account.id);
+        const requestedTitle = targetInput?.title?.trim();
+        const publishTitle = requestedTitle?.length
+          ? requestedTitle
+          : task.title;
+        return (
+          Array.from(
+            [
+              publishTitle,
+              descriptionByAccountId.get(account.id),
+              targetInput?.hashtags?.trim(),
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
+          ).length > 1000
+        );
+      });
+      if (overlongDouyinText) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "抖音发布文案不能超过 1000 个字符",
+        });
+      }
       const invalidInstagramCoverTime = accounts.find((account) => {
         const thumbOffsetMs = inputByAccountId.get(account.id)?.instagram
           ?.thumbOffsetMs;
@@ -812,6 +922,22 @@ export const mediaGenerationRouter = {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Instagram 封面时间不能超过视频时长",
+        });
+      }
+      const invalidDouyinCoverTime = accounts.find((account) => {
+        const coverTimeSeconds = inputByAccountId.get(account.id)?.douyin
+          ?.coverTimeSeconds;
+        return (
+          account.platform === "douyin" &&
+          coverTimeSeconds !== null &&
+          coverTimeSeconds !== undefined &&
+          coverTimeSeconds > job.durationSeconds
+        );
+      });
+      if (invalidDouyinCoverTime) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "抖音封面时间不能超过视频时长",
         });
       }
 
@@ -871,6 +997,7 @@ export const mediaGenerationRouter = {
           scheduledAt: targetInput.scheduledAt?.toISOString() ?? null,
           youtube: targetInput.youtube,
           instagram: targetInput.instagram,
+          douyin: targetInput.douyin,
         });
       }
       const scheduledCount = [...editableAccountIds].filter(
@@ -1012,6 +1139,8 @@ export const mediaGenerationRouter = {
           gpuBrokerLeaseId: null,
           asrTranscript: null,
           asrMatchPercent: null,
+          audioValidationStatus: null,
+          audioValidationError: null,
           workflowVersion: null,
           modelVersion: null,
           startedAt: null,

@@ -160,7 +160,12 @@ export const unlinkInvoiceSchema = z.object({
 
 // ===== Media Hub schemas =====
 
-export const mediaPlatformEnum = z.enum(["youtube", "instagram", "tiktok"]);
+export const mediaPlatformEnum = z.enum([
+  "youtube",
+  "instagram",
+  "tiktok",
+  "douyin",
+]);
 
 export const mediaTaskStatusEnum = z.enum([
   "draft",
@@ -249,6 +254,17 @@ export const youTubeOAuthCallbackSchema = z.object({
   state: z.string().min(1),
 });
 
+/** 抖音 OAuth 启动 */
+export const startDouyinOAuthSchema = z.object({
+  returnTo: z.string().default("/platforms"),
+});
+
+/** 抖音 OAuth callback */
+export const douyinOAuthCallbackSchema = z.object({
+  code: z.string().min(1),
+  state: z.string().min(1),
+});
+
 /** MinIO 预签名上传 URL 请求 */
 export const mediaUploadPresignSchema = z.object({
   /** 'video' | 'cover' */
@@ -310,62 +326,129 @@ export const mediaH3DialogueSchema = z.object({
       (value) => !/[<>]/.test(value),
       "台词不能包含尖括号，H3 标签由系统自动生成",
     ),
+  voice: z
+    .string()
+    .trim()
+    .min(1)
+    .max(500)
+    .refine((value) => !/[<>]/.test(value), "音色描述不能包含尖括号")
+    .optional(),
+  delivery: z.enum(["on_screen", "off_screen_voiceover"]).default("on_screen"),
 });
 
 export type MediaH3Dialogue = z.infer<typeof mediaH3DialogueSchema>;
 
 /** 创建一个 MiniMax H3 图片/文字视频生成任务。 */
-export const createMediaGenerationSchema = z.object({
-  prompt: z
-    .string()
-    .trim()
-    .min(1, "请输入视频描述")
-    .max(MEDIA_H3_PROMPT_MAX_LENGTH),
-  language: mediaContentLanguageEnum.default("en"),
-  sourceImageStorageKey: z.string().min(1).optional(),
-  sourceImageName: z.string().max(255).optional(),
-  sourceImageContentType: z
-    .enum(["image/jpeg", "image/png", "image/webp"])
-    .optional(),
-  /** 用户素材库输入；服务端按 session user 解析，客户端不能提交 storage key。 */
-  sourceImageAssetId: z.string().min(1).optional(),
-  referenceImageAssets: z
-    .array(
-      z.object({
-        assetId: z.string().min(1),
-        role: z.enum(["style", "subject"]),
-      }),
-    )
-    .max(4, "最多选择 4 张素材库参考图")
-    .default([]),
-  referenceImages: z
-    .array(
-      z.object({
-        storageKey: z.string().min(1),
-        name: z.string().max(255),
-        contentType: z.enum(["image/jpeg", "image/png", "image/webp"]),
-        role: z.enum(["style", "subject"]),
-      }),
-    )
-    .max(4, "最多上传 4 张风格或主体参考图")
-    .default([]),
-  title: z.string().trim().max(200).optional(),
-  durationSeconds: z
-    .number()
-    .int()
-    .min(5)
-    .max(60)
-    .default(MEDIA_H3_DEFAULT_DURATION_SECONDS),
-  qualityPreset: mediaH3QualityPresetEnum.default(
-    MEDIA_H3_DEFAULT_QUALITY_PRESET,
-  ),
-  /** 可选的单次任务 H3 工作流；留空时由服务端使用管理员默认值。 */
-  h3Profile: z.string().trim().min(1).max(200).optional(),
-  seed: z.number().int().min(0).max(2_147_483_643).optional(),
-  scheduledAt: z.date().nullable().optional(),
-  width: mediaH3DimensionSchema.default(MEDIA_H3_DEFAULT_WIDTH),
-  height: mediaH3DimensionSchema.default(MEDIA_H3_DEFAULT_HEIGHT),
-});
+export const createMediaGenerationSchema = z
+  .object({
+    prompt: z
+      .string()
+      .trim()
+      .min(1, "请输入视频描述")
+      .max(MEDIA_H3_PROMPT_MAX_LENGTH),
+    language: mediaContentLanguageEnum.default("en"),
+    sourceImageStorageKey: z.string().min(1).optional(),
+    sourceImageName: z.string().max(255).optional(),
+    sourceImageContentType: z
+      .enum(["image/jpeg", "image/png", "image/webp"])
+      .optional(),
+    /** 用户素材库输入；服务端按 session user 解析，客户端不能提交 storage key。 */
+    sourceImageAssetId: z.string().min(1).optional(),
+    referenceImageAssets: z
+      .array(
+        z.object({
+          assetId: z.string().min(1),
+          role: z.enum(["style", "subject"]),
+        }),
+      )
+      .max(4, "最多选择 4 张素材库参考图")
+      .default([]),
+    referenceImages: z
+      .array(
+        z.object({
+          storageKey: z.string().min(1),
+          name: z.string().max(255),
+          contentType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+          role: z.enum(["style", "subject"]),
+        }),
+      )
+      .max(4, "最多上传 4 张风格或主体参考图")
+      .default([]),
+    /** 独立参考音频；只有声明音频条件能力的 generation profile 才能使用。 */
+    referenceAudios: z
+      .array(
+        z.object({
+          storageKey: z.string().min(1),
+          name: z.string().max(255),
+          contentType: z.enum([
+            "audio/aac",
+            "audio/mp4",
+            "audio/mpeg",
+            "audio/wav",
+            "audio/x-wav",
+          ]),
+        }),
+      )
+      .max(4, "最多上传 4 个参考音频")
+      .default([]),
+    dialogues: z.array(mediaH3DialogueSchema).max(12).default([]),
+    title: z.string().trim().max(200).optional(),
+    durationSeconds: z
+      .number()
+      .int()
+      .min(5)
+      .max(60)
+      .default(MEDIA_H3_DEFAULT_DURATION_SECONDS),
+    qualityPreset: mediaH3QualityPresetEnum.default(
+      MEDIA_H3_DEFAULT_QUALITY_PRESET,
+    ),
+    /** 可选的单次任务 H3 工作流；留空时由服务端使用管理员默认值。 */
+    h3Profile: z.string().trim().min(1).max(200).optional(),
+    seed: z.number().int().min(0).max(2_147_483_643).optional(),
+    scheduledAt: z.date().nullable().optional(),
+    width: mediaH3DimensionSchema.default(MEDIA_H3_DEFAULT_WIDTH),
+    height: mediaH3DimensionSchema.default(MEDIA_H3_DEFAULT_HEIGHT),
+  })
+  .superRefine((input, ctx) => {
+    const segmentCount = Math.max(1, Math.ceil(input.durationSeconds / 15));
+    const estimatedSecondsBySegment = new Map<number, number>();
+    input.dialogues.forEach((dialogue, index) => {
+      if (dialogue.segment > segmentCount) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["dialogues", index, "segment"],
+          message: `${input.durationSeconds} 秒视频只有 ${segmentCount} 个分段`,
+        });
+        return;
+      }
+      const estimatedSeconds =
+        dialogue.language === "zh"
+          ? Array.from(dialogue.text.replace(/[^\p{Letter}\p{Number}]/gu, ""))
+              .length /
+              4 +
+            0.5
+          : dialogue.text.trim().split(/\s+/).filter(Boolean).length / 2.5 +
+            0.5;
+      estimatedSecondsBySegment.set(
+        dialogue.segment,
+        (estimatedSecondsBySegment.get(dialogue.segment) ?? 0) +
+          estimatedSeconds,
+      );
+    });
+    for (const [segment, estimatedSeconds] of estimatedSecondsBySegment) {
+      const availableSeconds = Math.min(
+        15,
+        Math.max(0, input.durationSeconds - (segment - 1) * 15),
+      );
+      if (estimatedSeconds > availableSeconds) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["dialogues"],
+          message: `第 ${segment} 段台词预计需要 ${estimatedSeconds.toFixed(1)} 秒，超过可用的 ${availableSeconds} 秒`,
+        });
+      }
+    }
+  });
 
 export const mediaVideoScriptDialogueSchema = z.object({
   id: z.string().trim().min(1).max(100),
@@ -708,6 +791,13 @@ export const publishMediaGenerationSchema = z.object({
           .object({
             shareToFeed: z.boolean().default(true),
             thumbOffsetMs: z.number().int().min(0).max(3_600_000).nullable(),
+          })
+          .optional(),
+        douyin: z
+          .object({
+            privateStatus: z.union([z.literal(0), z.literal(1), z.literal(2)]),
+            allowDownload: z.boolean().default(true),
+            coverTimeSeconds: z.number().min(0).max(3_600).nullable(),
           })
           .optional(),
       }),

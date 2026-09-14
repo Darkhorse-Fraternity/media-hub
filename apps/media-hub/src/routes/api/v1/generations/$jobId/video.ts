@@ -11,7 +11,7 @@ async function handleGet(request: Request, jobId: string): Promise<Response> {
   try {
     const { caller } = await createAgentApiCaller(request);
     const job = await caller.mediaHub.generation.getById({ id: jobId });
-    if (job.status !== "succeeded" || !job.outputStorageKey) {
+    if (!job.outputStorageKey) {
       return Response.json(
         { error: { code: "not_found", message: "Video not found" } },
         { status: 404 },

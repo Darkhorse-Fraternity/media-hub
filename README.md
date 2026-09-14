@@ -1,6 +1,6 @@
 # Pumpkii Media Hub
 
-Pumpkii Media Hub 是独立的视频生成、审核与多平台发布服务。项目包含 MiniMax H3 / Ref2VA 生成流程、视频修改、YouTube / Instagram 发布、飞书通知、PostgreSQL 数据与 S3 媒体存储。
+Pumpkii Media Hub 是独立的视频生成、审核与多平台发布服务。项目包含 MiniMax H3 / Ref2VA 生成流程、视频修改、YouTube / Instagram / 抖音发布、小红书投稿包、飞书通知、PostgreSQL 数据与 S3 媒体存储。
 
 ## 运行要求
 
@@ -48,11 +48,17 @@ pnpm db:seed      # 创建或同步环境变量中配置的管理员账号
 
 登录后可从首页进入“设置”：
 
-- 每个用户可保存内容语言、默认时长、分辨率以及 YouTube / Instagram 发布偏好。
+- 每个用户可保存内容语言、默认时长、分辨率以及 YouTube / Instagram 发布偏好；发布页还支持抖音的可见范围、下载权限和封面时间。
 - 管理员可在线覆盖 Codex Worker、Ollama 和飞书审核群配置；留空的连接配置继续使用 `.env` 默认值。
 - 数据库连接、认证与加密根密钥、可信来源、对象存储密钥、OAuth Client Secret、FFmpeg 路径和网络代理始终由部署环境管理，不会通过网页读取或修改。
 
 配置优先级为：任务参数 > 用户偏好 > 管理员配置 > 环境变量默认值。管理员配置保存后会对后续请求立即生效。
+
+## 国内平台发布
+
+- 抖音使用开放平台官方 OAuth 和内容发布接口。部署前需要创建抖音开放平台应用、申请 `video.create.bind` 权限，并配置 `DOUYIN_CLIENT_KEY`、`DOUYIN_CLIENT_SECRET` 与回调地址。
+- 小红书目前生成投稿包（标题、正文、标签和一小时有效的视频下载地址）；最终发布由运营人员在小红书 App 内确认，避免把客户端投稿能力伪装成服务端自动发布。
+- Agent API 可通过 `POST /api/v1/generations/{jobId}/publish` 发布到已绑定抖音账号，通过 `POST /api/v1/generations/{jobId}/xiaohongshu-package` 准备小红书投稿包。
 
 ## Docker
 

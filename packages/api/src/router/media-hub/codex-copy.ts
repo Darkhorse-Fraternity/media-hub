@@ -25,6 +25,8 @@ interface VideoPromptInput {
     speakerId: "S1" | "S2" | "S3" | "S4";
     language: "zh" | "en";
     text: string;
+    voice?: string;
+    delivery?: "on_screen" | "off_screen_voiceover";
   }[];
 }
 
@@ -43,7 +45,7 @@ interface PlatformDescriptionInput {
   prompt: string;
   title?: string;
   durationSeconds: number;
-  platform: "youtube" | "instagram";
+  platform: "youtube" | "instagram" | "douyin";
   accountLabel?: string;
   currentDescription?: string;
   language: "zh" | "en";
@@ -91,10 +93,16 @@ export function buildVideoPromptOptimizationPrompt(
     dialogues.length > 0
       ? "The dedicated dialogue editor below is authoritative. Include every listed line exactly once, in its assigned segment and original order, using the exact speaker ID, H3 language label, and wording shown. Do not paraphrase, translate, merge, split, omit, or invent dialogue. Place each exact tagged line in integrated_multimodal_description at a physically achievable moment."
       : undefined,
-    ...dialogues.map(
-      (dialogue) =>
-        `Dedicated dialogue — segment ${dialogue.segment}/${segmentCount}: (${dialogue.speakerId}) <d>[${h3DialogueLanguage(dialogue.language)}] ${dialogue.text}</d>`,
-    ),
+    ...dialogues.map((dialogue) => {
+      const voice = dialogue.voice
+        ? ` Voice direction outside the dialogue tag: ${dialogue.voice}.`
+        : "";
+      const delivery =
+        dialogue.delivery === "off_screen_voiceover"
+          ? " Off-screen voiceover; every visible person must keep their mouth closed."
+          : " On-screen delivery with natural lip synchronization.";
+      return `Dedicated dialogue — segment ${dialogue.segment}/${segmentCount}: (${dialogue.speakerId}) <d>[${h3DialogueLanguage(dialogue.language)}] ${dialogue.text}</d>${voice}${delivery}`;
+    }),
     "If speech, reading, or singing is only implied but the user did not supply exact words, do not invent words and do not request indistinct, unintelligible, murmured, or placeholder vocals. Direct the subject to mouth or act silently and explicitly state that there is no dialogue.",
     segmentCount > 1
       ? `Return exactly ${segmentCount} self-contained prompts. Mark them exactly as === SEGMENT 1/${segmentCount} === through === SEGMENT ${segmentCount}/${segmentCount} ===. Repeat stable identity and style constraints in later prompts, start each later segment from the prior ending composition, and continue action and motion without a reset.`
@@ -157,7 +165,9 @@ export function buildPlatformDescriptionPrompt(
   const platformRules =
     input.platform === "youtube"
       ? "Write a concise YouTube description with a strong opening, 2–4 short paragraphs, a natural call to action, and 3–5 relevant hashtags. Keep it under 1,500 characters."
-      : "Write an Instagram Reels caption with a strong first line, concise story context, a natural engagement question or call to action, and 5–10 relevant hashtags. Keep it under 1,800 characters.";
+      : input.platform === "instagram"
+        ? "Write an Instagram Reels caption with a strong first line, concise story context, a natural engagement question or call to action, and 5–10 relevant hashtags. Keep it under 1,800 characters."
+        : "Write a Douyin caption in a brisk, conversational style: lead with a punchy hook, make the story clear in short lines, end with a natural interaction cue, and add 3–6 precise hashtags. Keep the complete caption under 900 Chinese characters so the title and tags remain within the platform limit.";
 
   return compactLines([
     "You are a senior social media editor for Pumpkii, a pet companion robot brand.",

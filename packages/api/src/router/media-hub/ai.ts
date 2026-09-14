@@ -116,7 +116,11 @@ export const mediaAiRouter = {
           message: "只能使用自己的平台账号",
         });
       }
-      if (account.platform !== "youtube" && account.platform !== "instagram") {
+      if (
+        account.platform !== "youtube" &&
+        account.platform !== "instagram" &&
+        account.platform !== "douyin"
+      ) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: `暂不支持为 ${account.platform} 生成发布文案`,
@@ -134,7 +138,12 @@ export const mediaAiRouter = {
           accountLabel: account.accountLabel,
           currentDescription: input.currentDescription,
         });
-        const maxLength = account.platform === "instagram" ? 2200 : 5000;
+        const maxLength =
+          account.platform === "instagram"
+            ? 2200
+            : account.platform === "douyin"
+              ? 1000
+              : 5000;
         return { text: await queryMediaHubCodex(prompt, maxLength) };
       } catch (error) {
         throw codexError(error, "生成平台文案");

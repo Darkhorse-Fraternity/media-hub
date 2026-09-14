@@ -16,7 +16,7 @@ function TermsOfServicePage() {
             Terms of Service
           </h1>
           <p className="mt-3 text-sm text-slate-500">
-            Last updated: 2026-05-05
+            Last updated: 2026-09-14
           </p>
         </header>
 
@@ -51,10 +51,12 @@ function TermsOfServicePage() {
               Third-Party Platform Terms
             </h2>
             <p>
-              The service operates on top of YouTube, Instagram, and TikTok
-              APIs. Users are responsible for complying with each platform's
-              terms and community guidelines. Pumpkii is not affiliated with,
-              endorsed by, or sponsored by Google, Meta, or TikTok.
+              The service operates on top of YouTube, Instagram, and Douyin
+              APIs, and can prepare files and copy for user-confirmed posting to
+              Xiaohongshu. Users are responsible for complying with each
+              platform's terms and community guidelines. Pumpkii is not
+              affiliated with, endorsed by, or sponsored by Google, Meta,
+              Douyin, or Xiaohongshu.
             </p>
           </section>
 

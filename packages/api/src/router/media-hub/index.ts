@@ -4,6 +4,7 @@ import { mediaAiRouter } from "./ai";
 import { mediaApiTokenRouter } from "./api-token";
 import { mediaGenerationRouter } from "./generation-router";
 import { mediaImageRouter } from "./image";
+import { mediaDouyinRouter } from "./oauth-douyin";
 import { mediaInstagramRouter } from "./oauth-instagram";
 import { mediaSettingsRouter } from "./settings";
 import { mediaTaskRouter } from "./task";
@@ -19,6 +20,7 @@ export const mediaHubRouter = createTRPCRouter({
   upload: mediaUploadRouter,
   youtube: mediaYouTubeRouter,
   instagram: mediaInstagramRouter,
+  douyin: mediaDouyinRouter,
   settings: mediaSettingsRouter,
   generation: mediaGenerationRouter,
   image: mediaImageRouter,

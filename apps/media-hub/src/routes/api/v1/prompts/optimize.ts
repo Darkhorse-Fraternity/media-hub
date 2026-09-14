@@ -21,6 +21,10 @@ const optimizePromptBody = z.object({
         speaker_id: z.enum(["S1", "S2", "S3", "S4"]),
         language: z.enum(["zh", "en"]),
         text: z.string().trim().min(1).max(300),
+        voice: z.string().trim().min(1).max(500).optional(),
+        delivery: z
+          .enum(["on_screen", "off_screen_voiceover"])
+          .default("on_screen"),
       }),
     )
     .max(12)
@@ -43,6 +47,8 @@ async function handlePost(request: Request): Promise<Response> {
           speakerId: dialogue.speaker_id,
           language: dialogue.language,
           text: dialogue.text,
+          voice: dialogue.voice,
+          delivery: dialogue.delivery,
         })),
       }),
     );

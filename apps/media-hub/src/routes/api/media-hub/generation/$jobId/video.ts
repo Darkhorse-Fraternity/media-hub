@@ -23,7 +23,7 @@ async function handleGet(request: Request, jobId: string): Promise<Response> {
   ).role;
   const canAccessVideo =
     job && (actorRole === "admin" || job.createdBy === session.user.id);
-  if (!canAccessVideo || job.status !== "succeeded" || !job.outputStorageKey) {
+  if (!canAccessVideo || !job.outputStorageKey) {
     return new Response("Video not found", { status: 404 });
   }
 
