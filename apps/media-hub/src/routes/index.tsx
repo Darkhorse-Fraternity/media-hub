@@ -4312,6 +4312,17 @@ export function AgentApiManagementPanel() {
   );
   const token = tokenQuery.data?.token;
 
+  const resetToken = () => {
+    if (
+      window.confirm(
+        "确认重置你的 Agent API Token？当前用户的旧 Token 会立即失效。",
+      )
+    ) {
+      setMessage(null);
+      resetMutation.mutate();
+    }
+  };
+
   const copyToken = async () => {
     if (!token) return;
 
@@ -4379,7 +4390,27 @@ export function AgentApiManagementPanel() {
         {tokenQuery.isLoading ? (
           <p className="text-xs text-slate-500">正在读取 Token…</p>
         ) : tokenQuery.isError ? (
-          <p className="text-xs text-rose-300">{tokenQuery.error.message}</p>
+          <div className="space-y-3">
+            <p className="text-xs text-rose-300">{tokenQuery.error.message}</p>
+            {tokenQuery.error.message ===
+              "API Token 解密失败，请重置 Token" && (
+              <>
+                <p className="text-xs leading-5 text-slate-400">
+                  已保存的 Token 无法读取，已复制的旧 Token
+                  仍可能可用。重置后需更新调用方使用的
+                  Token；若重置仍失败，请管理员检查服务端加密密钥配置。
+                </p>
+                <button
+                  type="button"
+                  disabled={resetMutation.isPending}
+                  onClick={resetToken}
+                  className="rounded-lg border border-rose-400/30 px-3 py-2 text-xs text-rose-300 hover:bg-rose-400/10 disabled:opacity-45"
+                >
+                  {resetMutation.isPending ? "重置中…" : "重置 Token"}
+                </button>
+              </>
+            )}
+          </div>
         ) : token ? (
           <>
             <label className="block text-xs text-slate-400">
@@ -4409,16 +4440,7 @@ export function AgentApiManagementPanel() {
               <button
                 type="button"
                 disabled={resetMutation.isPending}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      "确认重置你的 Agent API Token？当前用户的旧 Token 会立即失效。",
-                    )
-                  ) {
-                    setMessage(null);
-                    resetMutation.mutate();
-                  }
-                }}
+                onClick={resetToken}
                 className="rounded-lg border border-rose-400/30 px-3 py-2 text-xs text-rose-300 hover:bg-rose-400/10 disabled:opacity-45"
               >
                 {resetMutation.isPending ? "重置中…" : "重置 Token"}
