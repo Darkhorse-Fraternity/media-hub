@@ -32,6 +32,12 @@ export function resolveMediaSystemSettingValues(
   stored: StoredMediaSystemSetting | undefined,
   environment: NodeJS.ProcessEnv,
 ) {
+  const ollamaBaseUrl =
+    clean(stored?.ollamaBaseUrl) ?? clean(environment.OLLAMA_BASE_URL);
+  const ollamaModel =
+    clean(stored?.ollamaModel) ??
+    clean(environment.OLLAMA_MODEL) ??
+    "qwen3-vl:32b";
   return {
     h3GenerationProfile:
       clean(stored?.h3GenerationProfile) ??
@@ -51,11 +57,11 @@ export function resolveMediaSystemSettingValues(
       stored?.codexTimeoutMs ?? environment.CODEX_TIMEOUT_MS,
       180_000,
     ),
-    ollamaBaseUrl:
-      clean(stored?.ollamaBaseUrl) ?? clean(environment.OLLAMA_BASE_URL),
-    ollamaModel:
-      clean(stored?.ollamaModel) ??
-      clean(environment.OLLAMA_MODEL) ??
-      "qwen3-vl:32b",
+    ollamaBaseUrl,
+    ollamaModel,
+    promptOllamaBaseUrl:
+      clean(environment.MEDIA_HUB_PROMPT_OLLAMA_URL) ?? ollamaBaseUrl,
+    promptOllamaModel:
+      clean(environment.MEDIA_HUB_PROMPT_OLLAMA_MODEL) ?? ollamaModel,
   };
 }

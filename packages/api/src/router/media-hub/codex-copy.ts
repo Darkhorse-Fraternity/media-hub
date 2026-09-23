@@ -195,7 +195,7 @@ export function normalizeCodexCopy(value: string, maxLength: number): string {
     normalized,
   );
   if (fenced?.[1]) normalized = fenced[1].trim();
-  if (!normalized) throw new Error("Codex Worker 返回了空内容");
+  if (!normalized) throw new Error("AI 模型返回了空内容");
   return normalized.slice(0, maxLength).trim();
 }
 
@@ -408,18 +408,56 @@ export async function queryCodexWorker(
     : new Error("Codex Worker 连接失败");
 }
 
+export async function queryOllama(
+  baseUrl: string,
+  model: string,
+  prompt: string,
+  timeoutMs: number,
+  maxLength: number,
+): Promise<string> {
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      stream: false,
+      think: false,
+      messages: [{ role: "user", content: prompt }],
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) {
+    throw new Error(`Ollama 请求失败（HTTP ${response.status}）`);
+  }
+  const body = (await response.json()) as {
+    message?: { content?: string };
+    error?: string;
+  };
+  if (body.error) throw new Error(`Ollama 请求失败：${body.error}`);
+  return normalizeCodexCopy(body.message?.content ?? "", maxLength);
+}
+
 export async function queryMediaHubCodex(
   prompt: string,
   maxLength: number,
 ): Promise<string> {
   const settings = await resolveMediaSystemSetting();
+  const timeoutMs = positiveTimeout(String(settings.codexTimeoutMs), 180_000);
+  if (settings.promptOllamaBaseUrl) {
+    return queryOllama(
+      settings.promptOllamaBaseUrl,
+      settings.promptOllamaModel,
+      prompt,
+      timeoutMs,
+      maxLength,
+    );
+  }
   const configuredBaseUrl = settings.codexWorkerUrl;
   if (!configuredBaseUrl) {
-    throw new Error("Missing CODEX_WORKER_URL");
+    throw new Error("未配置提示词优化模型地址（OLLAMA_BASE_URL）");
   }
   const baseUrl = configuredBaseUrl.replace(/\/$/, "");
   const source = settings.codexWorkerSource;
-  const timeoutMs = positiveTimeout(String(settings.codexTimeoutMs), 180_000);
   return queryCodexWorker(
     `${baseUrl}/query`,
     prompt,

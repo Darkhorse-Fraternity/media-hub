@@ -7,6 +7,7 @@ import {
   buildVideoPromptOptimizationPrompt,
   normalizeCodexCopy,
   queryCodexWorker,
+  queryOllama,
   readCodexWorkerResponse,
   removeGeneratedDurationLead,
 } from "./codex-copy";
@@ -199,6 +200,39 @@ describe("Media Hub Codex copy prompts", () => {
     await expect(readCodexWorkerResponse(response, 5000)).rejects.toThrow(
       "模型暂时不可用",
     );
+  });
+
+  it("optimizes through Ollama without a Codex Worker", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    let requestedBody: unknown;
+    globalThis.fetch = async (input, init) => {
+      requestedUrl = String(input);
+      requestedBody = JSON.parse(String(init?.body));
+      return Response.json({
+        message: { content: "```text\n优化后的提示词\n```" },
+      });
+    };
+    try {
+      await expect(
+        queryOllama(
+          "http://zh-mac:11434/",
+          "qwen3.5:4b-q4_K_M",
+          "原始提示词",
+          30_000,
+          5000,
+        ),
+      ).resolves.toBe("优化后的提示词");
+      expect(requestedUrl).toBe("http://zh-mac:11434/api/chat");
+      expect(requestedBody).toMatchObject({
+        model: "qwen3.5:4b-q4_K_M",
+        stream: false,
+        think: false,
+        messages: [{ role: "user", content: "原始提示词" }],
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("does not reuse stale Worker connections and retries a transient close", async () => {

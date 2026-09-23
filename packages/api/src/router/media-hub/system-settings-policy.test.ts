@@ -56,6 +56,28 @@ describe("Media Hub system settings precedence", () => {
       codexTimeoutMs: 180_000,
       ollamaBaseUrl: undefined,
       ollamaModel: "qwen3-vl:32b",
+      promptOllamaBaseUrl: undefined,
+      promptOllamaModel: "qwen3-vl:32b",
+    });
+  });
+
+  it("uses a dedicated prompt model without changing the daily-report model", () => {
+    expect(
+      resolveMediaSystemSettingValues(
+        {
+          ollamaBaseUrl: "http://daily-ollama:11434",
+          ollamaModel: "daily-model",
+        },
+        {
+          MEDIA_HUB_PROMPT_OLLAMA_URL: "http://prompt-ollama:11436",
+          MEDIA_HUB_PROMPT_OLLAMA_MODEL: "prompt-model",
+        },
+      ),
+    ).toMatchObject({
+      ollamaBaseUrl: "http://daily-ollama:11434",
+      ollamaModel: "daily-model",
+      promptOllamaBaseUrl: "http://prompt-ollama:11436",
+      promptOllamaModel: "prompt-model",
     });
   });
 });

@@ -865,7 +865,7 @@ function MediaHubDashboard({
   const optimizeCreatePrompt = async () => {
     if (!prompt.trim()) return;
     setOptimizingPromptContext("create");
-    setMessage("Codex Worker 正在优化提示词…");
+    setMessage("AI 正在优化提示词…");
     try {
       if (dialogues.some((dialogue) => !dialogue.text.trim())) {
         throw new Error("请填写所有已添加的逐字台词，或删除空白台词行。");
@@ -1110,7 +1110,7 @@ function MediaHubDashboard({
     setOptimizingPromptContext(editingId);
     setJobActionMessages((current) => ({
       ...current,
-      [editingId]: "Codex Worker 正在优化提示词…",
+      [editingId]: "AI 正在优化提示词…",
     }));
     try {
       const result = await optimizePromptMutation.mutateAsync({
@@ -1226,7 +1226,7 @@ function MediaHubDashboard({
     setOptimizingCopyKey(key);
     setPublishMessages((current) => ({
       ...current,
-      [job.id]: `Codex Worker 正在${currentDescription.trim() ? "优化" : "生成"} ${account.platform} 文案…`,
+      [job.id]: `AI 正在${currentDescription.trim() ? "优化" : "生成"} ${account.platform} 文案…`,
     }));
     try {
       const result = await optimizePlatformDescriptionMutation.mutateAsync({

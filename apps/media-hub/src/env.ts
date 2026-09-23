@@ -23,6 +23,8 @@ export const env = createEnv({
     DATABASE_PATH: z.string().optional(),
     OLLAMA_BASE_URL: z.string().url().optional(),
     OLLAMA_MODEL: z.string().optional(),
+    MEDIA_HUB_PROMPT_OLLAMA_URL: z.string().url().optional(),
+    MEDIA_HUB_PROMPT_OLLAMA_MODEL: z.string().optional(),
     MEDIA_HUB_GENERATION_PROVIDER_URL: z.string().url().optional(),
     MEDIA_HUB_GENERATION_PROVIDER_TOKEN: z.string().optional(),
     CODEX_WORKER_URL: z.string().url().optional(),

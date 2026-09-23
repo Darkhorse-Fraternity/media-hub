@@ -485,7 +485,7 @@ function SettingsWorkspace({
                     </p>
                   </ConfigGroup>
 
-                  <ConfigGroup label="Codex Worker">
+                  <ConfigGroup label="Codex Worker（Ollama 未配置时使用）">
                     <SettingField
                       label="服务地址"
                       hint={`当前生效：${systemQuery.data?.effective.codexWorkerUrl ?? "未配置"}`}
@@ -535,7 +535,7 @@ function SettingsWorkspace({
                     </div>
                   </ConfigGroup>
 
-                  <ConfigGroup label="日报 AI">
+                  <ConfigGroup label="Ollama（日报 AI；提示词可由部署单独指定）">
                     <SettingField
                       label="Ollama 地址"
                       hint={`当前生效：${systemQuery.data?.effective.ollamaBaseUrl ?? "未启用"}`}
@@ -553,7 +553,10 @@ function SettingsWorkspace({
                         className={controlClass}
                       />
                     </SettingField>
-                    <SettingField label="模型" hint="用于日报增长建议">
+                    <SettingField
+                      label="模型"
+                      hint={`日报：${systemQuery.data?.effective.ollamaModel ?? "未配置"}；提示词：${systemQuery.data?.effective.promptOllamaModel ?? "未配置"}`}
+                    >
                       <input
                         value={systemDraft.ollamaModel}
                         onChange={(event) =>
@@ -566,6 +569,11 @@ function SettingsWorkspace({
                         className={controlClass}
                       />
                     </SettingField>
+                    <p className="text-xs leading-5 text-slate-400">
+                      提示词优化当前地址：
+                      {systemQuery.data?.effective.promptOllamaBaseUrl ??
+                        "未配置"}
+                    </p>
                   </ConfigGroup>
                 </div>
                 <SaveBar

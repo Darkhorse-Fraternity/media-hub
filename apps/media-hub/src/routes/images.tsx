@@ -187,7 +187,7 @@ function AuthenticatedImageStudio({
 
   const optimizePrompt = async () => {
     if (!prompt.trim()) return;
-    setMessage("Codex Worker 正在优化图片提示词…");
+    setMessage("AI 正在优化图片提示词…");
     try {
       const result = await optimizePromptMutation.mutateAsync({
         prompt: prompt.trim(),
