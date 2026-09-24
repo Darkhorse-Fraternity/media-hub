@@ -24,6 +24,13 @@ export interface H3DialogueLine {
   text: string;
 }
 
+export function missingH3DialogueSegment(errorMessage: string): number | null {
+  const match = /SEGMENT\s+(\d+)\/\d+\s+要求人物说话但没有逐字对白/.exec(
+    errorMessage,
+  );
+  return match ? Number(match[1]) : null;
+}
+
 function h3DialogueTag(dialogue: H3DialogueLine): string {
   const language = dialogue.language === "zh" ? "Mandarin Chinese" : "English";
   return `(${dialogue.speakerId}) <d>[${language}] ${dialogue.text.trim()}</d>`;

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   h3PromptContainsDialogues,
+  missingH3DialogueSegment,
   shouldOptimizeH3PromptBeforeSubmit,
 } from "../lib/media-generation-form";
 
@@ -12,6 +13,15 @@ const h3Body = [
 ].join("\n");
 
 describe("media generation form", () => {
+  it("identifies the segment missing spoken words in an H3 error", () => {
+    expect(
+      missingH3DialogueSegment(
+        "H3 提示词预检失败：SEGMENT 2/2 要求人物说话但没有逐字对白；请使用 (S1) <d>[Language] 台词</d>",
+      ),
+    ).toBe(2);
+    expect(missingH3DialogueSegment("创建任务失败")).toBeNull();
+  });
+
   it("normalizes raw and incomplete H3 prompts before submission", () => {
     expect(shouldOptimizeH3PromptBeforeSubmit("A child reads.", 15)).toBe(true);
     expect(

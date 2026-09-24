@@ -27,6 +27,7 @@ import { resolutionOptions } from "~/lib/generation-resolution";
 import {
   createReferenceImageDraftId,
   h3PromptContainsDialogues,
+  missingH3DialogueSegment,
   referenceImageContentTypes,
   resolveScheduledAt,
   scheduleDayOptions,
@@ -419,6 +420,9 @@ function MediaHubDashboard({
   const [preparingImages, setPreparingImages] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [missingDialogueSegment, setMissingDialogueSegment] = useState<
+    number | null
+  >(null);
   const [isFloatingQueueOpen, setIsFloatingQueueOpen] = useState(true);
   const [historyPage, setHistoryPage] = useState(1);
   const [selectedPublishJobId, setSelectedPublishJobId] = useState<
@@ -922,6 +926,7 @@ function MediaHubDashboard({
     }
     setUploading(true);
     setMessage(null);
+    setMissingDialogueSegment(null);
     try {
       if (dialogues.some((dialogue) => !dialogue.text.trim())) {
         throw new Error("请填写所有已添加的逐字台词，或删除空白台词行。");
@@ -1034,7 +1039,15 @@ function MediaHubDashboard({
         height: resolution.height,
       });
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "创建任务失败");
+      const errorMessage =
+        error instanceof Error ? error.message : "创建任务失败";
+      const segment = missingH3DialogueSegment(errorMessage);
+      setMissingDialogueSegment(segment);
+      setMessage(
+        segment === null
+          ? errorMessage
+          : `第 ${segment} 段的描述要求人物说话，但没有写出具体台词。请为这一段添加逐字台词，或删除描述中说话的要求。`,
+      );
     } finally {
       setUploading(false);
     }
@@ -1463,15 +1476,17 @@ function MediaHubDashboard({
                 生产提示词，并补全镜头、动作节奏和场景连续性；明确要求的对白与画面文字保留所选内容语言。
               </p>
             </div>
-            <section className="mt-4 border-l-2 border-cyan-400/70 bg-slate-950/55 px-4 py-3">
+            <section
+              id="generation-dialogues"
+              className="mt-4 border-l-2 border-cyan-400/70 bg-slate-950/55 px-4 py-3"
+            >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-sm font-medium text-slate-200">
-                    原声台词（可选）
+                    原声台词
                   </p>
                   <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500">
-                    每句按原文进入 H3 原声音轨，并在生成后执行 ASR
-                    验收；不填时不会自动编造对白。
+                    如果视频描述要求人物说话，请在对应分段填写每句实际要说的台词；没有对白时可以留空。
                   </p>
                 </div>
                 <button
@@ -1596,6 +1611,7 @@ function MediaHubDashboard({
                         <label className="text-xs text-slate-500">
                           第 {dialogueIndex + 1} 句逐字台词
                           <textarea
+                            id={`dialogue-${dialogue.id}`}
                             value={dialogue.text}
                             onChange={(event) =>
                               setDialogues((current) =>
@@ -1902,7 +1918,54 @@ function MediaHubDashboard({
                     : "开始生成"}
               </button>
             </div>
-            {message && <p className="mt-4 text-sm text-cyan-300">{message}</p>}
+            {message && (
+              <div
+                role={missingDialogueSegment === null ? "status" : "alert"}
+                className={`mt-4 text-sm ${
+                  missingDialogueSegment === null
+                    ? "text-cyan-300"
+                    : "rounded-xl border border-amber-400/30 bg-amber-400/10 p-4 text-amber-100"
+                }`}
+              >
+                <p>{message}</p>
+                {missingDialogueSegment !== null && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const id = createDialogueDraftId();
+                        setDialogues((current) => [
+                          ...current,
+                          {
+                            id,
+                            segment: missingDialogueSegment,
+                            speakerId: "S1",
+                            language: contentLanguage,
+                            text: "",
+                          },
+                        ]);
+                        requestAnimationFrame(() => {
+                          document.getElementById(`dialogue-${id}`)?.focus();
+                        });
+                      }}
+                      disabled={dialogues.length >= 12}
+                      className="rounded-lg bg-amber-300 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      添加第 {missingDialogueSegment} 段台词
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        document.getElementById("generation-prompt")?.focus()
+                      }
+                      className="rounded-lg border border-amber-300/40 px-3 py-1.5 text-xs font-medium text-amber-100 hover:border-amber-300"
+                    >
+                      修改视频描述
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </form>
 
           <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
