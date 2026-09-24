@@ -18,6 +18,8 @@ jobs:
           node-version: 22.21.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Install FFmpeg for video frame tests
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
