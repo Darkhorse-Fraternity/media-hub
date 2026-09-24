@@ -81,6 +81,7 @@ describe("Media Hub Codex copy prompts", () => {
     );
     expect(prompt).toContain("production direction in precise natural English");
     expect(prompt).toContain("do not request indistinct");
+    expect(prompt).toContain("No dedicated dialogue lines were supplied");
     expect(prompt).toContain(
       "even when the original prompt is written in another language",
     );

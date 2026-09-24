@@ -1041,6 +1041,16 @@ function MediaHubDashboard({
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "创建任务失败";
+      if (
+        dialogues.length === 0 &&
+        errorMessage.includes("H3 提示词预检失败")
+      ) {
+        setMissingDialogueSegment(null);
+        setMessage(
+          "AI 优化后的提示词擅自加入了对白，自动修正未成功。请重试生成；无需填写台词。",
+        );
+        return;
+      }
       const segment = missingH3DialogueSegment(errorMessage);
       setMissingDialogueSegment(segment);
       setMessage(
@@ -1482,11 +1492,9 @@ function MediaHubDashboard({
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm font-medium text-slate-200">
-                    原声台词
-                  </p>
+                  <p className="text-sm font-medium text-slate-200">原声台词</p>
                   <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500">
-                    如果视频描述要求人物说话，请在对应分段填写每句实际要说的台词；没有对白时可以留空。
+                    想让人物说话时，请在对应分段填写逐字台词；不填时按无对白处理，不会自动编造台词。
                   </p>
                 </div>
                 <button

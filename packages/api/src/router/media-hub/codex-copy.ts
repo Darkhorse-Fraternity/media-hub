@@ -78,7 +78,7 @@ export function buildVideoPromptOptimizationPrompt(
   return compactLines([
     "You are optimizing a production prompt for MiniMax H3 (Hailuo 3) video generation.",
     "Do not inspect files, browse, or use tools. Work only from the content below.",
-    "Preserve the user's subject, intent, identity, requested dialogue, visible text, and factual constraints. Do not invent plot events, speech, lyrics, products, or extra subjects.",
+    "Preserve the user's subject, intent, identity, visible text, and factual constraints. Preserve only explicitly supplied dialogue. Do not invent plot events, speech, lyrics, products, or extra subjects.",
     "Translate the user's descriptive prose into English. Write all structural keys and production direction in precise natural English, even when the original prompt is written in another language. The only non-English content allowed is dialogue, lyrics, signs, and other visible text explicitly requested by the user; preserve those verbatim in the requested language.",
     `Requested dialogue and visible-text language: ${preservedLanguage}.`,
     `Target duration: ${input.durationSeconds} seconds.`,
@@ -92,7 +92,9 @@ export function buildVideoPromptOptimizationPrompt(
     "Put dialogue and synchronized diegetic sound in integrated_multimodal_description. Format requested speech as <d>[Language] exact dialogue</d> with a stable speaker ID such as (S1). In overall_soundscape, summarize ambience, physical-action sounds, and non-verbal human sounds without repeating dialogue or singing. In non_diegetic_music, specify instrumentation, tempo/rhythm, and dynamic development; use N/A when there is no audience-only score.",
     dialogues.length > 0
       ? "The dedicated dialogue editor below is authoritative. Include every listed line exactly once, in its assigned segment and original order, using the exact speaker ID, H3 language label, and wording shown. Do not paraphrase, translate, merge, split, omit, or invent dialogue. Place each exact tagged line in integrated_multimodal_description at a physically achievable moment."
-      : undefined,
+      : !/<d>/i.test(input.prompt)
+        ? "No dedicated dialogue lines were supplied. Every segment must have no spoken words, lyrics, voiceover, lip-sync, or <d> dialogue tags, even if the original description mentions someone speaking. Keep the visible action silent and state No dialogue in each segment's overall_soundscape."
+        : undefined,
     ...dialogues.map((dialogue) => {
       const voice = dialogue.voice
         ? ` Voice direction outside the dialogue tag: ${dialogue.voice}.`

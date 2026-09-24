@@ -29,6 +29,7 @@ import {
 } from "@acme/validators";
 
 import { protectedProcedure } from "../../trpc";
+import { queryMediaHubCodex } from "./codex-copy";
 import { sendGenerationCancellationAlert } from "./feishu-notify";
 import {
   cancelMediaGenerationJob,
@@ -53,7 +54,10 @@ import {
 } from "./generation-notification";
 import {
   compileH3StructuredDialoguePrompt,
+  formatH3PromptIssues,
   h3StepsForPreset,
+  isH3SpeechIssue,
+  repairH3NoDialoguePrompt,
   validateH3GenerationPrompt,
 } from "./h3-generation-config";
 import { requireH3Profile } from "./h3-profile";
@@ -135,14 +139,48 @@ export const mediaGenerationRouter = {
           message: `编译结构化对白后的提示词不能超过 ${MEDIA_H3_PROMPT_MAX_LENGTH} 个字符`,
         });
       }
-      const promptIssues = validateH3GenerationPrompt(
+      let promptIssues = validateH3GenerationPrompt(
         compiledDialogue.prompt,
         input.durationSeconds,
       );
+      if (
+        input.dialogues.length === 0 &&
+        promptIssues.length > 0 &&
+        promptIssues.every(isH3SpeechIssue)
+      ) {
+        try {
+          const corrected = await repairH3NoDialoguePrompt(
+            compiledDialogue.prompt,
+            input.durationSeconds,
+            queryMediaHubCodex,
+          );
+          if (corrected) {
+            compiledDialogue = { ...compiledDialogue, prompt: corrected };
+            promptIssues = validateH3GenerationPrompt(
+              corrected,
+              input.durationSeconds,
+            );
+          }
+        } catch (error) {
+          log.warn("H3 no-dialogue prompt repair failed", {
+            code: "H3_NO_DIALOGUE_REPAIR_FAILED",
+            err: error instanceof Error ? error : new Error(String(error)),
+          });
+        }
+      }
+      if (compiledDialogue.prompt.length > MEDIA_H3_PROMPT_MAX_LENGTH) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `提示词不能超过 ${MEDIA_H3_PROMPT_MAX_LENGTH} 个字符`,
+        });
+      }
       if (promptIssues.length) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: `H3 提示词预检失败：${promptIssues.join("；")}`,
+          message: formatH3PromptIssues(
+            promptIssues,
+            input.dialogues.length === 0,
+          ),
         });
       }
 
@@ -572,7 +610,7 @@ export const mediaGenerationRouter = {
         if (promptIssues.length) {
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message: `H3 提示词预检失败：${promptIssues.join("；")}`,
+            message: formatH3PromptIssues(promptIssues),
           });
         }
       }

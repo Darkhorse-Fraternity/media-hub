@@ -1,4 +1,5 @@
 import type { MediaH3Dialogue } from "@acme/validators";
+import { MEDIA_H3_PROMPT_MAX_LENGTH } from "@acme/validators";
 
 export const DEFAULT_H3_GENERATION_PROFILE = "platform-h3-i2v-inline-v1";
 export const DEFAULT_H3_EDIT_PROFILE = "platform-h3-ref2va-edit-v1";
@@ -55,7 +56,7 @@ const H3_PROMPT_FIELDS = [
 const H3_EXPLICIT_SPEECH_PATTERN =
   /\b(?:says?|speaks?|reads? aloud|dialogue|spoken words?)\b|朗读|说(?:道|话)?|对白|台词/i;
 const H3_NO_SPEECH_PATTERN =
-  /\b(?:no|without) (?:dialogue|speech|spoken words?|human voice)\b|无对白|无人声|不说话|保持沉默/i;
+  /\b(?:no|without) (?:dialogue|speech|spoken words?|human voice)\b|无对白|无人声|不说话|保持沉默/gi;
 const H3_AMBIGUOUS_SPEECH_PATTERN =
   /\b(?:indistinct|unintelligible|incomprehensible|gibberish|babbl(?:e|ing)|murmur(?:s|ing)?)\b|含混|听不清|不可辨识|无法辨认|模糊人声|低声朗读/i;
 
@@ -99,12 +100,13 @@ function validatePromptBody(body: string, label: string): string[] {
     }
   }
 
-  if (!dialogueMatches.length && !H3_NO_SPEECH_PATTERN.test(body)) {
-    if (H3_AMBIGUOUS_SPEECH_PATTERN.test(body)) {
+  if (!dialogueMatches.length) {
+    const speechDirections = body.replace(H3_NO_SPEECH_PATTERN, "");
+    if (H3_AMBIGUOUS_SPEECH_PATTERN.test(speechDirections)) {
       issues.push(
         `${label} 包含不可验收的含混人声；请改成无对白，或提供逐字对白标签`,
       );
-    } else if (H3_EXPLICIT_SPEECH_PATTERN.test(body)) {
+    } else if (H3_EXPLICIT_SPEECH_PATTERN.test(speechDirections)) {
       issues.push(
         `${label} 要求人物说话但没有逐字对白；请使用 (S1) <d>[Language] 台词</d>`,
       );
@@ -293,6 +295,69 @@ export function validateH3GenerationPrompt(
     return validatePromptBody(marked[0]?.prompt ?? "", "SEGMENT 1/1");
   }
   return validatePromptBody(prompt.trim(), "提示词");
+}
+
+export function isH3SpeechIssue(issue: string): boolean {
+  return (
+    issue.includes("对白必须使用完整格式") ||
+    issue.includes("要求人物说话但没有逐字对白") ||
+    issue.includes("对白语言和逐字内容不能为空") ||
+    issue.includes("每句对白都必须紧邻稳定说话人 ID") ||
+    issue.includes("不可验收的含混人声")
+  );
+}
+
+export function formatH3PromptIssues(
+  issues: string[],
+  noDialogueRequested = false,
+): string {
+  if (noDialogueRequested && issues.every(isH3SpeechIssue)) {
+    return "AI 优化后的提示词擅自加入了对白，自动修正未成功。请重试生成；无需填写台词。";
+  }
+  const readable = issues.map((issue) =>
+    issue
+      .replace(/SEGMENT\s+(\d+)\/\d+/, "第 $1 段")
+      .replace(/的对白必须使用完整格式：.*/, "出现了未指定或格式错误的对白")
+      .replace(/要求人物说话但没有逐字对白；.*/, "描述了说话，但没有具体台词"),
+  );
+  return `提示词需要调整：${readable.join("；")}。如果不需要人物说话，请在描述中注明全程无对白；需要说话时，请在「原声台词」填写对应分段的实际台词。`;
+}
+
+export function buildH3NoDialogueRepairPrompt(
+  prompt: string,
+  durationSeconds: number,
+  issues: string[],
+): string {
+  return [
+    "Correct the following MiniMax H3 production prompt. Return only the corrected prompt text.",
+    `Target duration: ${durationSeconds} seconds.`,
+    "The user provided no exact dialogue. Every segment must be completely silent with respect to speech: no spoken words, lyrics, voiceover, lip-sync, or dialogue tags. Do not invent dialogue. If someone was described as speaking or reading aloud, keep the visual action but make it silent. Explicitly state No dialogue in each segment's overall_soundscape.",
+    "Preserve the visual subjects, actions, shot timing, continuity, and the three H3 top-level fields in their original order. Preserve every SEGMENT marker exactly.",
+    `Validation issues: ${issues.join("; ")}`,
+    "Prompt to correct:",
+    prompt,
+  ].join("\n");
+}
+
+export async function repairH3NoDialoguePrompt(
+  prompt: string,
+  durationSeconds: number,
+  query: (instruction: string, maxLength: number) => Promise<string>,
+): Promise<string | null> {
+  const issues = validateH3GenerationPrompt(prompt, durationSeconds);
+  if (!issues.length && !/<\/?d>/i.test(prompt)) return prompt;
+
+  const corrected = await query(
+    buildH3NoDialogueRepairPrompt(prompt, durationSeconds, issues),
+    MEDIA_H3_PROMPT_MAX_LENGTH,
+  );
+  if (
+    /<\/?d>/i.test(corrected) ||
+    validateH3GenerationPrompt(corrected, durationSeconds).length > 0
+  ) {
+    return null;
+  }
+  return corrected;
 }
 
 export function h3SegmentPrompts(

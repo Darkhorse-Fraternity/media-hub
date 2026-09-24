@@ -1,12 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   compileH3StructuredDialoguePrompt,
+  formatH3PromptIssues,
   H3_I2VA_ALIGNMENT,
   h3QualityPresets,
   h3SegmentCount,
   h3SegmentPrompts,
   h3StepsForPreset,
+  repairH3NoDialoguePrompt,
   validateH3GenerationPrompt,
 } from "./h3-generation-config";
 
@@ -62,6 +64,64 @@ describe("H3 generation configuration", () => {
         15,
       ),
     ).toEqual([]);
+    expect(
+      validateH3GenerationPrompt(
+        "integrated_multimodal_description: [Shot 1] The child speaks to her mother.\noverall_soundscape: No dialogue. Quiet room.\nnon_diegetic_music: N/A",
+        15,
+      ),
+    ).toEqual([expect.stringContaining("要求人物说话但没有逐字对白")]);
+  });
+
+  it("repairs invented speech when no exact dialogue was supplied", async () => {
+    const invalid = [
+      "=== SEGMENT 1/2 ===",
+      "integrated_multimodal_description: [Shot 1] A child (S1) <d>[Mandarin Chinese] 你好",
+      "overall_soundscape: Quiet room.",
+      "non_diegetic_music: N/A",
+      "=== SEGMENT 2/2 ===",
+      "integrated_multimodal_description: [Shot 1] The child speaks to her mother.",
+      "overall_soundscape: Quiet room.",
+      "non_diegetic_music: N/A",
+    ].join("\n");
+    const corrected = [
+      "=== SEGMENT 1/2 ===",
+      "integrated_multimodal_description: [Shot 1] A child looks at her mother in a quiet room.",
+      "overall_soundscape: No dialogue. Quiet room.",
+      "non_diegetic_music: N/A",
+      "=== SEGMENT 2/2 ===",
+      "integrated_multimodal_description: [Shot 1] The child smiles silently at her mother.",
+      "overall_soundscape: No dialogue. Quiet room.",
+      "non_diegetic_music: N/A",
+    ].join("\n");
+    const query = vi.fn(
+      async (_instruction: string, _maxLength: number) => corrected,
+    );
+
+    expect(await repairH3NoDialoguePrompt(invalid, 30, query)).toBe(corrected);
+    expect(query).toHaveBeenCalledOnce();
+    expect(query.mock.calls[0]?.[0]).toContain(
+      "The user provided no exact dialogue",
+    );
+
+    const issues = validateH3GenerationPrompt(invalid, 30);
+    const message = formatH3PromptIssues(issues);
+    expect(message).toContain("第 1 段");
+    expect(message).toContain("第 2 段");
+    expect(message).not.toContain("SEGMENT");
+    expect(message).not.toContain("<d>");
+    expect(formatH3PromptIssues(issues, true)).toContain("无需填写台词");
+  });
+
+  it("rejects a repair that still invents dialogue", async () => {
+    const invalid =
+      "integrated_multimodal_description: [Shot 1] A child says hello.\noverall_soundscape: Quiet room.\nnon_diegetic_music: N/A";
+    const query = vi.fn(async (_instruction: string, _maxLength: number) =>
+      invalid.replace(
+        "A child says hello.",
+        "A child (S1) <d>[English] Hello.</d>",
+      ),
+    );
+    expect(await repairH3NoDialoguePrompt(invalid, 15, query)).toBeNull();
   });
 
   it("requires the three H3 fields in their official order", () => {

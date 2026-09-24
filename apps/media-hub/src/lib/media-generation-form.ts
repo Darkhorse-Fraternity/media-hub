@@ -67,6 +67,23 @@ const h3PromptFields = [
   "non_diegetic_music:",
 ] as const;
 
+function needsH3DialogueNormalization(body: string): boolean {
+  const openingTags = body.match(/<d>/g)?.length ?? 0;
+  const closingTags = body.match(/<\/d>/g)?.length ?? 0;
+  const completeTags = [...body.matchAll(/<d>\[[^\]]+]\s*[^<]+<\/d>/g)].length;
+  if (openingTags !== closingTags || completeTags !== openingTags) {
+    return true;
+  }
+  if (completeTags > 0) return false;
+  const speechDirections = body.replace(
+    /\b(?:no|without) (?:dialogue|speech|spoken words?|human voice)\b|无对白|无人声|不说话|保持沉默/gi,
+    "",
+  );
+  return /\b(?:says?|speaks?|reads? aloud|dialogue|spoken words?)\b|朗读|说(?:道|话)?|对白|台词/i.test(
+    speechDirections,
+  );
+}
+
 /**
  * Decide whether the browser should normalize a prompt before submitting it.
  * The API remains the authoritative validator; this avoids a predictable
@@ -85,18 +102,27 @@ export function shouldOptimizeH3PromptBeforeSubmit(
   if (!fieldsAreCompleteAndOrdered) return true;
 
   const segmentCount = Math.max(1, Math.ceil(durationSeconds / 15));
-  if (segmentCount === 1) return false;
+  if (segmentCount === 1) return needsH3DialogueNormalization(prompt);
 
   const markers = [
     ...prompt.matchAll(/^===\s*SEGMENT\s+(\d+)\s*\/\s*(\d+)\s*===\s*$/gim),
   ];
-  return !(
-    markers.length === segmentCount &&
-    markers.every(
-      (marker, index) =>
-        Number(marker[1]) === index + 1 && Number(marker[2]) === segmentCount,
+  if (
+    !(
+      markers.length === segmentCount &&
+      markers.every(
+        (marker, index) =>
+          Number(marker[1]) === index + 1 && Number(marker[2]) === segmentCount,
+      )
     )
-  );
+  ) {
+    return true;
+  }
+  return markers.some((marker, index) => {
+    const start = marker.index + marker[0].length;
+    const end = markers[index + 1]?.index ?? prompt.length;
+    return needsH3DialogueNormalization(prompt.slice(start, end));
+  });
 }
 
 interface UploadedReferenceImage {

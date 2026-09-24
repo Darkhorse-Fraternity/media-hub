@@ -18,6 +18,7 @@ import {
   queryMediaHubCodex,
 } from "./codex-copy";
 import { canManageMediaGenerationJob } from "./generation-access";
+import { repairH3NoDialoguePrompt } from "./h3-generation-config";
 import { canManageMediaPlatformAccount } from "./platform-account-access";
 
 function codexError(error: unknown, operation: string): TRPCError {
@@ -39,9 +40,24 @@ export const mediaAiRouter = {
     .mutation(async ({ input }) => {
       try {
         const prompt = buildVideoPromptOptimizationPrompt(input);
-        const text = await queryMediaHubCodex(prompt, 16000);
+        let text = await queryMediaHubCodex(prompt, 16000);
+        if (input.dialogues.length === 0 && !/<\/?d>/i.test(input.prompt)) {
+          const corrected = await repairH3NoDialoguePrompt(
+            text,
+            input.durationSeconds,
+            queryMediaHubCodex,
+          );
+          if (!corrected) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "AI 优化后仍出现了未指定的对白。请重试；无需填写台词。",
+            });
+          }
+          text = corrected;
+        }
         return { text };
       } catch (error) {
+        if (error instanceof TRPCError) throw error;
         throw codexError(error, "优化提示词");
       }
     }),

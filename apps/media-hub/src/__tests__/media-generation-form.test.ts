@@ -48,6 +48,20 @@ describe("media generation form", () => {
     ).toBe(false);
   });
 
+  it("re-optimizes complete segments when AI inserted unsupported speech", () => {
+    const invalid = [
+      `=== SEGMENT 1/2 ===\n${h3Body}\n(S1) <d>[Mandarin Chinese] 你好`,
+      `=== SEGMENT 2/2 ===\n${h3Body.replace("reads silently", "says hello")}`,
+    ].join("\n");
+    expect(shouldOptimizeH3PromptBeforeSubmit(invalid, 30)).toBe(true);
+    expect(
+      shouldOptimizeH3PromptBeforeSubmit(
+        h3Body.replace("reads silently", "says hello"),
+        15,
+      ),
+    ).toBe(true);
+  });
+
   it("checks exact dialogue text inside its assigned H3 segment", () => {
     const prompt = [
       `=== SEGMENT 1/2 ===\n${h3Body}\n(S1) <d>[Mandarin Chinese] 跟我读，春天来了。</d>`,
