@@ -412,11 +412,15 @@ export const mediaGenerationRouter = {
       const statusWhere = requestedStatuses?.length
         ? inArray(mediaGenerationJob.status, requestedStatuses)
         : undefined;
+      const wholeVideoWhere = input.wholeVideosOnly
+        ? isNull(mediaGenerationJob.scriptShotId)
+        : undefined;
       const where =
         actorRole === "admin"
-          ? statusWhere
+          ? and(statusWhere, wholeVideoWhere)
           : and(
               statusWhere,
+              wholeVideoWhere,
               or(
                 eq(mediaGenerationJob.createdBy, ctx.session.user.id),
                 inArray(mediaGenerationJob.status, [
@@ -703,6 +707,12 @@ export const mediaGenerationRouter = {
           message: "只有已完成的视频可以准备小红书投稿包",
         });
       }
+      if (job.scriptShotId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "脚本镜头是中间片段，请使用完整成片准备投稿包",
+        });
+      }
       const actorRole = (
         ctx.session.user as typeof ctx.session.user & { role?: string }
       ).role;
@@ -768,6 +778,12 @@ export const mediaGenerationRouter = {
           message: "只有已完成的视频可以重发通知",
         });
       }
+      if (job.scriptShotId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "脚本镜头是中间片段，请推送完整成片",
+        });
+      }
 
       const notificationStatus = await resendGenerationResultNotification(
         job.id,
@@ -818,6 +834,12 @@ export const mediaGenerationRouter = {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "视频尚未生成完成",
+        });
+      }
+      if (job.scriptShotId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "脚本镜头是中间片段，请发布完整成片",
         });
       }
 

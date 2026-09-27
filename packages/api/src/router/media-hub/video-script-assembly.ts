@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { and, desc, eq } from "@acme/db";
+import { and, desc, eq, inArray } from "@acme/db";
 import { db } from "@acme/db/client";
 import {
   mediaGenerationJob,
@@ -84,6 +84,7 @@ export async function assembleCompletedVideoScript(input: {
   scriptId: string;
   userId: string;
   requireReady?: boolean;
+  sourceJobIds?: string[];
 }): Promise<{
   jobId: string;
   mediaTaskId: string | null;
@@ -110,6 +111,7 @@ export async function assembleCompletedVideoScript(input: {
     orderBy: desc(mediaGenerationJob.createdAt),
   });
   if (
+    !input.sourceJobIds &&
     jobs.some(
       (job) =>
         job.kind !== "assemble" &&
@@ -124,10 +126,43 @@ export async function assembleCompletedVideoScript(input: {
     }
     return null;
   }
-  const sourceJobs = selectLatestScriptShotJobs(
-    script.shots.map((shot) => shot.id),
-    jobs,
-  );
+  const sourceJobs = input.sourceJobIds
+    ? await db.query.mediaGenerationJob.findMany({
+        where: and(
+          inArray(mediaGenerationJob.id, input.sourceJobIds),
+          eq(mediaGenerationJob.createdBy, input.userId),
+        ),
+      })
+    : selectLatestScriptShotJobs(
+        script.shots.map((shot) => shot.id),
+        jobs,
+      );
+  if (input.sourceJobIds) {
+    const byId = new Map(sourceJobs?.map((job) => [job.id, job]));
+    if (
+      input.sourceJobIds.length !== script.shots.length ||
+      byId.size !== input.sourceJobIds.length ||
+      input.sourceJobIds.some((id, index) => {
+        const job = byId.get(id);
+        return (
+          !job ||
+          job.status !== "succeeded" ||
+          job.kind === "assemble" ||
+          !job.outputStorageKey ||
+          (job.scriptId && job.scriptId !== script.id) ||
+          (job.scriptShotId && job.scriptShotId !== script.shots[index]?.id) ||
+          job.width !== script.width ||
+          job.height !== script.height ||
+          job.fps !== sourceJobs?.[0]?.fps ||
+          job.durationSeconds !== script.shots[index]?.durationSeconds
+        );
+      })
+    ) {
+      throw new VideoScriptAssemblyNotReadyError(
+        "镜头视频数量、顺序、归属或参数与脚本不匹配",
+      );
+    }
+  }
   if (!sourceJobs || sourceJobs.length === 0) {
     if (input.requireReady) {
       throw new VideoScriptAssemblyNotReadyError(
@@ -136,7 +171,10 @@ export async function assembleCompletedVideoScript(input: {
     }
     return null;
   }
-  const sourceJobIds = sourceJobs.map((job) => job.id);
+  const orderedSourceJobs = input.sourceJobIds
+    ? input.sourceJobIds.map((id) => sourceJobs.find((job) => job.id === id)!)
+    : sourceJobs;
+  const sourceJobIds = orderedSourceJobs.map((job) => job.id);
   const jobId = assemblyJobId(script.id, sourceJobIds);
   const existing = jobs.find((job) => job.id === jobId);
   if (existing?.status === "succeeded") {
@@ -172,7 +210,7 @@ export async function assembleCompletedVideoScript(input: {
     referenceImages: [],
     inputImageAssetIds: [],
     durationSeconds: totalDurationSeconds,
-    fps: sourceJobs[0]?.fps ?? 24,
+    fps: orderedSourceJobs[0]?.fps ?? 24,
     width: script.width,
     height: script.height,
     qualityPreset: "assembled",
@@ -236,14 +274,16 @@ export async function assembleCompletedVideoScript(input: {
   try {
     const video = await concatShotVideos(
       await Promise.all(
-        sourceJobs.map((job) => getMediaHubObject(job.outputStorageKey!)),
+        orderedSourceJobs.map((job) =>
+          getMediaHubObject(job.outputStorageKey!),
+        ),
       ),
     );
     await validateGeneratedVideoOutput(video, {
       durationSeconds: totalDurationSeconds,
       width: script.width,
       height: script.height,
-      fps: sourceJobs[0]?.fps ?? 24,
+      fps: orderedSourceJobs[0]?.fps ?? 24,
     });
     await putMediaHubObject(storageKey, video, "video/mp4");
     const finishedAt = new Date();
@@ -282,6 +322,18 @@ export async function assembleCompletedVideoScript(input: {
           updatedAt: finishedAt,
         })
         .where(eq(mediaGenerationJob.id, jobId));
+      if (input.sourceJobIds) {
+        for (const [index, sourceJob] of orderedSourceJobs.entries()) {
+          await transaction
+            .update(mediaGenerationJob)
+            .set({
+              scriptId: script.id,
+              scriptShotId: script.shots[index]!.id,
+              updatedAt: finishedAt,
+            })
+            .where(eq(mediaGenerationJob.id, sourceJob.id));
+        }
+      }
       await transaction
         .update(mediaVideoScript)
         .set({ status: "completed", updatedAt: finishedAt })

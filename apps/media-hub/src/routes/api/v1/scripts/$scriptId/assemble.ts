@@ -1,10 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { z } from "zod/v4";
 
 import {
+  AgentApiError,
   agentJson,
   createAgentApiCaller,
   handleAgentApiError,
 } from "~/lib/agent-api";
+
+const assembleBody = z.object({
+  source_job_ids: z.array(z.string().uuid()).min(2).max(20).optional(),
+});
 
 async function handlePost(
   request: Request,
@@ -12,8 +18,21 @@ async function handlePost(
 ): Promise<Response> {
   try {
     const { caller } = await createAgentApiCaller(request);
+    const rawBody = await request.text();
+    let payload: unknown = {};
+    if (rawBody.trim()) {
+      try {
+        payload = JSON.parse(rawBody);
+      } catch {
+        throw new AgentApiError(400, "Request body must be valid JSON");
+      }
+    }
+    const body = assembleBody.parse(payload);
     return agentJson(
-      await caller.mediaHub.script.assemble({ id: scriptId }),
+      await caller.mediaHub.script.assemble({
+        id: scriptId,
+        sourceJobIds: body.source_job_ids,
+      }),
       201,
     );
   } catch (error) {

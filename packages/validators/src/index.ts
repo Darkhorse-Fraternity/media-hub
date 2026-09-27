@@ -537,6 +537,10 @@ export const mediaVideoScriptIdSchema = z.object({
   id: z.string().trim().min(1),
 });
 
+export const assembleMediaVideoScriptSchema = mediaVideoScriptIdSchema.extend({
+  sourceJobIds: z.array(z.string().uuid()).min(2).max(20).optional(),
+});
+
 export const mediaVideoScriptListSchema = z.object({
   page: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(100).default(30),
@@ -747,6 +751,7 @@ export const mediaGenerationListSchema = z.object({
   pageSize: z.number().int().min(1).max(100).default(20),
   status: mediaGenerationStatusEnum.optional(),
   statuses: z.array(mediaGenerationStatusEnum).min(1).max(7).optional(),
+  wholeVideosOnly: z.boolean().default(false),
 });
 
 export const mediaGenerationIdSchema = z.object({

@@ -19,6 +19,7 @@ import {
 import {
   analyzeMediaVideoScriptSchema,
   analyzeMediaVideoScriptShots,
+  assembleMediaVideoScriptSchema,
   bridgeMediaVideoScriptFrameSchema,
   createMediaVideoScriptFrameCandidatesSchema,
   createMediaVideoScriptSchema,
@@ -726,7 +727,7 @@ export const mediaVideoScriptRouter = {
     }),
 
   assemble: protectedProcedure
-    .input(mediaVideoScriptIdSchema)
+    .input(assembleMediaVideoScriptSchema)
     .mutation(async ({ ctx, input }) => {
       await requireOwnedScript(ctx.db, ctx.session.user.id, input.id);
       try {
@@ -734,6 +735,7 @@ export const mediaVideoScriptRouter = {
           scriptId: input.id,
           userId: ctx.session.user.id,
           requireReady: true,
+          sourceJobIds: input.sourceJobIds,
         });
         if (!result) {
           throw new VideoScriptAssemblyNotReadyError("暂时无法创建完整成片");

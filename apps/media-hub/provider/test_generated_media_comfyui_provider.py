@@ -177,6 +177,43 @@ class Ref2VAWorkflowTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.code, "profile_reference_images_unsupported")
 
+    def test_official_i2v_accepts_prompt_without_source_artifacts(self) -> None:
+        profile = official_i2v_profile()
+        service = object.__new__(provider.ProviderService)
+        service.config = types.SimpleNamespace(
+            profiles={profile.name: profile},
+            max_outputs=4,
+            max_source_bytes=20_000_000,
+        )
+        generation_spec = {
+            "profile": profile.name,
+            "parameters": {
+                "behavior_prompts": {"main": "A child beside a puddle"},
+                "width": 960,
+                "height": 544,
+                "length": 124,
+                "fps": 24,
+                "steps": 20,
+                "cfg": 1,
+            },
+        }
+        normalized = service._normalize_request(
+            {
+                "schema_version": provider.REQUEST_CONTRACT,
+                "orchestration_run_id": "official-i2v:run-1",
+                "project_id": "media-hub",
+                "attempt": 1,
+                "deficits": {"main": 1},
+                "max_outputs": 1,
+                "generation_spec": generation_spec,
+                "generation_spec_checksum": provider._checksum(
+                    provider._canonical_json(generation_spec)
+                ),
+                "source_artifacts": [],
+            }
+        )
+        self.assertEqual(normalized["source_artifacts"], [])
+
     def test_profile_does_not_require_fl2va_turbo_lora(self) -> None:
         profile = ref2va_profile()
         self.assertEqual(profile.transformer, "ref2va.safetensors")

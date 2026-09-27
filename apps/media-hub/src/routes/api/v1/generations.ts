@@ -93,6 +93,8 @@ async function handleGet(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const page = Number(url.searchParams.get("page") ?? "1");
     const pageSize = Number(url.searchParams.get("page_size") ?? "20");
+    const wholeVideosOnly =
+      url.searchParams.get("whole_videos_only") === "true";
     const rawStatus = url.searchParams.get("status") ?? undefined;
     const status = z
       .enum([
@@ -110,6 +112,7 @@ async function handleGet(request: Request): Promise<Response> {
       page,
       pageSize,
       status,
+      wholeVideosOnly,
     });
     return agentJson(result);
   } catch (error) {

@@ -699,6 +699,7 @@ function MediaHubDashboard({
         page: historyPage,
         pageSize: historyPageSize,
         statuses: [...historyGenerationStatuses],
+        wholeVideosOnly: true,
       },
       {
         placeholderData: (previousData) => previousData,
@@ -2047,6 +2048,12 @@ function MediaHubDashboard({
                     trimmedJobTitle && trimmedJobTitle.length > 0
                       ? trimmedJobTitle
                       : job.prompt;
+                  const generationKindLabel =
+                    job.kind === "assemble"
+                      ? "完整成片"
+                      : job.kind === "edit"
+                        ? "Ref2VA 修改"
+                        : "H3 生成";
                   const selectedPublishDrafts = selectedAccountIds.map(
                     (accountId) => {
                       const target = job.publishTargets.find(
@@ -2101,9 +2108,11 @@ function MediaHubDashboard({
                             {job.scheduledAt
                               ? `定于 ${new Date(job.scheduledAt).toLocaleString()}`
                               : new Date(job.createdAt).toLocaleString()}
-                            {` · ${job.kind === "edit" ? "Ref2VA 修改" : "H3 生成"}`}
+                            {` · ${generationKindLabel}`}
                             {` · 视频 ${job.durationSeconds} 秒`}
-                            {` · ${job.steps} 步`}
+                            {job.kind === "assemble"
+                              ? ` · ${job.providerJobIds.length} 个镜头`
+                              : ` · ${job.steps} 步`}
                             {job.kind === "generate" &&
                               ` · ${qualityOptions.find((option) => option.value === job.qualityPreset)?.label.split(" · ")[0] ?? job.qualityPreset}`}
                             {` · ${job.language === "en" ? "English" : "中文"}`}
