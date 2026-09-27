@@ -134,6 +134,8 @@ def main() -> int:
         command.add_argument("script_id")
         if name == "assemble":
             command.add_argument("--source-job-id", action="append", dest="source_job_ids")
+            command.add_argument("--transition", choices=["cut", "fade_white", "fade_black"])
+            command.add_argument("--rebuild", action="store_true")
     for name in ("optimize", "generate"):
         command = commands.add_parser(name)
         command.add_argument("payload", help="Path to a JSON object")
@@ -166,7 +168,12 @@ def main() -> int:
     elif args.command == "script":
         result = request_json("GET", f"/api/v1/scripts/{quote(args.script_id, safe='')}")
     elif args.command == "assemble":
-        payload = {"source_job_ids": args.source_job_ids} if args.source_job_ids else None
+        payload = {
+            "source_job_ids": args.source_job_ids,
+            "transition": args.transition,
+            "rebuild": args.rebuild if args.rebuild else None,
+        }
+        payload = {key: value for key, value in payload.items() if value is not None} or None
         result = request_json("POST", f"/api/v1/scripts/{quote(args.script_id, safe='')}/assemble", payload)
     elif args.command == "job":
         result = request_json("GET", f"/api/v1/generations/{quote(args.job_id, safe='')}")

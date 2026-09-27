@@ -10,6 +10,8 @@ import {
 
 const assembleBody = z.object({
   source_job_ids: z.array(z.string().uuid()).min(2).max(20).optional(),
+  transition: z.enum(["cut", "fade_white", "fade_black"]).optional(),
+  rebuild: z.boolean().optional(),
 });
 
 async function handlePost(
@@ -32,6 +34,8 @@ async function handlePost(
       await caller.mediaHub.script.assemble({
         id: scriptId,
         sourceJobIds: body.source_job_ids,
+        transition: body.transition,
+        rebuild: body.rebuild,
       }),
       201,
     );

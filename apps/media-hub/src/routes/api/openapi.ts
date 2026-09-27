@@ -717,6 +717,17 @@ function openApiDocument(request: Request) {
                         "Existing successful shot jobs in script order",
                       items: { type: "string", format: "uuid" },
                     },
+                    transition: {
+                      type: "string",
+                      enum: ["cut", "fade_white", "fade_black"],
+                      default: "cut",
+                    },
+                    rebuild: {
+                      type: "boolean",
+                      default: false,
+                      description:
+                        "Replace a successful draft video in place before publishing begins",
+                    },
                   },
                 },
               },

@@ -539,6 +539,8 @@ export const mediaVideoScriptIdSchema = z.object({
 
 export const assembleMediaVideoScriptSchema = mediaVideoScriptIdSchema.extend({
   sourceJobIds: z.array(z.string().uuid()).min(2).max(20).optional(),
+  transition: z.enum(["cut", "fade_white", "fade_black"]).default("cut"),
+  rebuild: z.boolean().default(false),
 });
 
 export const mediaVideoScriptListSchema = z.object({

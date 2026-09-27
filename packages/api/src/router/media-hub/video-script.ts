@@ -736,6 +736,8 @@ export const mediaVideoScriptRouter = {
           userId: ctx.session.user.id,
           requireReady: true,
           sourceJobIds: input.sourceJobIds,
+          transition: input.transition,
+          rebuild: input.rebuild,
         });
         if (!result) {
           throw new VideoScriptAssemblyNotReadyError("暂时无法创建完整成片");

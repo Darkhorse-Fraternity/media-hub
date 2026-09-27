@@ -1,14 +1,10 @@
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { promisify } from "node:util";
 
 import { and, desc, eq, inArray } from "@acme/db";
 import { db } from "@acme/db/client";
 import {
   mediaGenerationJob,
+  mediaPublishTarget,
   mediaTask,
   mediaVideoScript,
 } from "@acme/db/schema";
@@ -19,11 +15,12 @@ import {
   putMediaHubObject,
 } from "@acme/storage";
 
+import type { VideoScriptTransition } from "./video-script-renderer";
 import { deliverGenerationResultNotification } from "./generation-notification";
 import { validateGeneratedVideoOutput } from "./generation-output-validation";
 import { selectLatestScriptShotJobs } from "./video-script-assembly-core";
+import { renderShotVideos } from "./video-script-renderer";
 
-const execFileAsync = promisify(execFile);
 const ACTIVE_STATUSES = new Set([
   "scheduled",
   "queued",
@@ -46,45 +43,13 @@ function assemblyJobId(scriptId: string, sourceJobIds: string[]): string {
   return `assembly_${digest}`;
 }
 
-async function concatShotVideos(videos: Buffer[]): Promise<Buffer> {
-  const dir = await mkdtemp(join(tmpdir(), "media-hub-script-assembly-"));
-  try {
-    const listPath = join(dir, "concat.txt");
-    const outputPath = join(dir, "assembled.mp4");
-    const lines: string[] = [];
-    for (const [index, video] of videos.entries()) {
-      const inputPath = join(dir, `shot-${index + 1}.mp4`);
-      await writeFile(inputPath, video);
-      lines.push(`file '${inputPath}'`);
-    }
-    await writeFile(listPath, `${lines.join("\n")}\n`);
-    await execFileAsync(process.env.FFMPEG_PATH ?? "ffmpeg", [
-      "-f",
-      "concat",
-      "-safe",
-      "0",
-      "-i",
-      listPath,
-      "-c",
-      "copy",
-      "-movflags",
-      "+faststart",
-      outputPath,
-      "-y",
-      "-loglevel",
-      "error",
-    ]);
-    return await readFile(outputPath);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
 export async function assembleCompletedVideoScript(input: {
   scriptId: string;
   userId: string;
   requireReady?: boolean;
   sourceJobIds?: string[];
+  transition?: VideoScriptTransition;
+  rebuild?: boolean;
 }): Promise<{
   jobId: string;
   mediaTaskId: string | null;
@@ -177,7 +142,98 @@ export async function assembleCompletedVideoScript(input: {
   const sourceJobIds = orderedSourceJobs.map((job) => job.id);
   const jobId = assemblyJobId(script.id, sourceJobIds);
   const existing = jobs.find((job) => job.id === jobId);
+  const totalDurationSeconds = script.shots.reduce(
+    (total, shot) => total + shot.durationSeconds,
+    0,
+  );
+  const transition = input.transition ?? "cut";
+  const workflowVersion =
+    transition === "cut"
+      ? "script-concat-copy-v1"
+      : `script-crossfade-${transition}-v2`;
   if (existing?.status === "succeeded") {
+    if (input.rebuild) {
+      if (!existing.mediaTaskId || !existing.outputStorageKey) {
+        throw new VideoScriptAssemblyNotReadyError("成片缺少发布草稿或原视频");
+      }
+      const oldStorageKey = existing.outputStorageKey;
+      const newStorageKey = `media-hub/scripts/${input.userId}/${script.id}/${jobId}-${crypto.randomUUID()}.mp4`;
+      let uploaded = false;
+      try {
+        const video = await renderShotVideos(
+          await Promise.all(
+            orderedSourceJobs.map((job) =>
+              getMediaHubObject(job.outputStorageKey!),
+            ),
+          ),
+          transition,
+          orderedSourceJobs[0]?.fps ?? 24,
+        );
+        await validateGeneratedVideoOutput(video, {
+          durationSeconds: totalDurationSeconds,
+          width: script.width,
+          height: script.height,
+          fps: orderedSourceJobs[0]?.fps ?? 24,
+        });
+        await putMediaHubObject(newStorageKey, video, "video/mp4");
+        uploaded = true;
+        const finishedAt = new Date();
+        await db.transaction(async (transaction) => {
+          const task = await transaction.query.mediaTask.findFirst({
+            where: eq(mediaTask.id, existing.mediaTaskId!),
+          });
+          const target = await transaction.query.mediaPublishTarget.findFirst({
+            where: eq(mediaPublishTarget.taskId, existing.mediaTaskId!),
+          });
+          if (!task || task.status !== "draft" || target) {
+            throw new VideoScriptAssemblyNotReadyError(
+              "成片已进入发布流程，不能原位替换视频",
+            );
+          }
+          await transaction
+            .update(mediaTask)
+            .set({
+              videoStorageKey: newStorageKey,
+              aiPrompts: {
+                source: "video-script",
+                scriptId: script.id,
+                scriptVersion: script.version,
+                sourceGenerationJobIds: sourceJobIds,
+                workflowVersion,
+              },
+              updatedAt: finishedAt,
+            })
+            .where(eq(mediaTask.id, task.id));
+          const [updated] = await transaction
+            .update(mediaGenerationJob)
+            .set({
+              outputStorageKey: newStorageKey,
+              workflowVersion,
+              finishedAt,
+              updatedAt: finishedAt,
+            })
+            .where(
+              and(
+                eq(mediaGenerationJob.id, jobId),
+                eq(mediaGenerationJob.status, "succeeded"),
+                eq(mediaGenerationJob.outputStorageKey, oldStorageKey),
+              ),
+            )
+            .returning({ id: mediaGenerationJob.id });
+          if (!updated) {
+            throw new VideoScriptAssemblyNotReadyError(
+              "成片在重建期间发生变化，请重试",
+            );
+          }
+        });
+      } catch (error) {
+        if (uploaded) {
+          await deleteMediaHubObject(newStorageKey).catch(() => undefined);
+        }
+        throw error;
+      }
+      await deleteMediaHubObject(oldStorageKey).catch(() => undefined);
+    }
     return {
       jobId,
       mediaTaskId: existing.mediaTaskId,
@@ -195,10 +251,6 @@ export async function assembleCompletedVideoScript(input: {
   }
 
   const now = new Date();
-  const totalDurationSeconds = script.shots.reduce(
-    (total, shot) => total + shot.durationSeconds,
-    0,
-  );
   const baseJob = {
     scriptId: script.id,
     scriptShotId: null,
@@ -216,7 +268,7 @@ export async function assembleCompletedVideoScript(input: {
     qualityPreset: "assembled",
     steps: 0,
     profile: "script-concat-v1",
-    workflowVersion: "script-concat-copy-v1",
+    workflowVersion,
     status: "running",
     createdBy: input.userId,
     startedAt: now,
@@ -272,12 +324,14 @@ export async function assembleCompletedVideoScript(input: {
 
   const storageKey = `media-hub/scripts/${input.userId}/${script.id}/${jobId}.mp4`;
   try {
-    const video = await concatShotVideos(
+    const video = await renderShotVideos(
       await Promise.all(
         orderedSourceJobs.map((job) =>
           getMediaHubObject(job.outputStorageKey!),
         ),
       ),
+      transition,
+      orderedSourceJobs[0]?.fps ?? 24,
     );
     await validateGeneratedVideoOutput(video, {
       durationSeconds: totalDurationSeconds,
@@ -300,7 +354,7 @@ export async function assembleCompletedVideoScript(input: {
           scriptId: script.id,
           scriptVersion: script.version,
           sourceGenerationJobIds: sourceJobIds,
-          workflowVersion: "script-concat-copy-v1",
+          workflowVersion,
         },
         status: "draft",
         createdBy: input.userId,
