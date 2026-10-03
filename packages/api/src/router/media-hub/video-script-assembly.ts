@@ -1,7 +1,8 @@
-import { and, desc, eq, isNull } from "@acme/db";
+import { and, desc, eq, inArray, isNull, or } from "@acme/db";
 import { db } from "@acme/db/client";
 import {
   mediaGenerationJob,
+  mediaPublishTarget,
   mediaTask,
   mediaVideoScript,
 } from "@acme/db/schema";
@@ -13,6 +14,7 @@ import {
 } from "@acme/storage";
 
 import type { MediaHubDb } from "./video-script-document";
+import type { VideoScriptTransition } from "./video-script-renderer";
 import { deliverGenerationResultNotification } from "./generation-notification";
 import { validateGeneratedVideoOutput } from "./generation-output-validation";
 import {
@@ -22,6 +24,7 @@ import {
 import { captionsToSrt, shotTrim } from "./video-script-edit-plan";
 import { renderScriptCut } from "./video-script-render";
 import { withScriptRenderSlot } from "./video-script-render-queue";
+import { TRANSITION_SECONDS } from "./video-script-renderer";
 
 const ABANDONED_RENDER_MS = 10 * 60_000;
 class AssemblyStoppedError extends Error {}
@@ -46,6 +49,9 @@ export async function assembleCompletedVideoScript(
     userId: string;
     requireReady?: boolean;
     burnCaptions?: boolean;
+    sourceJobIds?: string[];
+    transition?: VideoScriptTransition;
+    rebuild?: boolean;
   },
   database: MediaHubDb = db,
 ): Promise<{
@@ -81,6 +87,7 @@ export async function assembleCompletedVideoScript(
     ),
   );
   if (
+    !input.sourceJobIds &&
     jobs.some(
       (job) =>
         job.kind !== "assemble" &&
@@ -97,11 +104,49 @@ export async function assembleCompletedVideoScript(
     }
     return null;
   }
-  const sourceJobs = selectLatestScriptShotJobs(
+  let sourceJobs = selectLatestScriptShotJobs(
     script.shots.map((shot) => shot.id),
     jobs,
     selectedJobIds,
   );
+  if (input.sourceJobIds) {
+    const candidates = await database.query.mediaGenerationJob.findMany({
+      where: and(
+        inArray(mediaGenerationJob.id, input.sourceJobIds),
+        eq(mediaGenerationJob.createdBy, input.userId),
+      ),
+    });
+    const byId = new Map(candidates.map((job) => [job.id, job]));
+    if (
+      input.sourceJobIds.length !== script.shots.length ||
+      byId.size !== input.sourceJobIds.length ||
+      input.sourceJobIds.some((id, index) => {
+        const job = byId.get(id);
+        const shot = script.shots[index];
+        return (
+          !job ||
+          !shot ||
+          job.status !== "succeeded" ||
+          job.kind === "assemble" ||
+          !job.outputStorageKey ||
+          (job.scriptId ?? script.id) !== script.id ||
+          (job.scriptShotId ?? shot.id) !== shot.id ||
+          job.width !== script.width ||
+          job.height !== script.height ||
+          job.fps !== candidates[0]?.fps ||
+          job.durationSeconds !== shot.durationSeconds
+        );
+      })
+    )
+      throw new VideoScriptAssemblyNotReadyError(
+        "镜头视频数量、顺序、归属或参数与脚本不匹配",
+      );
+    sourceJobs = input.sourceJobIds.map((id) => {
+      const job = byId.get(id);
+      if (!job) throw new VideoScriptAssemblyNotReadyError("镜头视频不存在");
+      return job;
+    });
+  }
   if (!sourceJobs || sourceJobs.length === 0) {
     if (input.requireReady) {
       throw new VideoScriptAssemblyNotReadyError(
@@ -130,7 +175,33 @@ export async function assembleCompletedVideoScript(
     { width: script.width, height: script.height },
   );
   const existing = jobs.find((job) => job.id === jobId);
-  if (existing?.status === "succeeded") {
+  const rebuilding = existing?.status === "succeeded" && Boolean(input.rebuild);
+  const requireDraft = async (
+    transaction: Parameters<Parameters<MediaHubDb["transaction"]>[0]>[0],
+  ) => {
+    if (!existing?.mediaTaskId || !existing.outputStorageKey)
+      throw new VideoScriptAssemblyNotReadyError("成片缺少发布草稿或原视频");
+    const [task] = await transaction
+      .select()
+      .from(mediaTask)
+      .where(
+        and(
+          eq(mediaTask.id, existing.mediaTaskId),
+          eq(mediaTask.createdBy, input.userId),
+        ),
+      )
+      .for("update");
+    const target = await transaction.query.mediaPublishTarget.findFirst({
+      where: eq(mediaPublishTarget.taskId, existing.mediaTaskId),
+    });
+    if (task?.status !== "draft" || target)
+      throw new VideoScriptAssemblyNotReadyError(
+        "成片已进入发布流程，不能原位替换视频",
+      );
+    return task;
+  };
+  if (rebuilding) await database.transaction(requireDraft);
+  if (existing?.status === "succeeded" && !rebuilding) {
     await database.transaction(async (transaction) => {
       await transaction
         .update(mediaGenerationJob)
@@ -168,10 +239,10 @@ export async function assembleCompletedVideoScript(
   }
 
   const now = new Date();
-  const totalDurationSeconds = script.shots.reduce(
-    (total, shot) => total + shotTrim(shot).duration,
-    0,
-  );
+  const transition = input.transition ?? "cut";
+  const totalDurationSeconds =
+    script.shots.reduce((total, shot) => total + shotTrim(shot).duration, 0) -
+    (transition === "cut" ? 0 : TRANSITION_SECONDS * (script.shots.length - 1));
   const baseJob = {
     scriptId: script.id,
     scriptShotId: null,
@@ -182,18 +253,21 @@ export async function assembleCompletedVideoScript(
     language: script.language,
     referenceImages: [],
     inputImageAssetIds: [],
-    durationSeconds: totalDurationSeconds,
-    fps: sourceJobs[0]?.fps ?? 24,
+    durationSeconds: Math.ceil(totalDurationSeconds),
+    fps: 24,
     width: script.width,
     height: script.height,
     qualityPreset: "assembled",
     steps: 0,
     profile: customRender ? "script-cut-v2" : "script-concat-v1",
-    workflowVersion: burnCaptions
-      ? "script-cut-captioned-v3"
-      : customRender
-        ? "script-cut-v3"
-        : "script-concat-v3",
+    workflowVersion:
+      transition !== "cut"
+        ? `script-crossfade-${transition}-v3`
+        : burnCaptions
+          ? "script-cut-captioned-v3"
+          : customRender
+            ? "script-cut-v3"
+            : "script-concat-v3",
     status: "running",
     createdBy: input.userId,
     startedAt: now,
@@ -201,7 +275,10 @@ export async function assembleCompletedVideoScript(
   } satisfies Partial<typeof mediaGenerationJob.$inferInsert>;
 
   let claimed = false;
-  if (existing && ["failed", "canceled", "running"].includes(existing.status)) {
+  if (
+    existing &&
+    (rebuilding || ["failed", "canceled", "running"].includes(existing.status))
+  ) {
     const [updated] = await database
       .update(mediaGenerationJob)
       .set({
@@ -211,8 +288,8 @@ export async function assembleCompletedVideoScript(
         failureStage: null,
         errorRetryable: null,
         finishedAt: null,
-        outputStorageKey: null,
-        mediaTaskId: null,
+        outputStorageKey: rebuilding ? existing.outputStorageKey : null,
+        mediaTaskId: rebuilding ? existing.mediaTaskId : null,
       })
       .where(
         and(
@@ -302,6 +379,7 @@ export async function assembleCompletedVideoScript(
           burnCaptions,
           renderSignal,
           { width: script.width, height: script.height },
+          transition,
         );
       } finally {
         clearInterval(poll);
@@ -312,7 +390,7 @@ export async function assembleCompletedVideoScript(
       durationSeconds: totalDurationSeconds,
       width: script.width,
       height: script.height,
-      fps: sourceJobs[0]?.fps ?? 24,
+      fps: 24,
     });
     await assertCurrent();
     await putMediaHubObject(
@@ -322,7 +400,10 @@ export async function assembleCompletedVideoScript(
       AbortSignal.timeout(120_000),
     );
     const finishedAt = new Date();
-    const mediaTaskId = crypto.randomUUID();
+    const mediaTaskId =
+      rebuilding && existing.mediaTaskId
+        ? existing.mediaTaskId
+        : crypto.randomUUID();
     await database.transaction(async (transaction) => {
       const [currentScript] = await transaction
         .update(mediaVideoScript)
@@ -337,7 +418,7 @@ export async function assembleCompletedVideoScript(
         .returning({ id: mediaVideoScript.id });
       if (!currentScript)
         throw new AssemblyStoppedError("合片期间脚本已更新或删除");
-      await transaction.insert(mediaTask).values({
+      const taskValues = {
         id: mediaTaskId,
         title: script.title,
         description: script.copy || script.brief,
@@ -350,12 +431,26 @@ export async function assembleCompletedVideoScript(
           sourceGenerationJobIds: sourceJobIds,
           workflowVersion: baseJob.workflowVersion,
           burnCaptions,
+          transition,
         },
         status: "draft",
         createdBy: input.userId,
         createdAt: finishedAt,
         updatedAt: finishedAt,
-      });
+      } satisfies typeof mediaTask.$inferInsert;
+      if (rebuilding) {
+        await requireDraft(transaction);
+        await transaction
+          .update(mediaTask)
+          .set({
+            videoStorageKey: storageKey,
+            aiPrompts: taskValues.aiPrompts,
+            updatedAt: finishedAt,
+          })
+          .where(eq(mediaTask.id, mediaTaskId));
+      } else {
+        await transaction.insert(mediaTask).values(taskValues);
+      }
       const [completedJob] = await transaction
         .update(mediaGenerationJob)
         .set({
@@ -373,7 +468,41 @@ export async function assembleCompletedVideoScript(
         .where(attemptWhere)
         .returning({ id: mediaGenerationJob.id });
       if (!completedJob) throw new AssemblyStoppedError("合片任务已取消");
+      if (input.sourceJobIds) {
+        for (const [index, sourceJob] of sourceJobs.entries()) {
+          const shot = script.shots[index];
+          if (!shot) throw new AssemblyStoppedError("镜头不存在");
+          const [attached] = await transaction
+            .update(mediaGenerationJob)
+            .set({
+              scriptId: script.id,
+              scriptShotId: shot.id,
+              updatedAt: finishedAt,
+            })
+            .where(
+              and(
+                eq(mediaGenerationJob.id, sourceJob.id),
+                eq(mediaGenerationJob.createdBy, input.userId),
+                or(
+                  isNull(mediaGenerationJob.scriptId),
+                  eq(mediaGenerationJob.scriptId, script.id),
+                ),
+                or(
+                  isNull(mediaGenerationJob.scriptShotId),
+                  eq(mediaGenerationJob.scriptShotId, shot.id),
+                ),
+              ),
+            )
+            .returning({ id: mediaGenerationJob.id });
+          if (!attached)
+            throw new AssemblyStoppedError("镜头视频归属在合片期间发生变化");
+        }
+      }
     });
+    if (rebuilding && existing.outputStorageKey)
+      await deleteMediaHubObject(existing.outputStorageKey).catch(
+        () => undefined,
+      );
 
     await deliverGenerationResultNotification(jobId).catch((error: unknown) => {
       log.error("Video script assembly notification failed", {
@@ -398,12 +527,23 @@ export async function assembleCompletedVideoScript(
       const [failedJob] = await transaction
         .update(mediaGenerationJob)
         .set({
-          status: stopped ? "canceled" : "failed",
+          status: rebuilding ? "succeeded" : stopped ? "canceled" : "failed",
           errorMessage: message.slice(0, 1000),
           errorCode: "script_assembly_failed",
           failureStage: "assembly",
           errorRetryable: true,
-          finishedAt,
+          ...(rebuilding
+            ? {
+                outputStorageKey: existing.outputStorageKey,
+                mediaTaskId: existing.mediaTaskId,
+                durationSeconds: existing.durationSeconds,
+                fps: existing.fps,
+                profile: existing.profile,
+                workflowVersion: existing.workflowVersion,
+                startedAt: existing.startedAt,
+              }
+            : {}),
+          finishedAt: rebuilding ? existing.finishedAt : finishedAt,
           updatedAt: finishedAt,
         })
         .where(attemptWhere)
@@ -416,7 +556,11 @@ export async function assembleCompletedVideoScript(
         await transaction
           .update(mediaVideoScript)
           .set({
-            status: stopped ? "ready" : "assembly_failed",
+            status: rebuilding
+              ? "completed"
+              : stopped
+                ? "ready"
+                : "assembly_failed",
             updatedAt: finishedAt,
           })
           .where(

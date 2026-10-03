@@ -860,6 +860,9 @@ export const mediaVideoScriptRouter = {
             userId: ctx.session.user.id,
             requireReady: true,
             burnCaptions: input.burnCaptions,
+            sourceJobIds: input.sourceJobIds,
+            transition: input.transition,
+            rebuild: input.rebuild,
           },
           ctx.db,
         );

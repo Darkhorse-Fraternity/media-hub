@@ -62,6 +62,7 @@ describe("video script edit plan", () => {
       { startSeconds: 7, endSeconds: 9, text: "再见" },
     ]);
     expect(captionsToSrt(shots)).toContain("00:00:07,000 --> 00:00:09,000");
+    expect(captionsToSrt(shots, 0.3)).toContain("00:00:06,700 --> 00:00:08,700");
   });
 
   it("creates editable cues from dialogue timing", () => {

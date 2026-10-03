@@ -87,7 +87,7 @@ function deferred<T>() {
 
 async function fixture(takeOwner = ownerId) {
   const id = crypto.randomUUID();
-  const takeId = `${id}-take`;
+  const takeId = crypto.randomUUID();
   const frameId = `${id}-frame`;
   const shot: MediaVideoScriptShot = {
     id: "one",
@@ -406,6 +406,159 @@ describe("director services with real PostgreSQL", () => {
       (await assemble({ scriptId: f.id, userId: ownerId }, database))?.status,
     ).toBe("succeeded");
     expect(mocks.cut).toHaveBeenCalledTimes(2);
+  });
+
+  it("rebuilds the same draft and keeps the previous video if rebuilding fails", async () => {
+    const f = await fixture();
+    const first = await assemble({ scriptId: f.id, userId: ownerId }, database);
+    const original = (await jobsFor(f.id))[0]!;
+    const rebuilt = await assemble(
+      {
+        scriptId: f.id,
+        userId: ownerId,
+        rebuild: true,
+        transition: "fade_white",
+      },
+      database,
+    );
+    expect(rebuilt?.jobId).toBe(first?.jobId);
+    expect(rebuilt?.mediaTaskId).toBe(first?.mediaTaskId);
+    const current = (await jobsFor(f.id))[0]!;
+    expect(current.outputStorageKey).not.toBe(original.outputStorageKey);
+    expect(mocks.remove).toHaveBeenCalledWith(original.outputStorageKey);
+    expect(
+      await database.query.mediaTask.findFirst({
+        where: eq(mediaTask.id, first!.mediaTaskId!),
+      }),
+    ).toMatchObject({
+      videoStorageKey: current.outputStorageKey,
+      aiPrompts: { transition: "fade_white" },
+    });
+    mocks.cut.mockRejectedValueOnce(new Error("rebuild renderer failed"));
+    await expect(
+      assemble(
+        {
+          scriptId: f.id,
+          userId: ownerId,
+          rebuild: true,
+          transition: "fade_black",
+        },
+        database,
+      ),
+    ).rejects.toThrow("rebuild renderer failed");
+    expect((await jobsFor(f.id))[0]).toMatchObject({
+      status: "succeeded",
+      outputStorageKey: current.outputStorageKey,
+      workflowVersion: current.workflowVersion,
+      mediaTaskId: first?.mediaTaskId,
+    });
+    expect(
+      await database.query.mediaTask.findFirst({
+        where: eq(mediaTask.id, first!.mediaTaskId!),
+      }),
+    ).toMatchObject({ videoStorageKey: current.outputStorageKey });
+  });
+
+  it("refuses to rebuild a draft that has entered review", async () => {
+    const f = await fixture();
+    const completed = await assemble(
+      { scriptId: f.id, userId: ownerId },
+      database,
+    );
+    await database
+      .update(mediaTask)
+      .set({ status: "pending_review" })
+      .where(eq(mediaTask.id, completed!.mediaTaskId!));
+    await expect(
+      assemble({ scriptId: f.id, userId: ownerId, rebuild: true }, database),
+    ).rejects.toThrow("发布流程");
+    expect(mocks.cut).toHaveBeenCalledTimes(1);
+    expect((await jobsFor(f.id))[0]?.status).toBe("succeeded");
+  });
+
+  it("rolls back a rebuild when review starts during upload", async () => {
+    const f = await fixture();
+    const completed = await assemble(
+      { scriptId: f.id, userId: ownerId },
+      database,
+    );
+    const original = (await jobsFor(f.id))[0]!;
+    mocks.put.mockImplementationOnce(async () => {
+      await database
+        .update(mediaTask)
+        .set({ status: "pending_review" })
+        .where(eq(mediaTask.id, completed!.mediaTaskId!));
+    });
+    await expect(
+      assemble({ scriptId: f.id, userId: ownerId, rebuild: true }, database),
+    ).rejects.toThrow("发布流程");
+    expect((await jobsFor(f.id))[0]).toMatchObject({
+      status: "succeeded",
+      outputStorageKey: original.outputStorageKey,
+    });
+    expect(mocks.remove).toHaveBeenCalledWith(mocks.put.mock.calls[1]![0]);
+    expect(
+      await database.query.mediaTask.findFirst({
+        where: eq(mediaTask.id, completed!.mediaTaskId!),
+      }),
+    ).toMatchObject({
+      status: "pending_review",
+      videoStorageKey: original.outputStorageKey,
+    });
+  });
+
+  it("attaches standalone sources in order and rejects another owner's source", async () => {
+    const f = await fixture();
+    const secondId = crypto.randomUUID();
+    await database
+      .update(mediaGenerationJob)
+      .set({ scriptId: null, scriptShotId: null })
+      .where(eq(mediaGenerationJob.id, f.takeId));
+    await database.insert(mediaGenerationJob).values({
+      id: secondId,
+      prompt: "Second standalone shot",
+      durationSeconds: 5,
+      width: 160,
+      height: 96,
+      status: "succeeded",
+      outputStorageKey: `${secondId}.mp4`,
+      createdBy: otherId,
+    });
+    await database
+      .update(mediaVideoScript)
+      .set({
+        shots: [
+          f.shot,
+          { ...f.shot, id: "two", selectedGenerationJobId: secondId },
+        ],
+      })
+      .where(eq(mediaVideoScript.id, f.id));
+    const input = {
+      scriptId: f.id,
+      userId: ownerId,
+      sourceJobIds: [f.takeId, secondId],
+      transition: "fade_black" as const,
+      burnCaptions: true,
+    };
+    await expect(assemble(input, database)).rejects.toThrow("归属");
+    expect(mocks.cut).not.toHaveBeenCalled();
+    await database
+      .update(mediaGenerationJob)
+      .set({ createdBy: ownerId })
+      .where(eq(mediaGenerationJob.id, secondId));
+    const result = await assemble(input, database);
+    expect(result?.status).toBe("succeeded");
+    expect((await jobsFor(f.id))[0]?.durationSeconds).toBe(6);
+    for (const [index, id] of input.sourceJobIds.entries()) {
+      expect(
+        await database.query.mediaGenerationJob.findFirst({
+          where: eq(mediaGenerationJob.id, id),
+        }),
+      ).toMatchObject({
+        scriptId: f.id,
+        scriptShotId: index === 0 ? "one" : "two",
+      });
+    }
   });
 
   it("does not assemble a take owned by another account", async () => {

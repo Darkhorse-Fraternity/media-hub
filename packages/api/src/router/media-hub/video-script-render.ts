@@ -6,7 +6,9 @@ import { promisify } from "node:util";
 
 import type { MediaVideoScriptShot } from "@acme/db/schema";
 
+import type { VideoScriptTransition } from "./video-script-renderer";
 import { captionsToSrt, shotTrim } from "./video-script-edit-plan";
+import { renderShotFiles, TRANSITION_SECONDS } from "./video-script-renderer";
 
 const execFileAsync = promisify(execFile);
 
@@ -85,6 +87,7 @@ export async function renderScriptCut(
   burnCaptions: boolean,
   signal?: AbortSignal,
   dimensions?: { width: number; height: number },
+  transition: VideoScriptTransition = "cut",
 ): Promise<Buffer> {
   if (videos.length !== shots.length || videos.length === 0) {
     throw new Error("镜头视频数量与脚本不一致");
@@ -92,10 +95,12 @@ export async function renderScriptCut(
   const dir = await mkdtemp(join(tmpdir(), "media-hub-script-cut-"));
   try {
     const paths: string[] = [];
-    const requiresTranscode = shots.some((shot) => {
-      const trim = shotTrim(shot);
-      return trim.start !== 0 || trim.end !== shot.durationSeconds;
-    });
+    const requiresTranscode =
+      transition !== "cut" ||
+      shots.some((shot) => {
+        const trim = shotTrim(shot);
+        return trim.start !== 0 || trim.end !== shot.durationSeconds;
+      });
     for (const [index, video] of videos.entries()) {
       const shot = shots[index];
       if (!shot) throw new Error("镜头不存在");
@@ -118,7 +123,17 @@ export async function renderScriptCut(
           "-map",
           "0:v:0",
           "-map",
-          "0:a:0",
+          "0:a:0?",
+          ...(dimensions
+            ? [
+                "-vf",
+                `scale=${dimensions.width}:${dimensions.height}:force_original_aspect_ratio=decrease,pad=${dimensions.width}:${dimensions.height}:(ow-iw)/2:(oh-ih)/2`,
+              ]
+            : []),
+          "-r",
+          "24",
+          "-fps_mode",
+          "cfr",
           "-c:v",
           "libx264",
           "-preset",
@@ -140,9 +155,15 @@ export async function renderScriptCut(
       );
       paths.push(trimmedPath);
     }
-    const joinedPath = await concatFiles(paths, dir, signal, dimensions);
+    const joinedPath =
+      transition === "cut" || paths.length < 2
+        ? await concatFiles(paths, dir, signal, dimensions)
+        : await renderShotFiles(paths, transition, 24, dir, signal);
     if (!burnCaptions) return await readFile(joinedPath);
-    const srt = captionsToSrt(shots);
+    const srt = captionsToSrt(
+      shots,
+      transition === "cut" ? 0 : TRANSITION_SECONDS,
+    );
     if (!srt.trim()) throw new Error("没有可输出的字幕，请先生成或填写字幕");
     const srtPath = join(dir, "captions.srt");
     const captionedPath = join(dir, "captioned.mp4");

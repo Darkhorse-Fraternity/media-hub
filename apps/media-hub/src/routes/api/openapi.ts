@@ -508,6 +508,13 @@ function openApiDocument(request: Request) {
               schema: { type: "integer", default: 20, maximum: 100 },
             },
             { name: "status", in: "query", schema: { type: "string" } },
+            {
+              name: "whole_videos_only",
+              in: "query",
+              description:
+                "Exclude individual script-shot jobs; return standalone videos and assembled script videos.",
+              schema: { type: "boolean", default: false },
+            },
           ],
           responses: {
             "200": { description: "Generation job page" },
@@ -728,6 +735,25 @@ function openApiDocument(request: Request) {
                   type: "object",
                   properties: {
                     burn_captions: { type: "boolean", default: false },
+                    source_job_ids: {
+                      type: "array",
+                      minItems: 2,
+                      maxItems: 20,
+                      description:
+                        "Existing successful shot jobs in script order",
+                      items: { type: "string", format: "uuid" },
+                    },
+                    transition: {
+                      type: "string",
+                      enum: ["cut", "fade_white", "fade_black"],
+                      default: "cut",
+                    },
+                    rebuild: {
+                      type: "boolean",
+                      default: false,
+                      description:
+                        "Replace a successful draft video in place before publishing begins",
+                    },
                   },
                 },
               },

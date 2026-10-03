@@ -591,6 +591,9 @@ export const updateMediaVideoScriptShotEditSchema =
 
 export const assembleMediaVideoScriptSchema = mediaVideoScriptIdSchema.extend({
   burnCaptions: z.boolean().default(false),
+  sourceJobIds: z.array(z.string().uuid()).min(2).max(20).optional(),
+  transition: z.enum(["cut", "fade_white", "fade_black"]).default("cut"),
+  rebuild: z.boolean().default(false),
 });
 
 export const mediaVideoScriptListSchema = z.object({
@@ -803,6 +806,7 @@ export const mediaGenerationListSchema = z.object({
   pageSize: z.number().int().min(1).max(100).default(20),
   status: mediaGenerationStatusEnum.optional(),
   statuses: z.array(mediaGenerationStatusEnum).min(1).max(7).optional(),
+  wholeVideosOnly: z.boolean().default(false),
 });
 
 export const mediaGenerationIdSchema = z.object({

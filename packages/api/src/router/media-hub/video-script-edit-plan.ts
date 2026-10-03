@@ -31,7 +31,10 @@ export function captionsFromDialogues(
   }));
 }
 
-export function cutCaptionCues(shots: MediaVideoScriptShot[]) {
+export function cutCaptionCues(
+  shots: MediaVideoScriptShot[],
+  overlapSeconds = 0,
+) {
   const result: { startSeconds: number; endSeconds: number; text: string }[] =
     [];
   let offset = 0;
@@ -47,7 +50,7 @@ export function cutCaptionCues(shots: MediaVideoScriptShot[]) {
         text: caption.text.trim(),
       });
     }
-    offset += trim.duration;
+    offset += trim.duration - overlapSeconds;
   }
   return result;
 }
@@ -61,8 +64,11 @@ function srtTime(seconds: number): string {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")},${String(millis).padStart(3, "0")}`;
 }
 
-export function captionsToSrt(shots: MediaVideoScriptShot[]): string {
-  return cutCaptionCues(shots)
+export function captionsToSrt(
+  shots: MediaVideoScriptShot[],
+  overlapSeconds = 0,
+): string {
+  return cutCaptionCues(shots, overlapSeconds)
     .map(
       (cue, index) =>
         `${index + 1}\n${srtTime(cue.startSeconds)} --> ${srtTime(cue.endSeconds)}\n${cue.text.replace(/\r/g, "").replace(/\n+/g, " ")}\n`,

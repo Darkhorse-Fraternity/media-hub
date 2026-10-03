@@ -19,6 +19,9 @@ async function handlePost(
       await caller.mediaHub.script.assemble({
         id: scriptId,
         burnCaptions: body.burn_captions,
+        sourceJobIds: body.source_job_ids,
+        transition: body.transition,
+        rebuild: body.rebuild,
       }),
       201,
     );

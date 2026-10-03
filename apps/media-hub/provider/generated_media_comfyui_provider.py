@@ -1885,6 +1885,7 @@ class ProviderService:
             source_artifacts = []
         source_optional_adapters = {
             COMFYUI_H3_ADAPTER_KIND,
+            COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND,
             COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
         }
         if not isinstance(source_artifacts, list) or (

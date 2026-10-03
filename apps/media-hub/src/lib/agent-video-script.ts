@@ -122,6 +122,9 @@ export const scriptCaptionGenerateBody = z.object({
 
 export const assembleScriptBody = z.object({
   burn_captions: z.boolean().default(false),
+  source_job_ids: z.array(z.string().uuid()).min(2).max(20).optional(),
+  transition: z.enum(["cut", "fade_white", "fade_black"]).optional(),
+  rebuild: z.boolean().optional(),
 });
 
 export function mapContinuityBible(bible: z.infer<typeof continuityBibleBody>) {

@@ -3,11 +3,22 @@ import { describe, expect, it } from "vitest";
 import type { MediaVideoScriptShot } from "@acme/validators";
 
 import {
+  assembleScriptBody,
   draftScriptBody,
   mapScriptShots,
   patchScriptBody,
   scriptShotBody,
 } from "../lib/agent-video-script";
+
+it("keeps assembly sources, transitions, rebuild and captions together", () => {
+  const body = {
+    source_job_ids: [crypto.randomUUID(), crypto.randomUUID()],
+    transition: "fade_white",
+    rebuild: true,
+    burn_captions: true,
+  };
+  expect(assembleScriptBody.parse(body)).toEqual(body);
+});
 
 describe("agent video script PATCH schema", () => {
   it("does not inject create defaults into an omitted PATCH field", () => {

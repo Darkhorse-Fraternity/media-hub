@@ -1,8 +1,13 @@
 import type { TRPCRouterRecord } from "@trpc/server";
 import { TRPCError } from "@trpc/server";
 
-import { and, count, desc, eq } from "@acme/db";
-import { mediaPublishTarget, mediaReviewLog, mediaTask } from "@acme/db/schema";
+import { and, count, desc, eq, isNotNull, notInArray } from "@acme/db";
+import {
+  mediaGenerationJob,
+  mediaPublishTarget,
+  mediaReviewLog,
+  mediaTask,
+} from "@acme/db/schema";
 import { log } from "@acme/logger";
 import {
   createMediaTaskSchema,
@@ -239,9 +244,22 @@ export const mediaTaskRouter = {
   list: adminProcedure
     .input(mediaTaskListQuerySchema)
     .query(async ({ ctx, input }) => {
+      const intermediateJobs = await ctx.db.query.mediaGenerationJob.findMany({
+        where: and(
+          eq(mediaGenerationJob.status, "succeeded"),
+          isNotNull(mediaGenerationJob.scriptShotId),
+        ),
+        columns: { mediaTaskId: true },
+      });
+      const intermediateTaskIds = intermediateJobs
+        .map((job) => job.mediaTaskId)
+        .filter((id): id is string => Boolean(id));
       const where = and(
         input.status ? eq(mediaTask.status, input.status) : undefined,
         input.createdBy ? eq(mediaTask.createdBy, input.createdBy) : undefined,
+        intermediateTaskIds.length
+          ? notInArray(mediaTask.id, intermediateTaskIds)
+          : undefined,
       );
 
       const [{ total } = { total: 0 }] = await ctx.db

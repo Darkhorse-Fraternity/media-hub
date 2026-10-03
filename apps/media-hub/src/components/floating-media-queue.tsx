@@ -256,6 +256,10 @@ export function FloatingMediaQueue() {
 
           {[...activeImageJobs, ...failedImageJobs].map((job) => {
             const key = `image:${job.id}`;
+            const elapsed = formatGenerationElapsed(
+              job.startedAt,
+              job.finishedAt,
+            );
             const canceling =
               cancelImageMutation.isPending &&
               cancelImageMutation.variables.id === job.id;
@@ -282,14 +286,32 @@ export function FloatingMediaQueue() {
                       {job.width}×{job.height} · {job.outputCount} 张 · 多样性{" "}
                       {job.diversity} ·{" "}
                       {job.status === "running"
-                        ? "正在生成"
+                        ? `GPU 排队或生成中${elapsed ? ` · 已用 ${elapsed}` : ""}`
                         : job.status === "queued"
                           ? "等待 GPU 队列执行"
                           : "生成失败"}
                     </p>
                   </div>
-                  <QueueStatus status={job.status} />
+                  <QueueStatus
+                    status={job.status}
+                    label={job.status === "running" ? "处理中" : undefined}
+                  />
                 </div>
+                {job.status === "running" && (
+                  <div className="mt-3" aria-label="图片生成进度">
+                    <div className="mb-1 flex justify-between text-[10px] text-slate-500">
+                      <span>等待 GPU 或生成中</span>
+                      <span>暂无精确百分比</span>
+                    </div>
+                    <div
+                      role="progressbar"
+                      aria-valuetext="图片等待 GPU 或生成中，暂无精确百分比"
+                      className="h-1.5 overflow-hidden rounded-full bg-slate-800"
+                    >
+                      <div className="h-full w-1/3 animate-pulse rounded-full bg-violet-400/70 motion-reduce:animate-none" />
+                    </div>
+                  </div>
+                )}
                 {job.errorMessage && (
                   <p className="mt-2 line-clamp-2 text-[10px] leading-4 text-rose-300/80">
                     {job.errorMessage}
@@ -376,7 +398,13 @@ function MediaTypeBadge({ type }: { type: "image" | "video" }) {
   );
 }
 
-function QueueStatus({ status }: { status: string }) {
+function QueueStatus({
+  status,
+  label,
+}: {
+  status: string;
+  label?: string;
+}) {
   const labels: Record<string, string> = {
     scheduled: "已定时",
     queued: "排队中",
@@ -397,7 +425,7 @@ function QueueStatus({ status }: { status: string }) {
         colors[status] ?? colors.queued
       }`}
     >
-      {labels[status] ?? status}
+      {label ?? labels[status] ?? status}
     </span>
   );
 }

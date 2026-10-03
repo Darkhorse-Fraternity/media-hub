@@ -210,6 +210,50 @@ describe("video script rendering", () => {
       );
       expect(Number(metadata.format.duration)).toBeGreaterThan(1.9);
       expect(Number(metadata.format.duration)).toBeLessThan(2.2);
+      const transitioned = await renderScriptCut(
+        [plain, animatic],
+        [shot, { ...shot, id: "two" }].map((item) => ({
+          ...item,
+          durationSeconds: 1,
+          trimStartSeconds: 0,
+          trimEndSeconds: 1,
+          captions: [
+            { id: "cue", startSeconds: 0.4, endSeconds: 0.9, text: "转场字幕" },
+          ],
+        })),
+        true,
+        undefined,
+        { width: 320, height: 180 },
+        "fade_white",
+      );
+      const transitionPath = join(directory, "transitioned.mp4");
+      await writeFile(transitionPath, transitioned);
+      const transitionProbe = JSON.parse(
+        (
+          await execFileAsync(ffprobePath, [
+            "-v",
+            "error",
+            "-show_streams",
+            "-show_format",
+            "-of",
+            "json",
+            transitionPath,
+          ])
+        ).stdout,
+      ) as typeof metadata;
+      expect(Number(transitionProbe.format.duration)).toBeGreaterThan(1.6);
+      expect(Number(transitionProbe.format.duration)).toBeLessThan(1.85);
+      expect(transitionProbe.streams).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ codec_type: "audio" }),
+          expect.objectContaining({
+            codec_type: "video",
+            width: 320,
+            height: 180,
+            r_frame_rate: "24/1",
+          }),
+        ]),
+      );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
