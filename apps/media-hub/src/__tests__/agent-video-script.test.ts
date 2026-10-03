@@ -1,12 +1,50 @@
 import { describe, expect, it } from "vitest";
 
-import { draftScriptBody, patchScriptBody } from "../lib/agent-video-script";
+import type { MediaVideoScriptShot } from "@acme/validators";
+
+import {
+  draftScriptBody,
+  mapScriptShots,
+  patchScriptBody,
+  scriptShotBody,
+} from "../lib/agent-video-script";
 
 describe("agent video script PATCH schema", () => {
   it("does not inject create defaults into an omitted PATCH field", () => {
     expect(
       patchScriptBody.parse({ version: 3, copy_status: "approved" }),
     ).toEqual({ version: 3, copy_status: "approved" });
+  });
+
+  it("keeps the director's take and edit plan during a normal shot PATCH", () => {
+    const existing: MediaVideoScriptShot = {
+      id: "shot",
+      title: "旧标题",
+      durationSeconds: 10,
+      visualDescription: "Old visual",
+      cameraDirection: "",
+      continuity: "",
+      soundscape: "",
+      music: "N/A",
+      dialogues: [],
+      selectedGenerationJobId: "take-1",
+      trimStartSeconds: 1,
+      trimEndSeconds: 8,
+      captions: [{ id: "cue", startSeconds: 2, endSeconds: 4, text: "字幕" }],
+    };
+    const patch = scriptShotBody.parse({
+      id: "shot",
+      title: "新标题",
+      duration_seconds: 10,
+      visual_description: "New visual",
+    });
+    expect(mapScriptShots([patch], [existing])[0]).toMatchObject({
+      title: "新标题",
+      selectedGenerationJobId: "take-1",
+      trimStartSeconds: 1,
+      trimEndSeconds: 8,
+      captions: existing.captions,
+    });
   });
 });
 

@@ -458,6 +458,13 @@ export const mediaVideoScriptDialogueSchema = z.object({
   text: z.string().trim().min(1).max(300),
 });
 
+export const mediaVideoScriptCaptionSchema = z.object({
+  id: z.string().trim().min(1).max(100),
+  startSeconds: z.number().min(0).max(15),
+  endSeconds: z.number().min(0).max(15),
+  text: z.string().trim().min(1).max(300),
+});
+
 export const mediaVideoScriptContinuityBibleSchema = z
   .object({
     characters: z.string().trim().max(3000).default(""),
@@ -483,12 +490,18 @@ const mediaVideoScriptShotFields = {
   dialogues: z.array(mediaVideoScriptDialogueSchema).max(6).default([]),
   firstFrameAssetId: z.string().trim().min(1).optional(),
   selectedGenerationJobId: z.string().trim().min(1).optional(),
+  trimStartSeconds: z.number().min(0).max(15).optional(),
+  trimEndSeconds: z.number().min(0).max(15).optional(),
+  captions: z.array(mediaVideoScriptCaptionSchema).max(12).optional(),
 } satisfies z.ZodRawShape;
 
 function validateScriptShotDialogueTiming(
   value: {
     durationSeconds: number;
     dialogues: { atSeconds: number }[];
+    trimStartSeconds?: number;
+    trimEndSeconds?: number;
+    captions?: { startSeconds: number; endSeconds: number }[];
   },
   context: z.RefinementCtx,
 ) {
@@ -498,6 +511,27 @@ function validateScriptShotDialogueTiming(
         code: "custom",
         message: "台词时间必须早于镜头结束时间",
         path: ["dialogues", index, "atSeconds"],
+      });
+    }
+  });
+  const trimStart = value.trimStartSeconds ?? 0;
+  const trimEnd = value.trimEndSeconds ?? value.durationSeconds;
+  if (trimEnd > value.durationSeconds || trimEnd - trimStart < 1) {
+    context.addIssue({
+      code: "custom",
+      message: "裁切后镜头需保留至少 1 秒，且不能超过镜头时长",
+      path: ["trimEndSeconds"],
+    });
+  }
+  value.captions?.forEach((caption, index) => {
+    if (
+      caption.endSeconds <= caption.startSeconds ||
+      caption.endSeconds > value.durationSeconds
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "字幕时间范围无效",
+        path: ["captions", index],
       });
     }
   });
@@ -545,6 +579,19 @@ export const selectMediaVideoScriptTakeSchema = mediaVideoScriptIdSchema.extend(
     version: z.number().int().min(1),
   },
 );
+
+export const updateMediaVideoScriptShotEditSchema =
+  mediaVideoScriptIdSchema.extend({
+    shotId: z.string().trim().min(1),
+    version: z.number().int().min(1),
+    trimStartSeconds: z.number().min(0).max(15).optional(),
+    trimEndSeconds: z.number().min(0).max(15).optional(),
+    captions: z.array(mediaVideoScriptCaptionSchema).max(12).optional(),
+  });
+
+export const assembleMediaVideoScriptSchema = mediaVideoScriptIdSchema.extend({
+  burnCaptions: z.boolean().default(false),
+});
 
 export const mediaVideoScriptListSchema = z.object({
   page: z.number().int().min(1).default(1),

@@ -19,6 +19,7 @@ import {
 import {
   analyzeMediaVideoScriptSchema,
   analyzeMediaVideoScriptShots,
+  assembleMediaVideoScriptSchema,
   bridgeMediaVideoScriptFrameSchema,
   createMediaVideoScriptFrameCandidatesSchema,
   createMediaVideoScriptSchema,
@@ -27,9 +28,11 @@ import {
   listMediaVideoScriptFrameCandidatesSchema,
   mediaVideoScriptIdSchema,
   mediaVideoScriptListSchema,
+  mediaVideoScriptShotSchema,
   selectMediaVideoScriptFrameCandidateSchema,
   selectMediaVideoScriptTakeSchema,
   updateMediaVideoScriptSchema,
+  updateMediaVideoScriptShotEditSchema,
 } from "@acme/validators";
 
 import { protectedProcedure } from "../../trpc";
@@ -51,12 +54,18 @@ import {
   VideoScriptAssemblyNotReadyError,
 } from "./video-script-assembly";
 import {
+  scriptAssemblyJobId,
+  selectLatestScriptShotJobs,
+} from "./video-script-assembly-core";
+import {
   buildVideoScriptDraftPrompt,
   buildVideoScriptFirstFramePrompt,
   compileVideoScriptShotPrompt,
   parseVideoScriptDraft,
   resolveVideoScriptCopyStatus,
 } from "./video-script-core";
+import { captionsFromDialogues, shotTrim } from "./video-script-edit-plan";
+import { renderScriptAnimatic } from "./video-script-render";
 
 type MediaHubDb = typeof mediaHubDb;
 
@@ -76,6 +85,54 @@ async function requireOwnedScript(
     throw new TRPCError({ code: "NOT_FOUND", message: "视频脚本不存在" });
   }
   return script;
+}
+
+async function updateOwnedShotDocument(
+  database: MediaHubDb,
+  userId: string,
+  input: { id: string; shotId: string; version: number },
+  change: (shot: MediaVideoScriptShot) => MediaVideoScriptShot,
+) {
+  const script = await requireOwnedScript(database, userId, input.id);
+  if (script.version !== input.version) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "脚本已更新，请刷新后重试",
+    });
+  }
+  if (!script.shots.some((shot) => shot.id === input.shotId)) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "脚本镜头不存在" });
+  }
+  const shots = script.shots.map((shot) => {
+    if (shot.id !== input.shotId) return shot;
+    const result = mediaVideoScriptShotSchema.safeParse(change(shot));
+    if (!result.success) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: result.error.issues[0]?.message ?? "镜头配置无效",
+      });
+    }
+    return result.data;
+  });
+  const [updated] = await database
+    .update(mediaVideoScript)
+    .set({ shots, version: script.version + 1, updatedAt: new Date() })
+    .where(
+      and(
+        eq(mediaVideoScript.id, script.id),
+        eq(mediaVideoScript.createdBy, userId),
+        eq(mediaVideoScript.version, script.version),
+        isNull(mediaVideoScript.deletedAt),
+      ),
+    )
+    .returning();
+  if (!updated) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "脚本已更新，请刷新后重试",
+    });
+  }
+  return scriptSummary(updated);
 }
 
 async function listShotFrameCandidates(
@@ -212,6 +269,25 @@ export const mediaVideoScriptRouter = {
         }),
         listShotFrameCandidates(ctx.db, ctx.session.user.id, script.id),
       ]);
+      const selectedJobIds = Object.fromEntries(
+        script.shots.flatMap((shot) =>
+          shot.selectedGenerationJobId
+            ? [[shot.id, shot.selectedGenerationJobId] as const]
+            : [],
+        ),
+      );
+      const sourceJobs = selectLatestScriptShotJobs(
+        script.shots.map((shot) => shot.id),
+        jobs,
+        selectedJobIds,
+      );
+      const currentSourceIds = sourceJobs?.map((job) => job.id) ?? [];
+      const currentCutId = sourceJobs
+        ? scriptAssemblyJobId(script.id, currentSourceIds, script.shots, false)
+        : null;
+      const currentCaptionedCutId = sourceJobs
+        ? scriptAssemblyJobId(script.id, currentSourceIds, script.shots, true)
+        : null;
       return {
         ...scriptSummary(script),
         shotFrameCandidates,
@@ -226,6 +302,9 @@ export const mediaVideoScriptRouter = {
               outputStorageKey: job.outputStorageKey,
               mediaTaskId: job.mediaTaskId,
               sourceJobIds: job.providerJobIds,
+              isCurrent:
+                job.id === currentCutId || job.id === currentCaptionedCutId,
+              captioned: job.id === currentCaptionedCutId,
               createdAt: job.createdAt,
               finishedAt: job.finishedAt,
               videoUrl:
@@ -366,24 +445,10 @@ export const mediaVideoScriptRouter = {
   selectTake: protectedProcedure
     .input(selectMediaVideoScriptTakeSchema)
     .mutation(async ({ ctx, input }) => {
-      const script = await requireOwnedScript(
-        ctx.db,
-        ctx.session.user.id,
-        input.id,
-      );
-      if (script.version !== input.version) {
-        throw new TRPCError({
-          code: "CONFLICT",
-          message: "脚本已更新，请刷新后重新选择镜头版本",
-        });
-      }
-      if (!script.shots.some((shot) => shot.id === input.shotId)) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "脚本镜头不存在" });
-      }
       const take = await ctx.db.query.mediaGenerationJob.findFirst({
         where: and(
           eq(mediaGenerationJob.id, input.jobId),
-          eq(mediaGenerationJob.scriptId, script.id),
+          eq(mediaGenerationJob.scriptId, input.id),
           eq(mediaGenerationJob.scriptShotId, input.shotId),
           eq(mediaGenerationJob.createdBy, ctx.session.user.id),
         ),
@@ -398,32 +463,112 @@ export const mediaVideoScriptRouter = {
           message: "只能选用当前镜头已经完成的视频",
         });
       }
-      const [updated] = await ctx.db
-        .update(mediaVideoScript)
-        .set({
-          shots: script.shots.map((shot) =>
-            shot.id === input.shotId
-              ? { ...shot, selectedGenerationJobId: take.id }
-              : shot,
-          ),
-          version: script.version + 1,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(mediaVideoScript.id, script.id),
-            eq(mediaVideoScript.createdBy, ctx.session.user.id),
-            eq(mediaVideoScript.version, script.version),
-          ),
-        )
-        .returning();
-      if (!updated) {
+      return updateOwnedShotDocument(
+        ctx.db,
+        ctx.session.user.id,
+        input,
+        (shot) => ({ ...shot, selectedGenerationJobId: take.id }),
+      );
+    }),
+
+  updateShotEdit: protectedProcedure
+    .input(updateMediaVideoScriptShotEditSchema)
+    .mutation(({ ctx, input }) =>
+      updateOwnedShotDocument(ctx.db, ctx.session.user.id, input, (shot) => ({
+        ...shot,
+        trimStartSeconds: input.trimStartSeconds ?? shot.trimStartSeconds,
+        trimEndSeconds: input.trimEndSeconds ?? shot.trimEndSeconds,
+        captions: input.captions ?? shot.captions,
+      })),
+    ),
+
+  generateCaptions: protectedProcedure
+    .input(
+      updateMediaVideoScriptShotEditSchema.pick({
+        id: true,
+        shotId: true,
+        version: true,
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      updateOwnedShotDocument(ctx.db, ctx.session.user.id, input, (shot) => ({
+        ...shot,
+        captions: captionsFromDialogues(shot),
+      })),
+    ),
+
+  createAnimatic: protectedProcedure
+    .input(mediaVideoScriptIdSchema)
+    .mutation(async ({ ctx, input }) => {
+      const script = await requireOwnedScript(
+        ctx.db,
+        ctx.session.user.id,
+        input.id,
+      );
+      if (!script.shots.length) {
         throw new TRPCError({
-          code: "CONFLICT",
-          message: "脚本已更新，请刷新后重新选择镜头版本",
+          code: "PRECONDITION_FAILED",
+          message: "请先添加镜头",
         });
       }
-      return scriptSummary(updated);
+      const assetIds = script.shots.map((shot) => shot.firstFrameAssetId);
+      if (assetIds.some((id) => !id)) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "每个镜头都要先选定首帧，才能生成分镜预演",
+        });
+      }
+      const assets = await ctx.db.query.mediaImageAsset.findMany({
+        where: and(
+          inArray(
+            mediaImageAsset.id,
+            assetIds.filter((id): id is string => Boolean(id)),
+          ),
+          eq(mediaImageAsset.ownerUserId, ctx.session.user.id),
+          isNull(mediaImageAsset.deletedAt),
+        ),
+      });
+      const byId = new Map(assets.map((asset) => [asset.id, asset]));
+      const images = await Promise.all(
+        assetIds.map((id) => {
+          const asset = id ? byId.get(id) : undefined;
+          if (!asset) {
+            throw new TRPCError({
+              code: "PRECONDITION_FAILED",
+              message: "首帧素材不存在，请重新选择",
+            });
+          }
+          return getMediaHubObject(asset.storageKey);
+        }),
+      );
+      const video = await renderScriptAnimatic(
+        images,
+        script.shots,
+        script.width,
+        script.height,
+      );
+      const current = await requireOwnedScript(
+        ctx.db,
+        ctx.session.user.id,
+        input.id,
+      );
+      if (current.version !== script.version) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "制作预演期间脚本已修改，请重新生成",
+        });
+      }
+      const storageKey = `media-hub/animatics/${ctx.session.user.id}/${script.id}/preview.mp4`;
+      await putMediaHubObject(storageKey, video, "video/mp4");
+      return {
+        version: script.version,
+        durationSeconds: script.shots.reduce(
+          (sum, shot) => sum + shotTrim(shot).duration,
+          0,
+        ),
+        videoUrl: `/api/media-hub/scripts/${encodeURIComponent(script.id)}/animatic/${script.version}/video`,
+        agentVideoUrl: `/api/v1/scripts/${encodeURIComponent(script.id)}/animatic/${script.version}/video`,
+      };
     }),
 
   listFrameCandidates: protectedProcedure
@@ -568,6 +713,9 @@ export const mediaVideoScriptRouter = {
       if (!deleted) {
         throw new TRPCError({ code: "NOT_FOUND", message: "视频脚本不存在" });
       }
+      await deleteMediaHubObject(
+        `media-hub/animatics/${ctx.session.user.id}/${input.id}/preview.mp4`,
+      ).catch(() => undefined);
       return { ok: true };
     }),
 
@@ -797,7 +945,7 @@ export const mediaVideoScriptRouter = {
     }),
 
   assemble: protectedProcedure
-    .input(mediaVideoScriptIdSchema)
+    .input(assembleMediaVideoScriptSchema)
     .mutation(async ({ ctx, input }) => {
       await requireOwnedScript(ctx.db, ctx.session.user.id, input.id);
       try {
@@ -805,6 +953,7 @@ export const mediaVideoScriptRouter = {
           scriptId: input.id,
           userId: ctx.session.user.id,
           requireReady: true,
+          burnCaptions: input.burnCaptions,
         });
         if (!result) {
           throw new VideoScriptAssemblyNotReadyError("暂时无法创建完整成片");

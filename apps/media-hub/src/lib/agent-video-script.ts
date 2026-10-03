@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 
+import type { MediaVideoScriptShot } from "@acme/validators";
 import { mediaH3ScriptTargetDurationSchema } from "@acme/validators";
 
 const dialogueBody = z.object({
@@ -96,6 +97,33 @@ export const selectScriptFrameCandidateBody = z.object({
   version: z.number().int().min(1),
 });
 
+export const selectScriptTakeBody = z.object({
+  job_id: z.string().trim().min(1),
+  version: z.number().int().min(1),
+});
+
+const captionBody = z.object({
+  id: z.string().trim().min(1).optional(),
+  start_seconds: z.number().min(0).max(15),
+  end_seconds: z.number().min(0).max(15),
+  text: z.string().trim().min(1).max(300),
+});
+
+export const scriptShotEditBody = z.object({
+  version: z.number().int().min(1),
+  trim_start_seconds: z.number().min(0).max(15).optional(),
+  trim_end_seconds: z.number().min(0).max(15).optional(),
+  captions: z.array(captionBody).max(12).optional(),
+});
+
+export const scriptCaptionGenerateBody = z.object({
+  version: z.number().int().min(1),
+});
+
+export const assembleScriptBody = z.object({
+  burn_captions: z.boolean().default(false),
+});
+
 export function mapContinuityBible(bible: z.infer<typeof continuityBibleBody>) {
   return {
     characters: bible.characters,
@@ -105,8 +133,13 @@ export function mapContinuityBible(bible: z.infer<typeof continuityBibleBody>) {
   };
 }
 
-export function mapScriptShots(shots: z.infer<typeof scriptShotBody>[]) {
+export function mapScriptShots(
+  shots: z.infer<typeof scriptShotBody>[],
+  existingShots: MediaVideoScriptShot[] = [],
+) {
+  const existingById = new Map(existingShots.map((shot) => [shot.id, shot]));
   return shots.map((shot) => ({
+    ...existingById.get(shot.id ?? ""),
     id: shot.id ?? crypto.randomUUID(),
     title: shot.title,
     durationSeconds: shot.duration_seconds,
@@ -122,6 +155,17 @@ export function mapScriptShots(shots: z.infer<typeof scriptShotBody>[]) {
       language: dialogue.language,
       text: dialogue.text,
     })),
-    firstFrameAssetId: shot.first_frame_asset_id,
+    firstFrameAssetId:
+      shot.first_frame_asset_id ??
+      existingById.get(shot.id ?? "")?.firstFrameAssetId,
+  }));
+}
+
+export function mapShotCaptions(captions: z.infer<typeof captionBody>[]) {
+  return captions.map((cue) => ({
+    id: cue.id ?? crypto.randomUUID(),
+    startSeconds: cue.start_seconds,
+    endSeconds: cue.end_seconds,
+    text: cue.text,
   }));
 }

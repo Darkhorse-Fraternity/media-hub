@@ -57,6 +57,18 @@ export async function readAgentJson(request: Request): Promise<unknown> {
   }
 }
 
+export async function readOptionalAgentJson(
+  request: Request,
+): Promise<unknown> {
+  const body = await request.text();
+  if (!body.trim()) return {};
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    throw new AgentApiError(400, "Request body must be valid JSON");
+  }
+}
+
 export function agentJson(data: unknown, status = 200): Response {
   return Response.json(data, {
     status,

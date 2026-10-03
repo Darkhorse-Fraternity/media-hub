@@ -26,7 +26,7 @@ function openApiDocument(request: Request) {
     openapi: "3.1.0",
     info: {
       title: "Pumpkii Media Hub Agent API",
-      version: "1.7.0",
+      version: "1.8.0",
       description:
         "Bearer-token API for agents to optimize prompts, create and manage MiniMax H3 generation jobs, retrieve videos, and publish to configured platform accounts.",
     },
@@ -274,6 +274,30 @@ function openApiDocument(request: Request) {
               items: { $ref: "#/components/schemas/VideoScriptDialogue" },
             },
             first_frame_asset_id: { type: "string" },
+          },
+        },
+        VideoScriptCaption: {
+          type: "object",
+          required: ["start_seconds", "end_seconds", "text"],
+          properties: {
+            id: { type: "string" },
+            start_seconds: { type: "number", minimum: 0, maximum: 15 },
+            end_seconds: { type: "number", minimum: 0, maximum: 15 },
+            text: { type: "string", maxLength: 300 },
+          },
+        },
+        VideoScriptShotEditPlan: {
+          type: "object",
+          required: ["version"],
+          properties: {
+            version: { type: "integer", minimum: 1 },
+            trim_start_seconds: { type: "number", minimum: 0, maximum: 15 },
+            trim_end_seconds: { type: "number", minimum: 0, maximum: 15 },
+            captions: {
+              type: "array",
+              maxItems: 12,
+              items: { $ref: "#/components/schemas/VideoScriptCaption" },
+            },
           },
         },
         CreateVideoScript: {
@@ -688,7 +712,40 @@ function openApiDocument(request: Request) {
         post: {
           operationId: "assembleVideoScript",
           summary:
-            "Concatenate the latest successful video for every script shot into one publishable MP4",
+            "Assemble selected shot takes with trims and optional burned captions into a publishable MP4",
+          parameters: [
+            {
+              name: "scriptId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          requestBody: {
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    burn_captions: { type: "boolean", default: false },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "201": {
+              description:
+                "Assembly job and publishable draft. The same source shot set is idempotent.",
+            },
+            ...errorResponses,
+          },
+        },
+      },
+      "/api/v1/scripts/{scriptId}/animatic": {
+        post: {
+          operationId: "createVideoScriptAnimatic",
+          summary: "Render a low-cost preview from each selected first frame",
           parameters: [
             {
               name: "scriptId",
@@ -698,10 +755,142 @@ function openApiDocument(request: Request) {
             },
           ],
           responses: {
-            "201": {
-              description:
-                "Assembly job and publishable draft. The same source shot set is idempotent.",
+            "201": { description: "Animatic URLs and script version" },
+            ...errorResponses,
+          },
+        },
+      },
+      "/api/v1/scripts/{scriptId}/animatic/{version}/video": {
+        get: {
+          operationId: "downloadVideoScriptAnimatic",
+          summary: "Stream the current animatic MP4 with Bearer authorization",
+          parameters: [
+            {
+              name: "scriptId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
             },
+            {
+              name: "version",
+              in: "path",
+              required: true,
+              schema: { type: "integer" },
+            },
+          ],
+          responses: {
+            "200": { description: "Animatic MP4" },
+            "206": { description: "Partial animatic MP4" },
+            ...errorResponses,
+          },
+        },
+      },
+      "/api/v1/scripts/{scriptId}/shots/{shotId}/take": {
+        patch: {
+          operationId: "selectVideoScriptTake",
+          summary: "Select a successful shot take for final assembly",
+          parameters: [
+            {
+              name: "scriptId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "shotId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["job_id", "version"],
+                  properties: {
+                    job_id: { type: "string" },
+                    version: { type: "integer", minimum: 1 },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Updated script" },
+            ...errorResponses,
+          },
+        },
+      },
+      "/api/v1/scripts/{scriptId}/shots/{shotId}/edit-plan": {
+        patch: {
+          operationId: "updateVideoScriptShotEditPlan",
+          summary: "Set shot trim and corrected captions with version locking",
+          parameters: [
+            {
+              name: "scriptId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "shotId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/VideoScriptShotEditPlan",
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Updated script" },
+            ...errorResponses,
+          },
+        },
+      },
+      "/api/v1/scripts/{scriptId}/shots/{shotId}/captions/generate": {
+        post: {
+          operationId: "generateVideoScriptShotCaptions",
+          summary:
+            "Create editable timed captions from authoritative shot dialogue",
+          parameters: [
+            {
+              name: "scriptId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "shotId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["version"],
+                  properties: { version: { type: "integer", minimum: 1 } },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Updated script with draft captions" },
             ...errorResponses,
           },
         },

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import type { MediaVideoScriptShot } from "@acme/db/schema";
+
 import type { ScriptShotAssemblyJob } from "./video-script-assembly-core";
-import { selectLatestScriptShotJobs } from "./video-script-assembly-core";
+import {
+  scriptAssemblyJobId,
+  selectLatestScriptShotJobs,
+} from "./video-script-assembly-core";
 
 function job(
   id: string,
@@ -64,5 +69,41 @@ describe("video script assembly", () => {
         { "shot-a": "other" },
       ),
     ).toBeNull();
+  });
+
+  it("invalidates the cut for trim and caption changes without changing the source take", () => {
+    const shot: MediaVideoScriptShot = {
+      id: "shot-a",
+      title: "开场",
+      durationSeconds: 10,
+      visualDescription: "A steady shot",
+      cameraDirection: "",
+      continuity: "",
+      soundscape: "",
+      music: "N/A",
+      dialogues: [],
+    };
+    const plain = scriptAssemblyJobId("script", ["take-a"], [shot], false);
+    const trimmed = { ...shot, trimStartSeconds: 1 };
+    const trimmedId = scriptAssemblyJobId(
+      "script",
+      ["take-a"],
+      [trimmed],
+      false,
+    );
+    const captioned = {
+      ...trimmed,
+      captions: [{ id: "cue", startSeconds: 2, endSeconds: 4, text: "你好" }],
+    };
+    expect(trimmedId).not.toBe(plain);
+    expect(scriptAssemblyJobId("script", ["take-a"], [captioned], false)).toBe(
+      trimmedId,
+    );
+    expect(
+      scriptAssemblyJobId("script", ["take-a"], [captioned], true),
+    ).not.toBe(trimmedId);
+    expect(
+      scriptAssemblyJobId("script", ["take-b"], [captioned], true),
+    ).not.toBe(scriptAssemblyJobId("script", ["take-a"], [captioned], true));
   });
 });

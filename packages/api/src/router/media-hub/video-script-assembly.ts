@@ -1,10 +1,3 @@
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { promisify } from "node:util";
-
 import { and, desc, eq } from "@acme/db";
 import { db } from "@acme/db/client";
 import {
@@ -21,9 +14,13 @@ import {
 
 import { deliverGenerationResultNotification } from "./generation-notification";
 import { validateGeneratedVideoOutput } from "./generation-output-validation";
-import { selectLatestScriptShotJobs } from "./video-script-assembly-core";
+import {
+  scriptAssemblyJobId,
+  selectLatestScriptShotJobs,
+} from "./video-script-assembly-core";
+import { captionsToSrt, shotTrim } from "./video-script-edit-plan";
+import { renderScriptCut } from "./video-script-render";
 
-const execFileAsync = promisify(execFile);
 const ACTIVE_STATUSES = new Set([
   "scheduled",
   "queued",
@@ -38,52 +35,11 @@ export class VideoScriptAssemblyNotReadyError extends Error {
   }
 }
 
-function assemblyJobId(scriptId: string, sourceJobIds: string[]): string {
-  const digest = createHash("sha256")
-    .update(`${scriptId}:${sourceJobIds.join(":")}`)
-    .digest("hex")
-    .slice(0, 32);
-  return `assembly_${digest}`;
-}
-
-async function concatShotVideos(videos: Buffer[]): Promise<Buffer> {
-  const dir = await mkdtemp(join(tmpdir(), "media-hub-script-assembly-"));
-  try {
-    const listPath = join(dir, "concat.txt");
-    const outputPath = join(dir, "assembled.mp4");
-    const lines: string[] = [];
-    for (const [index, video] of videos.entries()) {
-      const inputPath = join(dir, `shot-${index + 1}.mp4`);
-      await writeFile(inputPath, video);
-      lines.push(`file '${inputPath}'`);
-    }
-    await writeFile(listPath, `${lines.join("\n")}\n`);
-    await execFileAsync(process.env.FFMPEG_PATH ?? "ffmpeg", [
-      "-f",
-      "concat",
-      "-safe",
-      "0",
-      "-i",
-      listPath,
-      "-c",
-      "copy",
-      "-movflags",
-      "+faststart",
-      outputPath,
-      "-y",
-      "-loglevel",
-      "error",
-    ]);
-    return await readFile(outputPath);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
 export async function assembleCompletedVideoScript(input: {
   scriptId: string;
   userId: string;
   requireReady?: boolean;
+  burnCaptions?: boolean;
 }): Promise<{
   jobId: string;
   mediaTaskId: string | null;
@@ -146,7 +102,23 @@ export async function assembleCompletedVideoScript(input: {
     return null;
   }
   const sourceJobIds = sourceJobs.map((job) => job.id);
-  const jobId = assemblyJobId(script.id, sourceJobIds);
+  const hasTrim = script.shots.some((shot) => {
+    const trim = shotTrim(shot);
+    return trim.start !== 0 || trim.end !== shot.durationSeconds;
+  });
+  const burnCaptions = input.burnCaptions ?? false;
+  if (burnCaptions && !captionsToSrt(script.shots).trim()) {
+    throw new VideoScriptAssemblyNotReadyError(
+      "请先为至少一个镜头生成或填写字幕",
+    );
+  }
+  const customRender = hasTrim || burnCaptions;
+  const jobId = scriptAssemblyJobId(
+    script.id,
+    sourceJobIds,
+    script.shots,
+    burnCaptions,
+  );
   const existing = jobs.find((job) => job.id === jobId);
   if (existing?.status === "succeeded") {
     return {
@@ -167,7 +139,7 @@ export async function assembleCompletedVideoScript(input: {
 
   const now = new Date();
   const totalDurationSeconds = script.shots.reduce(
-    (total, shot) => total + shot.durationSeconds,
+    (total, shot) => total + shotTrim(shot).duration,
     0,
   );
   const baseJob = {
@@ -186,8 +158,8 @@ export async function assembleCompletedVideoScript(input: {
     height: script.height,
     qualityPreset: "assembled",
     steps: 0,
-    profile: "script-concat-v1",
-    workflowVersion: "script-concat-copy-v1",
+    profile: customRender ? "script-cut-v2" : "script-concat-v1",
+    workflowVersion: customRender ? "script-cut-v2" : "script-concat-copy-v1",
     status: "running",
     createdBy: input.userId,
     startedAt: now,
@@ -243,13 +215,15 @@ export async function assembleCompletedVideoScript(input: {
 
   const storageKey = `media-hub/scripts/${input.userId}/${script.id}/${jobId}.mp4`;
   try {
-    const video = await concatShotVideos(
+    const video = await renderScriptCut(
       await Promise.all(
         sourceJobs.map((job) => {
           if (!job.outputStorageKey) throw new Error("镜头视频文件不可用");
           return getMediaHubObject(job.outputStorageKey);
         }),
       ),
+      script.shots,
+      burnCaptions,
     );
     await validateGeneratedVideoOutput(video, {
       durationSeconds: totalDurationSeconds,
@@ -272,7 +246,10 @@ export async function assembleCompletedVideoScript(input: {
           scriptId: script.id,
           scriptVersion: script.version,
           sourceGenerationJobIds: sourceJobIds,
-          workflowVersion: "script-concat-copy-v1",
+          workflowVersion: customRender
+            ? "script-cut-v2"
+            : "script-concat-copy-v1",
+          burnCaptions,
         },
         status: "draft",
         createdBy: input.userId,

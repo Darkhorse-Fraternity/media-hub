@@ -45,6 +45,13 @@ export interface MediaVideoScriptDialogue {
   text: string;
 }
 
+export interface MediaVideoScriptCaption {
+  id: string;
+  startSeconds: number;
+  endSeconds: number;
+  text: string;
+}
+
 export interface MediaVideoScriptContinuityBible {
   characters: string;
   wardrobeAndProps: string;
@@ -65,6 +72,10 @@ export interface MediaVideoScriptShot {
   firstFrameAssetId?: string;
   /** 导演明确选定的成片任务；未设置时使用最新一次成功镜头。 */
   selectedGenerationJobId?: string;
+  trimStartSeconds?: number;
+  trimEndSeconds?: number;
+  /** 镜头内时间码；缺省为尚未制作字幕，空数组为明确不加字幕。 */
+  captions?: MediaVideoScriptCaption[];
 }
 
 /** 当前用户在 Media Hub 中跨设备同步的默认操作偏好。 */

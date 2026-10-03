@@ -45,6 +45,7 @@ import { Route as ApiMediaHubUploadsImageAssetRouteImport } from './routes/api/m
 import { Route as ApiMediaHubImagesAssetIdRouteImport } from './routes/api/media-hub/images/$assetId'
 import { Route as ApiV1ScriptsScriptIdGenerateRouteImport } from './routes/api/v1/scripts/$scriptId/generate'
 import { Route as ApiV1ScriptsScriptIdAssembleRouteImport } from './routes/api/v1/scripts/$scriptId/assemble'
+import { Route as ApiV1ScriptsScriptIdAnimaticRouteImport } from './routes/api/v1/scripts/$scriptId/animatic'
 import { Route as ApiV1GenerationsJobIdXiaohongshuPackageRouteImport } from './routes/api/v1/generations/$jobId/xiaohongshu-package'
 import { Route as ApiV1GenerationsJobIdVideoRouteImport } from './routes/api/v1/generations/$jobId/video'
 import { Route as ApiV1GenerationsJobIdRetryRouteImport } from './routes/api/v1/generations/$jobId/retry'
@@ -52,9 +53,14 @@ import { Route as ApiV1GenerationsJobIdPublishRouteImport } from './routes/api/v
 import { Route as ApiV1GenerationsJobIdNotifyRouteImport } from './routes/api/v1/generations/$jobId/notify'
 import { Route as ApiV1GenerationsJobIdEditsRouteImport } from './routes/api/v1/generations/$jobId/edits'
 import { Route as ApiMediaHubGenerationJobIdVideoRouteImport } from './routes/api/media-hub/generation/$jobId/video'
+import { Route as ApiV1ScriptsScriptIdShotsShotIdTakeRouteImport } from './routes/api/v1/scripts/$scriptId/shots/$shotId/take'
 import { Route as ApiV1ScriptsScriptIdShotsShotIdFramesRouteImport } from './routes/api/v1/scripts/$scriptId/shots/$shotId/frames'
+import { Route as ApiV1ScriptsScriptIdShotsShotIdEditPlanRouteImport } from './routes/api/v1/scripts/$scriptId/shots/$shotId/edit-plan'
 import { Route as ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRouteImport } from './routes/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
+import { Route as ApiV1ScriptsScriptIdAnimaticVersionVideoRouteImport } from './routes/api/v1/scripts/$scriptId/animatic/$version/video'
+import { Route as ApiMediaHubScriptsScriptIdAnimaticVersionVideoRouteImport } from './routes/api/media-hub/scripts/$scriptId/animatic/$version/video'
 import { Route as ApiV1ScriptsScriptIdShotsShotIdFramesSelectRouteImport } from './routes/api/v1/scripts/$scriptId/shots/$shotId/frames/select'
+import { Route as ApiV1ScriptsScriptIdShotsShotIdCaptionsGenerateRouteImport } from './routes/api/v1/scripts/$scriptId/shots/$shotId/captions/generate'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -241,6 +247,12 @@ const ApiV1ScriptsScriptIdAssembleRoute =
     path: '/assemble',
     getParentRoute: () => ApiV1ScriptsScriptIdRoute,
   } as any)
+const ApiV1ScriptsScriptIdAnimaticRoute =
+  ApiV1ScriptsScriptIdAnimaticRouteImport.update({
+    id: '/animatic',
+    path: '/animatic',
+    getParentRoute: () => ApiV1ScriptsScriptIdRoute,
+  } as any)
 const ApiV1GenerationsJobIdXiaohongshuPackageRoute =
   ApiV1GenerationsJobIdXiaohongshuPackageRouteImport.update({
     id: '/xiaohongshu-package',
@@ -283,10 +295,22 @@ const ApiMediaHubGenerationJobIdVideoRoute =
     path: '/api/media-hub/generation/$jobId/video',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiV1ScriptsScriptIdShotsShotIdTakeRoute =
+  ApiV1ScriptsScriptIdShotsShotIdTakeRouteImport.update({
+    id: '/shots/$shotId/take',
+    path: '/shots/$shotId/take',
+    getParentRoute: () => ApiV1ScriptsScriptIdRoute,
+  } as any)
 const ApiV1ScriptsScriptIdShotsShotIdFramesRoute =
   ApiV1ScriptsScriptIdShotsShotIdFramesRouteImport.update({
     id: '/shots/$shotId/frames',
     path: '/shots/$shotId/frames',
+    getParentRoute: () => ApiV1ScriptsScriptIdRoute,
+  } as any)
+const ApiV1ScriptsScriptIdShotsShotIdEditPlanRoute =
+  ApiV1ScriptsScriptIdShotsShotIdEditPlanRouteImport.update({
+    id: '/shots/$shotId/edit-plan',
+    path: '/shots/$shotId/edit-plan',
     getParentRoute: () => ApiV1ScriptsScriptIdRoute,
   } as any)
 const ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute =
@@ -295,11 +319,29 @@ const ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute =
     path: '/shots/$shotId/carry-final-frame',
     getParentRoute: () => ApiV1ScriptsScriptIdRoute,
   } as any)
+const ApiV1ScriptsScriptIdAnimaticVersionVideoRoute =
+  ApiV1ScriptsScriptIdAnimaticVersionVideoRouteImport.update({
+    id: '/$version/video',
+    path: '/$version/video',
+    getParentRoute: () => ApiV1ScriptsScriptIdAnimaticRoute,
+  } as any)
+const ApiMediaHubScriptsScriptIdAnimaticVersionVideoRoute =
+  ApiMediaHubScriptsScriptIdAnimaticVersionVideoRouteImport.update({
+    id: '/api/media-hub/scripts/$scriptId/animatic/$version/video',
+    path: '/api/media-hub/scripts/$scriptId/animatic/$version/video',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiV1ScriptsScriptIdShotsShotIdFramesSelectRoute =
   ApiV1ScriptsScriptIdShotsShotIdFramesSelectRouteImport.update({
     id: '/select',
     path: '/select',
     getParentRoute: () => ApiV1ScriptsScriptIdShotsShotIdFramesRoute,
+  } as any)
+const ApiV1ScriptsScriptIdShotsShotIdCaptionsGenerateRoute =
+  ApiV1ScriptsScriptIdShotsShotIdCaptionsGenerateRouteImport.update({
+    id: '/shots/$shotId/captions/generate',
+    path: '/shots/$shotId/captions/generate',
+    getParentRoute: () => ApiV1ScriptsScriptIdRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -344,10 +386,16 @@ export interface FileRoutesByFullPath {
   '/api/v1/generations/$jobId/retry': typeof ApiV1GenerationsJobIdRetryRoute
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
   '/api/v1/generations/$jobId/xiaohongshu-package': typeof ApiV1GenerationsJobIdXiaohongshuPackageRoute
+  '/api/v1/scripts/$scriptId/animatic': typeof ApiV1ScriptsScriptIdAnimaticRouteWithChildren
   '/api/v1/scripts/$scriptId/assemble': typeof ApiV1ScriptsScriptIdAssembleRoute
   '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
+  '/api/media-hub/scripts/$scriptId/animatic/$version/video': typeof ApiMediaHubScriptsScriptIdAnimaticVersionVideoRoute
+  '/api/v1/scripts/$scriptId/animatic/$version/video': typeof ApiV1ScriptsScriptIdAnimaticVersionVideoRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
+  '/api/v1/scripts/$scriptId/shots/$shotId/edit-plan': typeof ApiV1ScriptsScriptIdShotsShotIdEditPlanRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/frames': typeof ApiV1ScriptsScriptIdShotsShotIdFramesRouteWithChildren
+  '/api/v1/scripts/$scriptId/shots/$shotId/take': typeof ApiV1ScriptsScriptIdShotsShotIdTakeRoute
+  '/api/v1/scripts/$scriptId/shots/$shotId/captions/generate': typeof ApiV1ScriptsScriptIdShotsShotIdCaptionsGenerateRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/frames/select': typeof ApiV1ScriptsScriptIdShotsShotIdFramesSelectRoute
 }
 export interface FileRoutesByTo {
@@ -392,10 +440,16 @@ export interface FileRoutesByTo {
   '/api/v1/generations/$jobId/retry': typeof ApiV1GenerationsJobIdRetryRoute
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
   '/api/v1/generations/$jobId/xiaohongshu-package': typeof ApiV1GenerationsJobIdXiaohongshuPackageRoute
+  '/api/v1/scripts/$scriptId/animatic': typeof ApiV1ScriptsScriptIdAnimaticRouteWithChildren
   '/api/v1/scripts/$scriptId/assemble': typeof ApiV1ScriptsScriptIdAssembleRoute
   '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
+  '/api/media-hub/scripts/$scriptId/animatic/$version/video': typeof ApiMediaHubScriptsScriptIdAnimaticVersionVideoRoute
+  '/api/v1/scripts/$scriptId/animatic/$version/video': typeof ApiV1ScriptsScriptIdAnimaticVersionVideoRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
+  '/api/v1/scripts/$scriptId/shots/$shotId/edit-plan': typeof ApiV1ScriptsScriptIdShotsShotIdEditPlanRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/frames': typeof ApiV1ScriptsScriptIdShotsShotIdFramesRouteWithChildren
+  '/api/v1/scripts/$scriptId/shots/$shotId/take': typeof ApiV1ScriptsScriptIdShotsShotIdTakeRoute
+  '/api/v1/scripts/$scriptId/shots/$shotId/captions/generate': typeof ApiV1ScriptsScriptIdShotsShotIdCaptionsGenerateRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/frames/select': typeof ApiV1ScriptsScriptIdShotsShotIdFramesSelectRoute
 }
 export interface FileRoutesById {
@@ -441,10 +495,16 @@ export interface FileRoutesById {
   '/api/v1/generations/$jobId/retry': typeof ApiV1GenerationsJobIdRetryRoute
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
   '/api/v1/generations/$jobId/xiaohongshu-package': typeof ApiV1GenerationsJobIdXiaohongshuPackageRoute
+  '/api/v1/scripts/$scriptId/animatic': typeof ApiV1ScriptsScriptIdAnimaticRouteWithChildren
   '/api/v1/scripts/$scriptId/assemble': typeof ApiV1ScriptsScriptIdAssembleRoute
   '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
+  '/api/media-hub/scripts/$scriptId/animatic/$version/video': typeof ApiMediaHubScriptsScriptIdAnimaticVersionVideoRoute
+  '/api/v1/scripts/$scriptId/animatic/$version/video': typeof ApiV1ScriptsScriptIdAnimaticVersionVideoRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
+  '/api/v1/scripts/$scriptId/shots/$shotId/edit-plan': typeof ApiV1ScriptsScriptIdShotsShotIdEditPlanRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/frames': typeof ApiV1ScriptsScriptIdShotsShotIdFramesRouteWithChildren
+  '/api/v1/scripts/$scriptId/shots/$shotId/take': typeof ApiV1ScriptsScriptIdShotsShotIdTakeRoute
+  '/api/v1/scripts/$scriptId/shots/$shotId/captions/generate': typeof ApiV1ScriptsScriptIdShotsShotIdCaptionsGenerateRoute
   '/api/v1/scripts/$scriptId/shots/$shotId/frames/select': typeof ApiV1ScriptsScriptIdShotsShotIdFramesSelectRoute
 }
 export interface FileRouteTypes {
@@ -491,10 +551,16 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/retry'
     | '/api/v1/generations/$jobId/video'
     | '/api/v1/generations/$jobId/xiaohongshu-package'
+    | '/api/v1/scripts/$scriptId/animatic'
     | '/api/v1/scripts/$scriptId/assemble'
     | '/api/v1/scripts/$scriptId/generate'
+    | '/api/media-hub/scripts/$scriptId/animatic/$version/video'
+    | '/api/v1/scripts/$scriptId/animatic/$version/video'
     | '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/edit-plan'
     | '/api/v1/scripts/$scriptId/shots/$shotId/frames'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/take'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/captions/generate'
     | '/api/v1/scripts/$scriptId/shots/$shotId/frames/select'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -539,10 +605,16 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/retry'
     | '/api/v1/generations/$jobId/video'
     | '/api/v1/generations/$jobId/xiaohongshu-package'
+    | '/api/v1/scripts/$scriptId/animatic'
     | '/api/v1/scripts/$scriptId/assemble'
     | '/api/v1/scripts/$scriptId/generate'
+    | '/api/media-hub/scripts/$scriptId/animatic/$version/video'
+    | '/api/v1/scripts/$scriptId/animatic/$version/video'
     | '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/edit-plan'
     | '/api/v1/scripts/$scriptId/shots/$shotId/frames'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/take'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/captions/generate'
     | '/api/v1/scripts/$scriptId/shots/$shotId/frames/select'
   id:
     | '__root__'
@@ -587,10 +659,16 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/retry'
     | '/api/v1/generations/$jobId/video'
     | '/api/v1/generations/$jobId/xiaohongshu-package'
+    | '/api/v1/scripts/$scriptId/animatic'
     | '/api/v1/scripts/$scriptId/assemble'
     | '/api/v1/scripts/$scriptId/generate'
+    | '/api/media-hub/scripts/$scriptId/animatic/$version/video'
+    | '/api/v1/scripts/$scriptId/animatic/$version/video'
     | '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/edit-plan'
     | '/api/v1/scripts/$scriptId/shots/$shotId/frames'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/take'
+    | '/api/v1/scripts/$scriptId/shots/$shotId/captions/generate'
     | '/api/v1/scripts/$scriptId/shots/$shotId/frames/select'
   fileRoutesById: FileRoutesById
 }
@@ -626,6 +704,7 @@ export interface RootRouteChildren {
   ApiV1PromptsOptimizeRoute: typeof ApiV1PromptsOptimizeRoute
   ApiV1UploadsPresignRoute: typeof ApiV1UploadsPresignRoute
   ApiMediaHubGenerationJobIdVideoRoute: typeof ApiMediaHubGenerationJobIdVideoRoute
+  ApiMediaHubScriptsScriptIdAnimaticVersionVideoRoute: typeof ApiMediaHubScriptsScriptIdAnimaticVersionVideoRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -882,6 +961,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiV1ScriptsScriptIdAssembleRouteImport
       parentRoute: typeof ApiV1ScriptsScriptIdRoute
     }
+    '/api/v1/scripts/$scriptId/animatic': {
+      id: '/api/v1/scripts/$scriptId/animatic'
+      path: '/animatic'
+      fullPath: '/api/v1/scripts/$scriptId/animatic'
+      preLoaderRoute: typeof ApiV1ScriptsScriptIdAnimaticRouteImport
+      parentRoute: typeof ApiV1ScriptsScriptIdRoute
+    }
     '/api/v1/generations/$jobId/xiaohongshu-package': {
       id: '/api/v1/generations/$jobId/xiaohongshu-package'
       path: '/xiaohongshu-package'
@@ -931,11 +1017,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiMediaHubGenerationJobIdVideoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/v1/scripts/$scriptId/shots/$shotId/take': {
+      id: '/api/v1/scripts/$scriptId/shots/$shotId/take'
+      path: '/shots/$shotId/take'
+      fullPath: '/api/v1/scripts/$scriptId/shots/$shotId/take'
+      preLoaderRoute: typeof ApiV1ScriptsScriptIdShotsShotIdTakeRouteImport
+      parentRoute: typeof ApiV1ScriptsScriptIdRoute
+    }
     '/api/v1/scripts/$scriptId/shots/$shotId/frames': {
       id: '/api/v1/scripts/$scriptId/shots/$shotId/frames'
       path: '/shots/$shotId/frames'
       fullPath: '/api/v1/scripts/$scriptId/shots/$shotId/frames'
       preLoaderRoute: typeof ApiV1ScriptsScriptIdShotsShotIdFramesRouteImport
+      parentRoute: typeof ApiV1ScriptsScriptIdRoute
+    }
+    '/api/v1/scripts/$scriptId/shots/$shotId/edit-plan': {
+      id: '/api/v1/scripts/$scriptId/shots/$shotId/edit-plan'
+      path: '/shots/$shotId/edit-plan'
+      fullPath: '/api/v1/scripts/$scriptId/shots/$shotId/edit-plan'
+      preLoaderRoute: typeof ApiV1ScriptsScriptIdShotsShotIdEditPlanRouteImport
       parentRoute: typeof ApiV1ScriptsScriptIdRoute
     }
     '/api/v1/scripts/$scriptId/shots/$shotId/carry-final-frame': {
@@ -945,12 +1045,33 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRouteImport
       parentRoute: typeof ApiV1ScriptsScriptIdRoute
     }
+    '/api/v1/scripts/$scriptId/animatic/$version/video': {
+      id: '/api/v1/scripts/$scriptId/animatic/$version/video'
+      path: '/$version/video'
+      fullPath: '/api/v1/scripts/$scriptId/animatic/$version/video'
+      preLoaderRoute: typeof ApiV1ScriptsScriptIdAnimaticVersionVideoRouteImport
+      parentRoute: typeof ApiV1ScriptsScriptIdAnimaticRoute
+    }
+    '/api/media-hub/scripts/$scriptId/animatic/$version/video': {
+      id: '/api/media-hub/scripts/$scriptId/animatic/$version/video'
+      path: '/api/media-hub/scripts/$scriptId/animatic/$version/video'
+      fullPath: '/api/media-hub/scripts/$scriptId/animatic/$version/video'
+      preLoaderRoute: typeof ApiMediaHubScriptsScriptIdAnimaticVersionVideoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/v1/scripts/$scriptId/shots/$shotId/frames/select': {
       id: '/api/v1/scripts/$scriptId/shots/$shotId/frames/select'
       path: '/select'
       fullPath: '/api/v1/scripts/$scriptId/shots/$shotId/frames/select'
       preLoaderRoute: typeof ApiV1ScriptsScriptIdShotsShotIdFramesSelectRouteImport
       parentRoute: typeof ApiV1ScriptsScriptIdShotsShotIdFramesRoute
+    }
+    '/api/v1/scripts/$scriptId/shots/$shotId/captions/generate': {
+      id: '/api/v1/scripts/$scriptId/shots/$shotId/captions/generate'
+      path: '/shots/$shotId/captions/generate'
+      fullPath: '/api/v1/scripts/$scriptId/shots/$shotId/captions/generate'
+      preLoaderRoute: typeof ApiV1ScriptsScriptIdShotsShotIdCaptionsGenerateRouteImport
+      parentRoute: typeof ApiV1ScriptsScriptIdRoute
     }
   }
 }
@@ -990,6 +1111,21 @@ const ApiV1GenerationsRouteChildren: ApiV1GenerationsRouteChildren = {
 const ApiV1GenerationsRouteWithChildren =
   ApiV1GenerationsRoute._addFileChildren(ApiV1GenerationsRouteChildren)
 
+interface ApiV1ScriptsScriptIdAnimaticRouteChildren {
+  ApiV1ScriptsScriptIdAnimaticVersionVideoRoute: typeof ApiV1ScriptsScriptIdAnimaticVersionVideoRoute
+}
+
+const ApiV1ScriptsScriptIdAnimaticRouteChildren: ApiV1ScriptsScriptIdAnimaticRouteChildren =
+  {
+    ApiV1ScriptsScriptIdAnimaticVersionVideoRoute:
+      ApiV1ScriptsScriptIdAnimaticVersionVideoRoute,
+  }
+
+const ApiV1ScriptsScriptIdAnimaticRouteWithChildren =
+  ApiV1ScriptsScriptIdAnimaticRoute._addFileChildren(
+    ApiV1ScriptsScriptIdAnimaticRouteChildren,
+  )
+
 interface ApiV1ScriptsScriptIdShotsShotIdFramesRouteChildren {
   ApiV1ScriptsScriptIdShotsShotIdFramesSelectRoute: typeof ApiV1ScriptsScriptIdShotsShotIdFramesSelectRoute
 }
@@ -1006,19 +1142,31 @@ const ApiV1ScriptsScriptIdShotsShotIdFramesRouteWithChildren =
   )
 
 interface ApiV1ScriptsScriptIdRouteChildren {
+  ApiV1ScriptsScriptIdAnimaticRoute: typeof ApiV1ScriptsScriptIdAnimaticRouteWithChildren
   ApiV1ScriptsScriptIdAssembleRoute: typeof ApiV1ScriptsScriptIdAssembleRoute
   ApiV1ScriptsScriptIdGenerateRoute: typeof ApiV1ScriptsScriptIdGenerateRoute
   ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute: typeof ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute
+  ApiV1ScriptsScriptIdShotsShotIdEditPlanRoute: typeof ApiV1ScriptsScriptIdShotsShotIdEditPlanRoute
   ApiV1ScriptsScriptIdShotsShotIdFramesRoute: typeof ApiV1ScriptsScriptIdShotsShotIdFramesRouteWithChildren
+  ApiV1ScriptsScriptIdShotsShotIdTakeRoute: typeof ApiV1ScriptsScriptIdShotsShotIdTakeRoute
+  ApiV1ScriptsScriptIdShotsShotIdCaptionsGenerateRoute: typeof ApiV1ScriptsScriptIdShotsShotIdCaptionsGenerateRoute
 }
 
 const ApiV1ScriptsScriptIdRouteChildren: ApiV1ScriptsScriptIdRouteChildren = {
+  ApiV1ScriptsScriptIdAnimaticRoute:
+    ApiV1ScriptsScriptIdAnimaticRouteWithChildren,
   ApiV1ScriptsScriptIdAssembleRoute: ApiV1ScriptsScriptIdAssembleRoute,
   ApiV1ScriptsScriptIdGenerateRoute: ApiV1ScriptsScriptIdGenerateRoute,
   ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute:
     ApiV1ScriptsScriptIdShotsShotIdCarryFinalFrameRoute,
+  ApiV1ScriptsScriptIdShotsShotIdEditPlanRoute:
+    ApiV1ScriptsScriptIdShotsShotIdEditPlanRoute,
   ApiV1ScriptsScriptIdShotsShotIdFramesRoute:
     ApiV1ScriptsScriptIdShotsShotIdFramesRouteWithChildren,
+  ApiV1ScriptsScriptIdShotsShotIdTakeRoute:
+    ApiV1ScriptsScriptIdShotsShotIdTakeRoute,
+  ApiV1ScriptsScriptIdShotsShotIdCaptionsGenerateRoute:
+    ApiV1ScriptsScriptIdShotsShotIdCaptionsGenerateRoute,
 }
 
 const ApiV1ScriptsScriptIdRouteWithChildren =
@@ -1072,6 +1220,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiV1PromptsOptimizeRoute: ApiV1PromptsOptimizeRoute,
   ApiV1UploadsPresignRoute: ApiV1UploadsPresignRoute,
   ApiMediaHubGenerationJobIdVideoRoute: ApiMediaHubGenerationJobIdVideoRoute,
+  ApiMediaHubScriptsScriptIdAnimaticVersionVideoRoute:
+    ApiMediaHubScriptsScriptIdAnimaticVersionVideoRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

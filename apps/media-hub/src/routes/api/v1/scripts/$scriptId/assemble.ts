@@ -4,7 +4,9 @@ import {
   agentJson,
   createAgentApiCaller,
   handleAgentApiError,
+  readOptionalAgentJson,
 } from "~/lib/agent-api";
+import { assembleScriptBody } from "~/lib/agent-video-script";
 
 async function handlePost(
   request: Request,
@@ -12,8 +14,12 @@ async function handlePost(
 ): Promise<Response> {
   try {
     const { caller } = await createAgentApiCaller(request);
+    const body = assembleScriptBody.parse(await readOptionalAgentJson(request));
     return agentJson(
-      await caller.mediaHub.script.assemble({ id: scriptId }),
+      await caller.mediaHub.script.assemble({
+        id: scriptId,
+        burnCaptions: body.burn_captions,
+      }),
       201,
     );
   } catch (error) {

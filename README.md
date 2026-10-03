@@ -2,7 +2,17 @@
 
 Pumpkii Media Hub 是独立的视频生成、审核与多平台发布服务。项目包含 MiniMax H3 / Ref2VA 生成流程、视频修改、YouTube / Instagram / 抖音发布、小红书投稿包、飞书通知、PostgreSQL 数据与 S3 媒体存储。
 
-一分钟短视频可从“脚本模式”进入导演台：拆分镜头、确认文案与首帧、逐镜预览生成及修改版本、选定合片采用的版本，再预览和下载完整成片。镜头的局部修改复用现有 Ref2VA 流程；镜头排序与末帧接力也在同一脚本内完成。
+一分钟短视频可从“脚本模式”进入导演台：拆分镜头、确认文案与首帧、逐镜预览生成及修改版本、选定合片采用的版本，再预览和下载完整成片。镜头的局部修改复用现有 Ref2VA 流程；镜头排序与末帧接力也在同一脚本内完成。导演台还可用选定首帧生成静态分镜预演、裁切镜头、从台词生成可修改的字幕草稿，并选择是否把字幕烧录到成片。
+
+远程 Agent 可使用 Bearer Token 调用相同流程，完整接口见 `GET /api/openapi`：
+
+- `PATCH /api/v1/scripts/{scriptId}/shots/{shotId}/take` 选定成片采用的视频版本，提交 `job_id` 和当前脚本 `version`。
+- `PATCH /api/v1/scripts/{scriptId}/shots/{shotId}/edit-plan` 设置 `trim_start_seconds`、`trim_end_seconds`、`captions`，并提交当前 `version`。字幕时间相对于原镜头，裁切时会自动截断到成片范围。
+- `POST /api/v1/scripts/{scriptId}/shots/{shotId}/captions/generate` 从脚本台词生成带时间码的字幕草稿，提交当前 `version` 后仍可用 edit-plan 校正。该步骤不做语音识别。
+- `POST /api/v1/scripts/{scriptId}/animatic` 使用所有已选首帧生成无声分镜预演；返回的 `agentVideoUrl` 可用 Bearer Token 读取。
+- `POST /api/v1/scripts/{scriptId}/assemble` 合片；可提交 `{ "burn_captions": true }` 烧录字幕。成片继续通过返回的生成任务和视频接口获取。
+
+脚本版本每次修改后递增；Agent 应使用最新 `GET /api/v1/scripts/{scriptId}` 返回的版本，避免覆盖其他编辑。普通脚本 PATCH 会保留未显式修改的导演台选片、裁切和字幕状态。
 
 ## 运行要求
 

@@ -129,6 +129,7 @@ function AuthenticatedVideoScriptStudio({
   const [selectedShotIds, setSelectedShotIds] = useState<string[]>([]);
   const [qualityPreset, setQualityPreset] = useState<QualityPreset>("balanced");
   const [message, setMessage] = useState<string | null>(null);
+  const [animaticVideoUrl, setAnimaticVideoUrl] = useState<string | null>(null);
 
   const scriptQuery = useQuery({
     ...trpc.mediaHub.script.get.queryOptions({
@@ -184,6 +185,7 @@ function AuthenticatedVideoScriptStudio({
       setVersion(script.version);
       setDirty(false);
       setSelectedShotIds([]);
+      setAnimaticVideoUrl(null);
     },
     [],
   );
@@ -252,6 +254,15 @@ function AuthenticatedVideoScriptStudio({
   const selectTakeMutation = useMutation(
     trpc.mediaHub.script.selectTake.mutationOptions(),
   );
+  const updateShotEditMutation = useMutation(
+    trpc.mediaHub.script.updateShotEdit.mutationOptions(),
+  );
+  const generateCaptionsMutation = useMutation(
+    trpc.mediaHub.script.generateCaptions.mutationOptions(),
+  );
+  const createAnimaticMutation = useMutation(
+    trpc.mediaHub.script.createAnimatic.mutationOptions(),
+  );
 
   const generating =
     draftMutation.isPending ||
@@ -262,7 +273,10 @@ function AuthenticatedVideoScriptStudio({
     bridgeMutation.isPending ||
     createFrameCandidatesMutation.isPending ||
     selectFrameCandidateMutation.isPending ||
-    selectTakeMutation.isPending;
+    selectTakeMutation.isPending ||
+    updateShotEditMutation.isPending ||
+    generateCaptionsMutation.isPending ||
+    createAnimaticMutation.isPending;
   const generationProfiles = (healthQuery.data?.profiles ?? []).filter(
     (profile) => profile.kind === "generate",
   );
@@ -292,7 +306,10 @@ function AuthenticatedVideoScriptStudio({
       return take?.status === "succeeded";
     });
 
-  const markDirty = () => setDirty(true);
+  const markDirty = () => {
+    setDirty(true);
+    setAnimaticVideoUrl(null);
+  };
   const updateShot = (id: string, patch: Partial<MediaVideoScriptShot>) => {
     setShots((current) =>
       current.map((shot) => (shot.id === id ? { ...shot, ...patch } : shot)),
@@ -523,12 +540,70 @@ function AuthenticatedVideoScriptStudio({
     }
   };
 
-  const assembleVideo = async () => {
+  const saveShotEdit = async (
+    shotId: string,
+    trimStartSeconds: number,
+    trimEndSeconds: number,
+    captions: NonNullable<MediaVideoScriptShot["captions"]>,
+  ) => {
+    if (!selectedScriptId) return;
+    try {
+      const saved = dirty ? await persistScript() : null;
+      const updated = await updateShotEditMutation.mutateAsync({
+        id: selectedScriptId,
+        shotId,
+        version: saved?.version ?? version,
+        trimStartSeconds,
+        trimEndSeconds,
+        captions,
+      });
+      applyScript(updated);
+      setAnimaticVideoUrl(null);
+      await refreshScripts(selectedScriptId);
+      setMessage("镜头裁切与字幕已保存，成片需要重新合成。");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "保存镜头编辑失败");
+    }
+  };
+
+  const generateShotCaptions = async (shotId: string) => {
+    if (!selectedScriptId) return;
+    try {
+      const saved = dirty ? await persistScript() : null;
+      const updated = await generateCaptionsMutation.mutateAsync({
+        id: selectedScriptId,
+        shotId,
+        version: saved?.version ?? version,
+      });
+      applyScript(updated);
+      await refreshScripts(selectedScriptId);
+      setMessage("已根据逐字台词生成字幕，请校对时间和文字。");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "生成字幕失败");
+    }
+  };
+
+  const createAnimatic = async () => {
+    if (!selectedScriptId) return;
+    try {
+      if (dirty) await persistScript();
+      const preview = await createAnimaticMutation.mutateAsync({
+        id: selectedScriptId,
+      });
+      setAnimaticVideoUrl(preview.videoUrl);
+      setMessage("分镜预演已生成，可在导演台播放。");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "生成分镜预演失败");
+    }
+  };
+
+  const assembleVideo = async (burnCaptions = false) => {
     if (!selectedScriptId) return;
     try {
       if (dirty) await persistScript();
       const result = await assembleMutation.mutateAsync({
         id: selectedScriptId,
+        burnCaptions,
       });
       await refreshScripts(selectedScriptId);
       await queryClient.invalidateQueries({
@@ -809,6 +884,10 @@ function AuthenticatedVideoScriptStudio({
                   onSelectTake={selectTake}
                   onGenerateShot={async (shotId) => generateShots(shotId)}
                   onAssemble={assembleVideo}
+                  onSaveShotEdit={saveShotEdit}
+                  onGenerateCaptions={generateShotCaptions}
+                  onCreateAnimatic={createAnimatic}
+                  animaticVideoUrl={animaticVideoUrl}
                   onEditCreated={async () => {
                     if (selectedScriptId)
                       await refreshScripts(selectedScriptId);
