@@ -5,11 +5,14 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const TRANSITION_SECONDS = 0.3;
+export const TRANSITION_SECONDS = 0.3;
 
 export type VideoScriptTransition = "cut" | "fade_white" | "fade_black";
 
-async function concatShotVideos(videos: Buffer[]): Promise<Buffer> {
+async function concatShotVideos(
+  videos: Buffer[],
+  signal?: AbortSignal,
+): Promise<Buffer> {
   const dir = await mkdtemp(join(tmpdir(), "media-hub-script-assembly-"));
   try {
     const listPath = join(dir, "concat.txt");
@@ -21,29 +24,36 @@ async function concatShotVideos(videos: Buffer[]): Promise<Buffer> {
       lines.push(`file '${inputPath}'`);
     }
     await writeFile(listPath, `${lines.join("\n")}\n`);
-    await execFileAsync(process.env.FFMPEG_PATH ?? "ffmpeg", [
-      "-f",
-      "concat",
-      "-safe",
-      "0",
-      "-i",
-      listPath,
-      "-c",
-      "copy",
-      "-movflags",
-      "+faststart",
-      outputPath,
-      "-y",
-      "-loglevel",
-      "error",
-    ]);
+    await execFileAsync(
+      process.env.FFMPEG_PATH ?? "ffmpeg",
+      [
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        listPath,
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        outputPath,
+        "-y",
+        "-loglevel",
+        "error",
+      ],
+      { signal, timeout: 120_000, maxBuffer: 2_000_000 },
+    );
     return await readFile(outputPath);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 }
 
-async function probeShot(path: string): Promise<{
+async function probeShot(
+  path: string,
+  signal?: AbortSignal,
+): Promise<{
   duration: number;
   hasAudio: boolean;
 }> {
@@ -58,6 +68,7 @@ async function probeShot(path: string): Promise<{
       "json",
       path,
     ],
+    { signal, timeout: 120_000, maxBuffer: 2_000_000 },
   );
   const probe = JSON.parse(stdout) as {
     streams?: { codec_type?: string; duration?: string }[];
@@ -80,9 +91,10 @@ export async function renderShotVideos(
   videos: Buffer[],
   transition: VideoScriptTransition,
   fps: number,
+  signal?: AbortSignal,
 ): Promise<Buffer> {
   if (transition === "cut" || videos.length < 2) {
-    return concatShotVideos(videos);
+    return concatShotVideos(videos, signal);
   }
   const dir = await mkdtemp(join(tmpdir(), "media-hub-script-transition-"));
   try {
@@ -93,38 +105,62 @@ export async function renderShotVideos(
         return path;
       }),
     );
-    const probes = await Promise.all(paths.map(probeShot));
-    const filters: string[] = [];
-    for (const [index, shot] of probes.entries()) {
-      const duration = shot.duration.toFixed(6);
-      filters.push(
-        `[${index}:v]fps=${fps},format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[v${index}]`,
-      );
-      filters.push(
-        shot.hasAudio
-          ? `[${index}:a]aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,apad,atrim=duration=${duration},asetpts=PTS-STARTPTS[a${index}]`
-          : `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration=${duration},asetpts=PTS-STARTPTS[a${index}]`,
-      );
-    }
-    let elapsed = probes[0]!.duration;
-    let videoLabel = "v0";
-    let audioLabel = "a0";
-    const effect = transition === "fade_white" ? "fadewhite" : "fadeblack";
-    for (let index = 1; index < paths.length; index++) {
-      const nextVideo = `vx${index}`;
-      const nextAudio = `ax${index}`;
-      filters.push(
-        `[${videoLabel}][v${index}]xfade=transition=${effect}:duration=${TRANSITION_SECONDS}:offset=${(elapsed - TRANSITION_SECONDS).toFixed(6)}[${nextVideo}]`,
-      );
-      filters.push(
-        `[${audioLabel}][a${index}]acrossfade=d=${TRANSITION_SECONDS}:c1=tri:c2=tri[${nextAudio}]`,
-      );
-      elapsed += probes[index]!.duration - TRANSITION_SECONDS;
-      videoLabel = nextVideo;
-      audioLabel = nextAudio;
-    }
-    const outputPath = join(dir, "assembled.mp4");
-    await execFileAsync(process.env.FFMPEG_PATH ?? "ffmpeg", [
+    return await readFile(
+      await renderShotFiles(paths, transition, fps, dir, signal),
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+export async function renderShotFiles(
+  paths: string[],
+  transition: Exclude<VideoScriptTransition, "cut">,
+  fps: number,
+  dir: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  signal?.throwIfAborted();
+  const probes = await Promise.all(
+    paths.map((path) => probeShot(path, signal)),
+  );
+  const filters: string[] = [];
+  for (const [index, shot] of probes.entries()) {
+    const duration = shot.duration.toFixed(6);
+    filters.push(
+      `[${index}:v]fps=${fps},format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[v${index}]`,
+    );
+    filters.push(
+      shot.hasAudio
+        ? `[${index}:a]aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,apad,atrim=duration=${duration},asetpts=PTS-STARTPTS[a${index}]`
+        : `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration=${duration},asetpts=PTS-STARTPTS[a${index}]`,
+    );
+  }
+  const first = probes[0];
+  if (!first) throw new Error("没有可用于转场的镜头");
+  let elapsed = first.duration;
+  let videoLabel = "v0";
+  let audioLabel = "a0";
+  const effect = transition === "fade_white" ? "fadewhite" : "fadeblack";
+  for (let index = 1; index < paths.length; index++) {
+    const nextVideo = `vx${index}`;
+    const nextAudio = `ax${index}`;
+    filters.push(
+      `[${videoLabel}][v${index}]xfade=transition=${effect}:duration=${TRANSITION_SECONDS}:offset=${(elapsed - TRANSITION_SECONDS).toFixed(6)}[${nextVideo}]`,
+    );
+    filters.push(
+      `[${audioLabel}][a${index}]acrossfade=d=${TRANSITION_SECONDS}:c1=tri:c2=tri[${nextAudio}]`,
+    );
+    const shot = probes[index];
+    if (!shot) throw new Error("转场镜头不存在");
+    elapsed += shot.duration - TRANSITION_SECONDS;
+    videoLabel = nextVideo;
+    audioLabel = nextAudio;
+  }
+  const outputPath = join(dir, "assembled.mp4");
+  await execFileAsync(
+    process.env.FFMPEG_PATH ?? "ffmpeg",
+    [
       ...paths.flatMap((path) => ["-i", path]),
       "-filter_complex",
       filters.join(";"),
@@ -151,9 +187,8 @@ export async function renderShotVideos(
       "-y",
       "-loglevel",
       "error",
-    ]);
-    return await readFile(outputPath);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+    ],
+    { signal, timeout: 120_000, maxBuffer: 2_000_000 },
+  );
+  return outputPath;
 }

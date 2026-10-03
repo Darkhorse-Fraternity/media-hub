@@ -2,19 +2,21 @@ import { createHash, randomInt } from "node:crypto";
 import type { TRPCRouterRecord } from "@trpc/server";
 import { TRPCError } from "@trpc/server";
 
-import type { db as mediaHubDb } from "@acme/db/client";
 import type { MediaVideoScriptShot } from "@acme/validators";
 import { and, count, desc, eq, inArray, isNull } from "@acme/db";
 import {
   mediaGenerationJob,
   mediaImageAsset,
   mediaImageJob,
+  mediaTask,
   mediaVideoScript,
 } from "@acme/db/schema";
 import {
   deleteMediaHubObject,
+  deleteMediaHubObjectsByPrefix,
   getMediaHubObject,
   putMediaHubObject,
+  scriptAnimaticPrefix,
 } from "@acme/storage";
 import {
   analyzeMediaVideoScriptSchema,
@@ -29,9 +31,12 @@ import {
   mediaVideoScriptIdSchema,
   mediaVideoScriptListSchema,
   selectMediaVideoScriptFrameCandidateSchema,
+  selectMediaVideoScriptTakeSchema,
   updateMediaVideoScriptSchema,
+  updateMediaVideoScriptShotEditSchema,
 } from "@acme/validators";
 
+import type { MediaHubDb } from "./video-script-document";
 import { protectedProcedure } from "../../trpc";
 import { queryMediaHubCodex } from "./codex-copy";
 import {
@@ -46,10 +51,16 @@ import { requireH3Profile } from "./h3-profile";
 import { queueMediaImageJob } from "./image-job-service";
 import { resolveMediaSystemSetting } from "./system-settings";
 import { extractMediaGenerationLastFrame } from "./video-frame";
+import { createScriptAnimatic } from "./video-script-animatic";
 import {
   assembleCompletedVideoScript,
   VideoScriptAssemblyNotReadyError,
 } from "./video-script-assembly";
+import {
+  scriptAssemblyJobId,
+  selectLatestScriptShotJobs,
+  selectScriptAssemblyJob,
+} from "./video-script-assembly-core";
 import {
   buildVideoScriptDraftPrompt,
   buildVideoScriptFirstFramePrompt,
@@ -57,26 +68,12 @@ import {
   parseVideoScriptDraft,
   resolveVideoScriptCopyStatus,
 } from "./video-script-core";
-
-type MediaHubDb = typeof mediaHubDb;
-
-async function requireOwnedScript(
-  database: MediaHubDb,
-  userId: string,
-  id: string,
-) {
-  const script = await database.query.mediaVideoScript.findFirst({
-    where: and(
-      eq(mediaVideoScript.id, id),
-      eq(mediaVideoScript.createdBy, userId),
-      isNull(mediaVideoScript.deletedAt),
-    ),
-  });
-  if (!script) {
-    throw new TRPCError({ code: "NOT_FOUND", message: "视频脚本不存在" });
-  }
-  return script;
-}
+import {
+  requireOwnedScript,
+  scriptSummary,
+  updateOwnedShotDocument,
+} from "./video-script-document";
+import { captionsFromDialogues } from "./video-script-edit-plan";
 
 async function listShotFrameCandidates(
   database: MediaHubDb,
@@ -124,18 +121,6 @@ async function listShotFrameCandidates(
       createdAt: asset.createdAt,
       url: `/api/media-hub/images/${encodeURIComponent(asset.id)}`,
     })),
-  };
-}
-
-function scriptSummary<T extends { shots: MediaVideoScriptShot[] }>(script: T) {
-  return {
-    ...script,
-    shotCount: script.shots.length,
-    totalDurationSeconds: script.shots.reduce(
-      (total, shot) => total + shot.durationSeconds,
-      0,
-    ),
-    analysis: analyzeMediaVideoScriptShots(script.shots),
   };
 }
 
@@ -212,27 +197,77 @@ export const mediaVideoScriptRouter = {
         }),
         listShotFrameCandidates(ctx.db, ctx.session.user.id, script.id),
       ]);
+      const selectedJobIds = Object.fromEntries(
+        script.shots.flatMap((shot) =>
+          shot.selectedGenerationJobId
+            ? [[shot.id, shot.selectedGenerationJobId] as const]
+            : [],
+        ),
+      );
+      const sourceJobs = selectLatestScriptShotJobs(
+        script.shots.map((shot) => shot.id),
+        jobs,
+        selectedJobIds,
+      );
+      const currentSourceIds = sourceJobs?.map((job) => job.id) ?? [];
+      const currentCutId = sourceJobs
+        ? scriptAssemblyJobId(
+            script.id,
+            currentSourceIds,
+            script.shots,
+            false,
+            { width: script.width, height: script.height },
+          )
+        : null;
+      const currentCaptionedCutId = sourceJobs
+        ? scriptAssemblyJobId(script.id, currentSourceIds, script.shots, true, {
+            width: script.width,
+            height: script.height,
+          })
+        : null;
+      const assembly = selectScriptAssemblyJob(jobs, [
+        currentCutId,
+        currentCaptionedCutId,
+      ]);
+      const assemblyTask = assembly?.mediaTaskId
+        ? await ctx.db.query.mediaTask.findFirst({
+            where: and(
+              eq(mediaTask.id, assembly.mediaTaskId),
+              eq(mediaTask.createdBy, ctx.session.user.id),
+            ),
+            columns: { aiPrompts: true },
+          })
+        : null;
+      const captioned =
+        assembly?.workflowVersion === "script-cut-captioned-v3" ||
+        Boolean(
+          assemblyTask?.aiPrompts &&
+          typeof assemblyTask.aiPrompts === "object" &&
+          "burnCaptions" in assemblyTask.aiPrompts &&
+          assemblyTask.aiPrompts.burnCaptions,
+        );
       return {
         ...scriptSummary(script),
         shotFrameCandidates,
         assembledJob:
-          jobs
-            .filter((job) => job.kind === "assemble")
-            .map((job) => ({
-              id: job.id,
-              title: job.title,
-              status: job.status,
-              errorMessage: job.errorMessage,
-              outputStorageKey: job.outputStorageKey,
-              mediaTaskId: job.mediaTaskId,
-              sourceJobIds: job.providerJobIds,
-              createdAt: job.createdAt,
-              finishedAt: job.finishedAt,
-              videoUrl:
-                job.status === "succeeded"
-                  ? `/api/media-hub/generation/${encodeURIComponent(job.id)}/video`
-                  : null,
-            }))[0] ?? null,
+          (assembly ? [assembly] : []).map((job) => ({
+            id: job.id,
+            title: job.title,
+            status: job.status,
+            errorMessage: job.errorMessage,
+            outputStorageKey: job.outputStorageKey,
+            mediaTaskId: job.mediaTaskId,
+            sourceJobIds: job.providerJobIds,
+            isCurrent:
+              job.id === currentCutId || job.id === currentCaptionedCutId,
+            captioned,
+            createdAt: job.createdAt,
+            finishedAt: job.finishedAt,
+            videoUrl:
+              job.status === "succeeded"
+                ? `/api/media-hub/generation/${encodeURIComponent(job.id)}/video`
+                : null,
+          }))[0] ?? null,
         shotJobs: jobs
           .filter((job) => job.kind !== "assemble")
           .map((job) => ({
@@ -245,8 +280,13 @@ export const mediaVideoScriptRouter = {
             profile: job.profile,
             errorMessage: job.errorMessage,
             outputStorageKey: job.outputStorageKey,
+            durationSeconds: job.durationSeconds,
             createdAt: job.createdAt,
             finishedAt: job.finishedAt,
+            videoUrl:
+              job.status === "succeeded" && job.outputStorageKey
+                ? `/api/media-hub/generation/${encodeURIComponent(job.id)}/video`
+                : null,
           })),
       };
     }),
@@ -357,6 +397,67 @@ export const mediaVideoScriptRouter = {
       }
       return scriptSummary(updated);
     }),
+
+  selectTake: protectedProcedure
+    .input(selectMediaVideoScriptTakeSchema)
+    .mutation(async ({ ctx, input }) => {
+      const take = await ctx.db.query.mediaGenerationJob.findFirst({
+        where: and(
+          eq(mediaGenerationJob.id, input.jobId),
+          eq(mediaGenerationJob.scriptId, input.id),
+          eq(mediaGenerationJob.scriptShotId, input.shotId),
+          eq(mediaGenerationJob.createdBy, ctx.session.user.id),
+        ),
+      });
+      if (
+        take?.status !== "succeeded" ||
+        !take.outputStorageKey ||
+        take.kind === "assemble"
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "只能选用当前镜头已经完成的视频",
+        });
+      }
+      return updateOwnedShotDocument(
+        ctx.db,
+        ctx.session.user.id,
+        input,
+        (shot) => ({ ...shot, selectedGenerationJobId: take.id }),
+      );
+    }),
+
+  updateShotEdit: protectedProcedure
+    .input(updateMediaVideoScriptShotEditSchema)
+    .mutation(({ ctx, input }) =>
+      updateOwnedShotDocument(ctx.db, ctx.session.user.id, input, (shot) => ({
+        ...shot,
+        trimStartSeconds: input.trimStartSeconds ?? shot.trimStartSeconds,
+        trimEndSeconds: input.trimEndSeconds ?? shot.trimEndSeconds,
+        captions: input.captions ?? shot.captions,
+      })),
+    ),
+
+  generateCaptions: protectedProcedure
+    .input(
+      updateMediaVideoScriptShotEditSchema.pick({
+        id: true,
+        shotId: true,
+        version: true,
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      updateOwnedShotDocument(ctx.db, ctx.session.user.id, input, (shot) => ({
+        ...shot,
+        captions: captionsFromDialogues(shot),
+      })),
+    ),
+
+  createAnimatic: protectedProcedure
+    .input(mediaVideoScriptIdSchema)
+    .mutation(({ ctx, input }) =>
+      createScriptAnimatic(ctx.db, ctx.session.user.id, input.id),
+    ),
 
   listFrameCandidates: protectedProcedure
     .input(listMediaVideoScriptFrameCandidatesSchema)
@@ -486,7 +587,16 @@ export const mediaVideoScriptRouter = {
   delete: protectedProcedure
     .input(mediaVideoScriptIdSchema)
     .mutation(async ({ ctx, input }) => {
-      const [deleted] = await ctx.db
+      const owned = await ctx.db.query.mediaVideoScript.findFirst({
+        where: and(
+          eq(mediaVideoScript.id, input.id),
+          eq(mediaVideoScript.createdBy, ctx.session.user.id),
+        ),
+        columns: { id: true },
+      });
+      if (!owned)
+        throw new TRPCError({ code: "NOT_FOUND", message: "视频脚本不存在" });
+      await ctx.db
         .update(mediaVideoScript)
         .set({ deletedAt: new Date(), updatedAt: new Date() })
         .where(
@@ -495,11 +605,10 @@ export const mediaVideoScriptRouter = {
             eq(mediaVideoScript.createdBy, ctx.session.user.id),
             isNull(mediaVideoScript.deletedAt),
           ),
-        )
-        .returning({ id: mediaVideoScript.id });
-      if (!deleted) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "视频脚本不存在" });
-      }
+        );
+      await deleteMediaHubObjectsByPrefix(
+        scriptAnimaticPrefix(ctx.session.user.id, input.id),
+      );
       return { ok: true };
     }),
 
@@ -532,8 +641,10 @@ export const mediaVideoScriptRouter = {
           message: "只能把已生成镜头的末帧接到它的下一镜",
         });
       }
+      const selectedJobId = script.shots[sourceIndex]?.selectedGenerationJobId;
       const sourceJob = await ctx.db.query.mediaGenerationJob.findFirst({
         where: and(
+          selectedJobId ? eq(mediaGenerationJob.id, selectedJobId) : undefined,
           eq(mediaGenerationJob.scriptId, script.id),
           eq(mediaGenerationJob.scriptShotId, input.sourceShotId),
           eq(mediaGenerationJob.createdBy, ctx.session.user.id),
@@ -709,11 +820,23 @@ export const mediaVideoScriptRouter = {
         };
       });
       await ctx.db.transaction(async (transaction) => {
-        await transaction.insert(mediaGenerationJob).values(rows);
-        await transaction
+        const [current] = await transaction
           .update(mediaVideoScript)
           .set({ status: "production", updatedAt: now })
-          .where(eq(mediaVideoScript.id, script.id));
+          .where(
+            and(
+              eq(mediaVideoScript.id, script.id),
+              eq(mediaVideoScript.version, script.version),
+              isNull(mediaVideoScript.deletedAt),
+            ),
+          )
+          .returning({ id: mediaVideoScript.id });
+        if (!current)
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "脚本已修改或删除，请刷新后再生成",
+          });
+        await transaction.insert(mediaGenerationJob).values(rows);
       });
       rows.forEach((row) => scheduleMediaGenerationJob(row.id, null));
       return {
@@ -731,14 +854,18 @@ export const mediaVideoScriptRouter = {
     .mutation(async ({ ctx, input }) => {
       await requireOwnedScript(ctx.db, ctx.session.user.id, input.id);
       try {
-        const result = await assembleCompletedVideoScript({
-          scriptId: input.id,
-          userId: ctx.session.user.id,
-          requireReady: true,
-          sourceJobIds: input.sourceJobIds,
-          transition: input.transition,
-          rebuild: input.rebuild,
-        });
+        const result = await assembleCompletedVideoScript(
+          {
+            scriptId: input.id,
+            userId: ctx.session.user.id,
+            requireReady: true,
+            burnCaptions: input.burnCaptions,
+            sourceJobIds: input.sourceJobIds,
+            transition: input.transition,
+            rebuild: input.rebuild,
+          },
+          ctx.db,
+        );
         if (!result) {
           throw new VideoScriptAssemblyNotReadyError("暂时无法创建完整成片");
         }

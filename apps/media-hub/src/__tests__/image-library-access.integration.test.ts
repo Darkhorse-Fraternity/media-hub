@@ -1,12 +1,13 @@
-import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { db as applicationDb } from "@acme/db/client";
+import { migrate } from "@acme/db/migrate";
 import { mediaImageAsset, user } from "@acme/db/schema";
+
+import { configureTestDockerHost } from "./helpers/postgres";
 
 const migrationsFolder = fileURLToPath(
   new URL("../../../../packages/db/drizzle", import.meta.url),
@@ -18,16 +19,6 @@ let container: StartedPostgreSqlContainer;
 let database: Database;
 let router: (typeof import("@acme/api"))["mediaHubAppRouter"];
 let createTRPCContext: (typeof import("@acme/api"))["createTRPCContext"];
-
-function configureDockerHostFromCurrentContext(): void {
-  if (process.env.DOCKER_HOST || process.platform !== "darwin") return;
-  const dockerHost = execFileSync(
-    "docker",
-    ["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"],
-    { encoding: "utf8" },
-  ).trim();
-  if (dockerHost) process.env.DOCKER_HOST = dockerHost;
-}
 
 function callerFor(userId: string, role: "member" | "admin" = "member") {
   const context = {
@@ -58,7 +49,7 @@ function callerFor(userId: string, role: "member" | "admin" = "member") {
 
 describe("user-bound image library", () => {
   beforeAll(async () => {
-    configureDockerHostFromCurrentContext();
+    configureTestDockerHost();
     container = await new PostgreSqlContainer(postgresImage)
       .withDatabase("media_image_access_test")
       .withUsername("media_image_access_test")
@@ -132,7 +123,11 @@ describe("user-bound image library", () => {
   }, 120_000);
 
   afterAll(async () => {
-    await container?.stop();
+    try {
+      await database?.$client.end({ timeout: 5 });
+    } finally {
+      await container?.stop();
+    }
   }, 30_000);
 
   it("lists only the current user's assets", async () => {

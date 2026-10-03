@@ -118,6 +118,28 @@ const agentApiEndpoints = [
   ["PATCH", "/api/v1/scripts/{scriptId}", "更新视频脚本"],
   ["DELETE", "/api/v1/scripts/{scriptId}", "删除视频脚本"],
   ["POST", "/api/v1/scripts/{scriptId}/generate", "生成脚本镜头"],
+  ["POST", "/api/v1/scripts/{scriptId}/assemble", "按选定版本与裁切方案合片"],
+  ["POST", "/api/v1/scripts/{scriptId}/animatic", "用首帧生成低成本分镜预演"],
+  [
+    "GET",
+    "/api/v1/scripts/{scriptId}/animatic/{version}/video",
+    "读取分镜预演",
+  ],
+  [
+    "PATCH",
+    "/api/v1/scripts/{scriptId}/shots/{shotId}/take",
+    "选定合片镜头版本",
+  ],
+  [
+    "PATCH",
+    "/api/v1/scripts/{scriptId}/shots/{shotId}/edit-plan",
+    "设置镜头裁切与字幕",
+  ],
+  [
+    "POST",
+    "/api/v1/scripts/{scriptId}/shots/{shotId}/captions/generate",
+    "从台词生成字幕草稿",
+  ],
   [
     "GET",
     "/api/v1/scripts/{scriptId}/shots/{shotId}/frames",
@@ -1315,7 +1337,7 @@ function MediaHubDashboard({
               to="/scripts"
               className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-300 transition hover:border-amber-400/50 hover:text-amber-200 focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:outline-none"
             >
-              脚本模式
+              短视频导演台
             </Link>
             <Link
               to="/images"

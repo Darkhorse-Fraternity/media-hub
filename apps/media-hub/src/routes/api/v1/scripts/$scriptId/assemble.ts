@@ -1,18 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { z } from "zod/v4";
 
 import {
-  AgentApiError,
   agentJson,
   createAgentApiCaller,
   handleAgentApiError,
+  readOptionalAgentJson,
 } from "~/lib/agent-api";
-
-const assembleBody = z.object({
-  source_job_ids: z.array(z.string().uuid()).min(2).max(20).optional(),
-  transition: z.enum(["cut", "fade_white", "fade_black"]).optional(),
-  rebuild: z.boolean().optional(),
-});
+import { assembleScriptBody } from "~/lib/agent-video-script";
 
 async function handlePost(
   request: Request,
@@ -20,19 +14,11 @@ async function handlePost(
 ): Promise<Response> {
   try {
     const { caller } = await createAgentApiCaller(request);
-    const rawBody = await request.text();
-    let payload: unknown = {};
-    if (rawBody.trim()) {
-      try {
-        payload = JSON.parse(rawBody);
-      } catch {
-        throw new AgentApiError(400, "Request body must be valid JSON");
-      }
-    }
-    const body = assembleBody.parse(payload);
+    const body = assembleScriptBody.parse(await readOptionalAgentJson(request));
     return agentJson(
       await caller.mediaHub.script.assemble({
         id: scriptId,
+        burnCaptions: body.burn_captions,
         sourceJobIds: body.source_job_ids,
         transition: body.transition,
         rebuild: body.rebuild,

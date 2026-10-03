@@ -63,7 +63,7 @@ function AuthenticatedScriptHistory({
       <div className="mx-auto max-w-6xl">
         <header className="relative border-b border-slate-800 pb-6">
           <div className="max-w-3xl pr-24 sm:pr-28">
-            <p className="text-sm text-amber-300">Pumpkii Script Studio</p>
+            <p className="text-sm text-amber-300">Pumpkii 导演台</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
               历史脚本
             </h1>

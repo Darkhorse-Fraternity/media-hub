@@ -16,6 +16,8 @@
     "./select": "./src/select.tsx",
     "./separator": "./src/separator.tsx",
     "./table": "./src/table.tsx",
+    "./tabs": "./src/tabs.tsx",
+    "./alert-dialog": "./src/alert-dialog.tsx",
     "./theme": "./src/theme.tsx",
     "./toast": "./src/toast.tsx"
   },

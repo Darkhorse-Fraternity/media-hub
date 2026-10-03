@@ -47,7 +47,7 @@ FROM alpine AS runner
 WORKDIR /app
 
 # Install dumb-init for proper signal handling
-RUN apk add --no-cache dumb-init ffmpeg
+RUN apk add --no-cache dumb-init ffmpeg font-noto-cjk
 
 # Create non-root user
 RUN addgroup --system --gid 1001 nodejs && \

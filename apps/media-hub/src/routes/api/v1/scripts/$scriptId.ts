@@ -52,7 +52,9 @@ async function handlePatch(
         continuityBible: patch.continuity_bible
           ? mapContinuityBible(patch.continuity_bible)
           : current.continuityBible,
-        shots: patch.shots ? mapScriptShots(patch.shots) : current.shots,
+        shots: patch.shots
+          ? mapScriptShots(patch.shots, current.shots)
+          : current.shots,
       }),
     );
   } catch (error) {

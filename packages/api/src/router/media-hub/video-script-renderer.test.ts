@@ -15,7 +15,7 @@ it("crossfades two shots and supplies audio when one shot is silent", async () =
     const first = join(dir, "first.mp4");
     const second = join(dir, "second.mp4");
     const result = join(dir, "result.mp4");
-    await execFileAsync("ffmpeg", [
+    await execFileAsync(process.env.FFMPEG_PATH ?? "ffmpeg", [
       "-f",
       "lavfi",
       "-i",
@@ -36,7 +36,7 @@ it("crossfades two shots and supplies audio when one shot is silent", async () =
       "-loglevel",
       "error",
     ]);
-    await execFileAsync("ffmpeg", [
+    await execFileAsync(process.env.FFMPEG_PATH ?? "ffmpeg", [
       "-f",
       "lavfi",
       "-i",
@@ -56,7 +56,7 @@ it("crossfades two shots and supplies audio when one shot is silent", async () =
       24,
     );
     await writeFile(result, video);
-    const { stdout } = await execFileAsync("ffprobe", [
+    const { stdout } = await execFileAsync(process.env.FFPROBE_PATH ?? "ffprobe", [
       "-v",
       "error",
       "-show_entries",

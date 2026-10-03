@@ -130,7 +130,7 @@ export async function validateGeneratedVideoOutput(
           "json",
           inputPath,
         ],
-        { maxBuffer: 2_000_000 },
+        { maxBuffer: 2_000_000, timeout: 30_000 },
       ));
     } catch (error) {
       throw new GenerationOutputValidationError(
