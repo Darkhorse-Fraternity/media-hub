@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as VideosRouteImport } from './routes/videos'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ScriptsRouteImport } from './routes/scripts'
 import { Route as PlatformsRouteImport } from './routes/platforms'
@@ -62,6 +63,11 @@ import { Route as ApiMediaHubScriptsScriptIdAnimaticVersionVideoRouteImport } fr
 import { Route as ApiV1ScriptsScriptIdShotsShotIdFramesSelectRouteImport } from './routes/api/v1/scripts/$scriptId/shots/$shotId/frames/select'
 import { Route as ApiV1ScriptsScriptIdShotsShotIdCaptionsGenerateRouteImport } from './routes/api/v1/scripts/$scriptId/shots/$shotId/captions/generate'
 
+const VideosRoute = VideosRouteImport.update({
+  id: '/videos',
+  path: '/videos',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -351,6 +357,7 @@ export interface FileRoutesByFullPath {
   '/platforms': typeof PlatformsRoute
   '/scripts': typeof ScriptsRoute
   '/settings': typeof SettingsRoute
+  '/videos': typeof VideosRoute
   '/admin/users': typeof AdminUsersRoute
   '/api/health': typeof ApiHealthRoute
   '/api/openapi': typeof ApiOpenapiRoute
@@ -405,6 +412,7 @@ export interface FileRoutesByTo {
   '/platforms': typeof PlatformsRoute
   '/scripts': typeof ScriptsRoute
   '/settings': typeof SettingsRoute
+  '/videos': typeof VideosRoute
   '/admin/users': typeof AdminUsersRoute
   '/api/health': typeof ApiHealthRoute
   '/api/openapi': typeof ApiOpenapiRoute
@@ -460,6 +468,7 @@ export interface FileRoutesById {
   '/platforms': typeof PlatformsRoute
   '/scripts': typeof ScriptsRoute
   '/settings': typeof SettingsRoute
+  '/videos': typeof VideosRoute
   '/admin/users': typeof AdminUsersRoute
   '/api/health': typeof ApiHealthRoute
   '/api/openapi': typeof ApiOpenapiRoute
@@ -516,6 +525,7 @@ export interface FileRouteTypes {
     | '/platforms'
     | '/scripts'
     | '/settings'
+    | '/videos'
     | '/admin/users'
     | '/api/health'
     | '/api/openapi'
@@ -570,6 +580,7 @@ export interface FileRouteTypes {
     | '/platforms'
     | '/scripts'
     | '/settings'
+    | '/videos'
     | '/admin/users'
     | '/api/health'
     | '/api/openapi'
@@ -624,6 +635,7 @@ export interface FileRouteTypes {
     | '/platforms'
     | '/scripts'
     | '/settings'
+    | '/videos'
     | '/admin/users'
     | '/api/health'
     | '/api/openapi'
@@ -679,6 +691,7 @@ export interface RootRouteChildren {
   PlatformsRoute: typeof PlatformsRoute
   ScriptsRoute: typeof ScriptsRoute
   SettingsRoute: typeof SettingsRoute
+  VideosRoute: typeof VideosRoute
   AdminUsersRoute: typeof AdminUsersRoute
   ApiHealthRoute: typeof ApiHealthRoute
   ApiOpenapiRoute: typeof ApiOpenapiRoute
@@ -709,6 +722,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/videos': {
+      id: '/videos'
+      path: '/videos'
+      fullPath: '/videos'
+      preLoaderRoute: typeof VideosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings': {
       id: '/settings'
       path: '/settings'
@@ -1195,6 +1215,7 @@ const rootRouteChildren: RootRouteChildren = {
   PlatformsRoute: PlatformsRoute,
   ScriptsRoute: ScriptsRoute,
   SettingsRoute: SettingsRoute,
+  VideosRoute: VideosRoute,
   AdminUsersRoute: AdminUsersRoute,
   ApiHealthRoute: ApiHealthRoute,
   ApiOpenapiRoute: ApiOpenapiRoute,
