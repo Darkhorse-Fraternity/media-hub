@@ -9,6 +9,7 @@ export interface ScriptShotAssemblyJob {
 export function selectLatestScriptShotJobs<TJob extends ScriptShotAssemblyJob>(
   shotIds: string[],
   jobs: TJob[],
+  selectedJobIds: Record<string, string> = {},
 ): TJob[] | null {
   const latestByShot = new Map<string, TJob>();
   for (const job of jobs) {
@@ -19,7 +20,15 @@ export function selectLatestScriptShotJobs<TJob extends ScriptShotAssemblyJob>(
   }
   const selected: TJob[] = [];
   for (const shotId of shotIds) {
-    const job = latestByShot.get(shotId);
+    const selectedId = selectedJobIds[shotId];
+    const job = selectedId
+      ? jobs.find(
+          (candidate) =>
+            candidate.id === selectedId &&
+            candidate.scriptShotId === shotId &&
+            candidate.kind !== "assemble",
+        )
+      : latestByShot.get(shotId);
     if (!job || job.status !== "succeeded" || !job.outputStorageKey)
       return null;
     selected.push(job);

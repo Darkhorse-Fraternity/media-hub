@@ -28,6 +28,7 @@ import {
   mediaVideoScriptIdSchema,
   mediaVideoScriptListSchema,
   selectMediaVideoScriptFrameCandidateSchema,
+  selectMediaVideoScriptTakeSchema,
   updateMediaVideoScriptSchema,
 } from "@acme/validators";
 
@@ -244,8 +245,13 @@ export const mediaVideoScriptRouter = {
             profile: job.profile,
             errorMessage: job.errorMessage,
             outputStorageKey: job.outputStorageKey,
+            durationSeconds: job.durationSeconds,
             createdAt: job.createdAt,
             finishedAt: job.finishedAt,
+            videoUrl:
+              job.status === "succeeded" && job.outputStorageKey
+                ? `/api/media-hub/generation/${encodeURIComponent(job.id)}/video`
+                : null,
           })),
       };
     }),
@@ -352,6 +358,69 @@ export const mediaVideoScriptRouter = {
         throw new TRPCError({
           code: "CONFLICT",
           message: "脚本已在其他页面更新，请刷新后重试",
+        });
+      }
+      return scriptSummary(updated);
+    }),
+
+  selectTake: protectedProcedure
+    .input(selectMediaVideoScriptTakeSchema)
+    .mutation(async ({ ctx, input }) => {
+      const script = await requireOwnedScript(
+        ctx.db,
+        ctx.session.user.id,
+        input.id,
+      );
+      if (script.version !== input.version) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "脚本已更新，请刷新后重新选择镜头版本",
+        });
+      }
+      if (!script.shots.some((shot) => shot.id === input.shotId)) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "脚本镜头不存在" });
+      }
+      const take = await ctx.db.query.mediaGenerationJob.findFirst({
+        where: and(
+          eq(mediaGenerationJob.id, input.jobId),
+          eq(mediaGenerationJob.scriptId, script.id),
+          eq(mediaGenerationJob.scriptShotId, input.shotId),
+          eq(mediaGenerationJob.createdBy, ctx.session.user.id),
+        ),
+      });
+      if (
+        take?.status !== "succeeded" ||
+        !take.outputStorageKey ||
+        take.kind === "assemble"
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "只能选用当前镜头已经完成的视频",
+        });
+      }
+      const [updated] = await ctx.db
+        .update(mediaVideoScript)
+        .set({
+          shots: script.shots.map((shot) =>
+            shot.id === input.shotId
+              ? { ...shot, selectedGenerationJobId: take.id }
+              : shot,
+          ),
+          version: script.version + 1,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(mediaVideoScript.id, script.id),
+            eq(mediaVideoScript.createdBy, ctx.session.user.id),
+            eq(mediaVideoScript.version, script.version),
+          ),
+        )
+        .returning();
+      if (!updated) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "脚本已更新，请刷新后重新选择镜头版本",
         });
       }
       return scriptSummary(updated);
@@ -531,8 +600,10 @@ export const mediaVideoScriptRouter = {
           message: "只能把已生成镜头的末帧接到它的下一镜",
         });
       }
+      const selectedJobId = script.shots[sourceIndex]?.selectedGenerationJobId;
       const sourceJob = await ctx.db.query.mediaGenerationJob.findFirst({
         where: and(
+          selectedJobId ? eq(mediaGenerationJob.id, selectedJobId) : undefined,
           eq(mediaGenerationJob.scriptId, script.id),
           eq(mediaGenerationJob.scriptShotId, input.sourceShotId),
           eq(mediaGenerationJob.createdBy, ctx.session.user.id),

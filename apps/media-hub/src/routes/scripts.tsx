@@ -14,6 +14,7 @@ import {
 } from "@acme/validators";
 
 import { authClient } from "~/auth/client";
+import { DirectorStage } from "~/components/director-stage";
 import { MediaHubAccountMenu } from "~/components/media-hub-account-menu";
 import { resolutionOptions } from "~/lib/generation-resolution";
 import { useTRPC } from "~/lib/trpc";
@@ -248,6 +249,9 @@ function AuthenticatedVideoScriptStudio({
   const selectFrameCandidateMutation = useMutation(
     trpc.mediaHub.script.selectFrameCandidate.mutationOptions(),
   );
+  const selectTakeMutation = useMutation(
+    trpc.mediaHub.script.selectTake.mutationOptions(),
+  );
 
   const generating =
     draftMutation.isPending ||
@@ -257,7 +261,8 @@ function AuthenticatedVideoScriptStudio({
     assembleMutation.isPending ||
     bridgeMutation.isPending ||
     createFrameCandidatesMutation.isPending ||
-    selectFrameCandidateMutation.isPending;
+    selectFrameCandidateMutation.isPending ||
+    selectTakeMutation.isPending;
   const generationProfiles = (healthQuery.data?.profiles ?? []).filter(
     (profile) => profile.kind === "generate",
   );
@@ -279,7 +284,13 @@ function AuthenticatedVideoScriptStudio({
   }
   const allShotsSucceeded =
     shots.length > 0 &&
-    shots.every((shot) => jobsByShot.get(shot.id)?.[0]?.status === "succeeded");
+    shots.every((shot) => {
+      const jobs = jobsByShot.get(shot.id) ?? [];
+      const take = shot.selectedGenerationJobId
+        ? jobs.find((job) => job.id === shot.selectedGenerationJobId)
+        : jobs[0];
+      return take?.status === "succeeded";
+    });
 
   const markDirty = () => setDirty(true);
   const updateShot = (id: string, patch: Partial<MediaVideoScriptShot>) => {
@@ -473,13 +484,13 @@ function AuthenticatedVideoScriptStudio({
     }
   };
 
-  const generateShots = async () => {
+  const generateShots = async (shotId?: string) => {
     if (!selectedScriptId || shots.length === 0) return;
     try {
       if (dirty) await persistScript();
       const result = await generateMutation.mutateAsync({
         id: selectedScriptId,
-        shotIds: selectedShotIds,
+        shotIds: shotId ? [shotId] : selectedShotIds,
         qualityPreset,
         h3Profile: defaultProfile || undefined,
       });
@@ -491,6 +502,24 @@ function AuthenticatedVideoScriptStudio({
       setMessage(`${result.jobs.length} 个镜头已进入 GPU 队列。`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "镜头生成失败");
+    }
+  };
+
+  const selectTake = async (shotId: string, jobId: string) => {
+    if (!selectedScriptId) return;
+    try {
+      const saved = dirty ? await persistScript() : null;
+      const updated = await selectTakeMutation.mutateAsync({
+        id: selectedScriptId,
+        shotId,
+        jobId,
+        version: saved?.version ?? version,
+      });
+      applyScript(updated);
+      await refreshScripts(selectedScriptId);
+      setMessage("已选定合片采用的镜头版本。");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "选择镜头版本失败");
     }
   };
 
@@ -565,14 +594,14 @@ function AuthenticatedVideoScriptStudio({
       <div className="mx-auto max-w-[1720px]">
         <header className="relative flex flex-col gap-4 border-b border-slate-800 pb-5 lg:flex-row lg:items-end lg:justify-between">
           <div className="pr-24 sm:pr-28 lg:pr-0">
-            <p className="text-sm text-amber-300">Pumpkii Script Studio</p>
+            <p className="text-sm text-amber-300">Pumpkii 导演台</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
-              先把故事拍明白，再让 GPU 开机。
+              一分钟短视频导演台
             </h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
               默认按 15 秒拆成独立 H3
               生成单元，仅最后一个尾镜头可按剩余时长缩短。
-              确认画面、台词和连续性后，再逐镜进入 H3 队列。
+              确认画面、台词和连续性后，逐镜生成、预览、修改并选定成片版本。
             </p>
           </div>
           <nav className="flex flex-wrap gap-2" aria-label="创作工具">
@@ -770,83 +799,24 @@ function AuthenticatedVideoScriptStudio({
                   </div>
                 </section>
 
-                <div className="border-b border-slate-800 bg-slate-900/50 px-5 py-4 sm:px-6">
-                  <div className="flex items-end justify-between gap-4 text-xs text-slate-500">
-                    <span>镜头轨道 · 按时长比例</span>
-                    <span>
-                      {shots.length} 镜 / {totalDuration} 秒
-                    </span>
-                  </div>
-                  <div className="mt-3 flex h-12 gap-px bg-slate-800">
-                    {shots.map((shot, index) => (
-                      <button
-                        key={shot.id}
-                        type="button"
-                        onClick={() =>
-                          document
-                            .getElementById(`shot-${shot.id}`)
-                            ?.scrollIntoView({
-                              behavior: "smooth",
-                              block: "center",
-                            })
-                        }
-                        style={{ flexGrow: shot.durationSeconds }}
-                        className="group relative min-w-8 overflow-hidden bg-slate-900 text-left hover:bg-amber-300/10"
-                      >
-                        <span className="absolute inset-x-2 top-2 truncate text-[10px] text-slate-400 group-hover:text-amber-200">
-                          {index + 1}. {shot.title}
-                        </span>
-                        <span className="absolute right-2 bottom-1 font-mono text-[9px] text-slate-600">
-                          {shot.durationSeconds}s
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {scriptQuery.data?.assembledJob && (
-                  <section className="border-b border-emerald-400/20 bg-emerald-400/5 p-5 sm:p-6">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="font-mono text-[10px] tracking-[0.24em] text-emerald-300">
-                          04 · FINAL CUT
-                        </p>
-                        <h2 className="mt-2 text-lg font-semibold">完整成片</h2>
-                        <p className="mt-1 text-xs text-slate-500">
-                          按脚本镜头顺序自动合成，并创建一条可审核、可发布的视频草稿。
-                        </p>
-                      </div>
-                      <span className="border border-emerald-400/30 px-3 py-1 text-xs text-emerald-300">
-                        {scriptQuery.data.assembledJob.status === "succeeded"
-                          ? "已完成"
-                          : scriptQuery.data.assembledJob.status === "running"
-                            ? "合成中"
-                            : "合成失败"}
-                      </span>
-                    </div>
-                    {scriptQuery.data.assembledJob.videoUrl && (
-                      <div className="mt-4 grid gap-3">
-                        <video
-                          src={scriptQuery.data.assembledJob.videoUrl}
-                          controls
-                          preload="metadata"
-                          className="w-full border border-slate-800 bg-black"
-                        />
-                        <a
-                          href={`${scriptQuery.data.assembledJob.videoUrl}?download=1`}
-                          className="text-right text-xs text-cyan-300"
-                        >
-                          下载完整 MP4
-                        </a>
-                      </div>
-                    )}
-                    {scriptQuery.data.assembledJob.errorMessage && (
-                      <p className="mt-3 text-xs text-rose-300">
-                        {scriptQuery.data.assembledJob.errorMessage}
-                      </p>
-                    )}
-                  </section>
-                )}
+                <DirectorStage
+                  shots={shots}
+                  jobsByShot={jobsByShot}
+                  assembledJob={scriptQuery.data?.assembledJob ?? null}
+                  language={language}
+                  busy={generating}
+                  canAssemble={allShotsSucceeded}
+                  onSelectTake={selectTake}
+                  onGenerateShot={async (shotId) => generateShots(shotId)}
+                  onAssemble={assembleVideo}
+                  onEditCreated={async () => {
+                    if (selectedScriptId)
+                      await refreshScripts(selectedScriptId);
+                    setMessage(
+                      "修改任务已加入队列，完成后可在导演台预览并采用。",
+                    );
+                  }}
+                />
 
                 <div className="divide-y divide-slate-800">
                   {shots.map((shot, index) => {
@@ -905,12 +875,19 @@ function AuthenticatedVideoScriptStudio({
                             <input
                               type="number"
                               min={5}
-                              max={MEDIA_H3_SCRIPT_SHOT_SECONDS}
+                              max={Math.min(
+                                MEDIA_H3_SCRIPT_SHOT_SECONDS,
+                                60 - (totalDuration - shot.durationSeconds),
+                              )}
                               step={1}
                               value={shot.durationSeconds}
                               onChange={(event) =>
                                 updateShot(shot.id, {
-                                  durationSeconds: Number(event.target.value),
+                                  durationSeconds: Math.min(
+                                    Number(event.target.value),
+                                    MEDIA_H3_SCRIPT_SHOT_SECONDS,
+                                    60 - (totalDuration - shot.durationSeconds),
+                                  ),
                                 })
                               }
                               className="w-16 border border-slate-800 bg-slate-900 px-2 py-1 text-right font-mono text-xs text-slate-300 outline-none focus:border-amber-300"
@@ -926,16 +903,8 @@ function AuthenticatedVideoScriptStudio({
                               {latestJob.status}
                             </span>
                           )}
-                          {latestJob?.status === "succeeded" && (
-                            <Link
-                              to="/generations/$jobId/edit"
-                              params={{ jobId: latestJob.id }}
-                              className="border border-violet-300/30 px-2 py-1 text-[10px] text-violet-200 hover:bg-violet-300/10"
-                            >
-                              修改视频
-                            </Link>
-                          )}
-                          {latestJob?.status === "succeeded" &&
+                          {(shot.selectedGenerationJobId ??
+                            latestJob?.status === "succeeded") &&
                             index < shots.length - 1 && (
                               <button
                                 type="button"
@@ -1230,11 +1199,21 @@ function AuthenticatedVideoScriptStudio({
                     onClick={() => {
                       setShots((current) => [
                         ...current,
-                        emptyShot(current.length + 1),
+                        {
+                          ...emptyShot(current.length + 1),
+                          durationSeconds: Math.min(
+                            MEDIA_H3_SCRIPT_SHOT_SECONDS,
+                            60 -
+                              current.reduce(
+                                (sum, item) => sum + item.durationSeconds,
+                                0,
+                              ),
+                          ),
+                        },
                       ]);
                       markDirty();
                     }}
-                    disabled={shots.length >= 12}
+                    disabled={shots.length >= 12 || totalDuration > 55}
                     className="w-full px-6 py-5 text-left text-sm text-slate-500 hover:bg-slate-900 hover:text-amber-200 disabled:opacity-30"
                   >
                     + 添加镜头
@@ -1391,16 +1370,6 @@ function AuthenticatedVideoScriptStudio({
                   {selectedShotIds.length > 0
                     ? `生成选中的 ${selectedShotIds.length} 镜`
                     : `生成全部 ${shots.length} 镜`}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void assembleVideo()}
-                  disabled={
-                    !selectedScriptId || !allShotsSucceeded || generating
-                  }
-                  className="border border-emerald-400/40 px-4 py-2.5 text-sm text-emerald-200 disabled:opacity-30"
-                >
-                  {assembleMutation.isPending ? "正在合成…" : "合成完整成片"}
                 </button>
                 <button
                   type="button"

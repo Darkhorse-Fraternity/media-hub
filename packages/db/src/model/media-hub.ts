@@ -63,6 +63,8 @@ export interface MediaVideoScriptShot {
   music: string;
   dialogues: MediaVideoScriptDialogue[];
   firstFrameAssetId?: string;
+  /** 导演明确选定的成片任务；未设置时使用最新一次成功镜头。 */
+  selectedGenerationJobId?: string;
 }
 
 /** 当前用户在 Media Hub 中跨设备同步的默认操作偏好。 */

@@ -109,11 +109,19 @@ export async function assembleCompletedVideoScript(input: {
     ),
     orderBy: desc(mediaGenerationJob.createdAt),
   });
+  const selectedJobIds = Object.fromEntries(
+    script.shots.flatMap((shot) =>
+      shot.selectedGenerationJobId
+        ? [[shot.id, shot.selectedGenerationJobId] as const]
+        : [],
+    ),
+  );
   if (
     jobs.some(
       (job) =>
         job.kind !== "assemble" &&
-        Boolean(job.scriptShotId) &&
+        job.scriptShotId !== null &&
+        !selectedJobIds[job.scriptShotId] &&
         ACTIVE_STATUSES.has(job.status),
     )
   ) {
@@ -127,6 +135,7 @@ export async function assembleCompletedVideoScript(input: {
   const sourceJobs = selectLatestScriptShotJobs(
     script.shots.map((shot) => shot.id),
     jobs,
+    selectedJobIds,
   );
   if (!sourceJobs || sourceJobs.length === 0) {
     if (input.requireReady) {
@@ -236,7 +245,10 @@ export async function assembleCompletedVideoScript(input: {
   try {
     const video = await concatShotVideos(
       await Promise.all(
-        sourceJobs.map((job) => getMediaHubObject(job.outputStorageKey!)),
+        sourceJobs.map((job) => {
+          if (!job.outputStorageKey) throw new Error("镜头视频文件不可用");
+          return getMediaHubObject(job.outputStorageKey);
+        }),
       ),
     );
     await validateGeneratedVideoOutput(video, {

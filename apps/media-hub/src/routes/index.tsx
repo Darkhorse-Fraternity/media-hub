@@ -1314,7 +1314,7 @@ function MediaHubDashboard({
               to="/scripts"
               className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-300 transition hover:border-amber-400/50 hover:text-amber-200 focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:outline-none"
             >
-              脚本模式
+              短视频导演台
             </Link>
             <Link
               to="/images"

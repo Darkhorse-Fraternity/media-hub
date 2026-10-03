@@ -43,4 +43,26 @@ describe("video script assembly", () => {
       ),
     ).toBeNull();
   });
+
+  it("uses the director's selected successful take even after a newer attempt fails", () => {
+    const selected = selectLatestScriptShotJobs(
+      ["shot-a"],
+      [
+        job("failed-a", "shot-a", "failed"),
+        job("approved-a", "shot-a", "succeeded"),
+      ],
+      { "shot-a": "approved-a" },
+    );
+    expect(selected?.map((item) => item.id)).toEqual(["approved-a"]);
+  });
+
+  it("rejects a selected take from another shot", () => {
+    expect(
+      selectLatestScriptShotJobs(
+        ["shot-a"],
+        [job("other", "shot-b", "succeeded")],
+        { "shot-a": "other" },
+      ),
+    ).toBeNull();
+  });
 });

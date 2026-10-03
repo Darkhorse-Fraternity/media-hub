@@ -482,6 +482,7 @@ const mediaVideoScriptShotFields = {
   music: z.string().trim().max(1000).default("N/A"),
   dialogues: z.array(mediaVideoScriptDialogueSchema).max(6).default([]),
   firstFrameAssetId: z.string().trim().min(1).optional(),
+  selectedGenerationJobId: z.string().trim().min(1).optional(),
 } satisfies z.ZodRawShape;
 
 function validateScriptShotDialogueTiming(
@@ -536,6 +537,14 @@ export const updateMediaVideoScriptSchema = createMediaVideoScriptSchema.extend(
 export const mediaVideoScriptIdSchema = z.object({
   id: z.string().trim().min(1),
 });
+
+export const selectMediaVideoScriptTakeSchema = mediaVideoScriptIdSchema.extend(
+  {
+    shotId: z.string().trim().min(1),
+    jobId: z.string().trim().min(1),
+    version: z.number().int().min(1),
+  },
+);
 
 export const mediaVideoScriptListSchema = z.object({
   page: z.number().int().min(1).default(1),
