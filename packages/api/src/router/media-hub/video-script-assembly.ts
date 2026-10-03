@@ -1,4 +1,4 @@
-import { and, desc, eq } from "@acme/db";
+import { and, desc, eq, isNull } from "@acme/db";
 import { db } from "@acme/db/client";
 import {
   mediaGenerationJob,
@@ -12,6 +12,7 @@ import {
   putMediaHubObject,
 } from "@acme/storage";
 
+import type { MediaHubDb } from "./video-script-document";
 import { deliverGenerationResultNotification } from "./generation-notification";
 import { validateGeneratedVideoOutput } from "./generation-output-validation";
 import {
@@ -20,6 +21,10 @@ import {
 } from "./video-script-assembly-core";
 import { captionsToSrt, shotTrim } from "./video-script-edit-plan";
 import { renderScriptCut } from "./video-script-render";
+import { withScriptRenderSlot } from "./video-script-render-queue";
+
+const ABANDONED_RENDER_MS = 10 * 60_000;
+class AssemblyStoppedError extends Error {}
 
 const ACTIVE_STATUSES = new Set([
   "scheduled",
@@ -35,18 +40,21 @@ export class VideoScriptAssemblyNotReadyError extends Error {
   }
 }
 
-export async function assembleCompletedVideoScript(input: {
-  scriptId: string;
-  userId: string;
-  requireReady?: boolean;
-  burnCaptions?: boolean;
-}): Promise<{
+export async function assembleCompletedVideoScript(
+  input: {
+    scriptId: string;
+    userId: string;
+    requireReady?: boolean;
+    burnCaptions?: boolean;
+  },
+  database: MediaHubDb = db,
+): Promise<{
   jobId: string;
   mediaTaskId: string | null;
   status: string;
   sourceJobIds: string[];
 } | null> {
-  const script = await db.query.mediaVideoScript.findFirst({
+  const script = await database.query.mediaVideoScript.findFirst({
     where: and(
       eq(mediaVideoScript.id, input.scriptId),
       eq(mediaVideoScript.createdBy, input.userId),
@@ -58,7 +66,7 @@ export async function assembleCompletedVideoScript(input: {
     }
     return null;
   }
-  const jobs = await db.query.mediaGenerationJob.findMany({
+  const jobs = await database.query.mediaGenerationJob.findMany({
     where: and(
       eq(mediaGenerationJob.scriptId, script.id),
       eq(mediaGenerationJob.createdBy, input.userId),
@@ -77,6 +85,7 @@ export async function assembleCompletedVideoScript(input: {
       (job) =>
         job.kind !== "assemble" &&
         job.scriptShotId !== null &&
+        script.shots.some((shot) => shot.id === job.scriptShotId) &&
         !selectedJobIds[job.scriptShotId] &&
         ACTIVE_STATUSES.has(job.status),
     )
@@ -118,9 +127,26 @@ export async function assembleCompletedVideoScript(input: {
     sourceJobIds,
     script.shots,
     burnCaptions,
+    { width: script.width, height: script.height },
   );
   const existing = jobs.find((job) => job.id === jobId);
   if (existing?.status === "succeeded") {
+    await database.transaction(async (transaction) => {
+      await transaction
+        .update(mediaGenerationJob)
+        .set({ updatedAt: new Date() })
+        .where(eq(mediaGenerationJob.id, existing.id));
+      await transaction
+        .update(mediaVideoScript)
+        .set({ status: "completed", updatedAt: new Date() })
+        .where(
+          and(
+            eq(mediaVideoScript.id, script.id),
+            eq(mediaVideoScript.version, script.version),
+            isNull(mediaVideoScript.deletedAt),
+          ),
+        );
+    });
     return {
       jobId,
       mediaTaskId: existing.mediaTaskId,
@@ -128,7 +154,11 @@ export async function assembleCompletedVideoScript(input: {
       sourceJobIds,
     };
   }
-  if (existing?.status === "running") {
+  if (
+    existing?.status === "running" &&
+    existing.startedAt &&
+    Date.now() - existing.startedAt.getTime() < ABANDONED_RENDER_MS
+  ) {
     return {
       jobId,
       mediaTaskId: existing.mediaTaskId,
@@ -159,7 +189,11 @@ export async function assembleCompletedVideoScript(input: {
     qualityPreset: "assembled",
     steps: 0,
     profile: customRender ? "script-cut-v2" : "script-concat-v1",
-    workflowVersion: customRender ? "script-cut-v2" : "script-concat-copy-v1",
+    workflowVersion: burnCaptions
+      ? "script-cut-captioned-v3"
+      : customRender
+        ? "script-cut-v3"
+        : "script-concat-v3",
     status: "running",
     createdBy: input.userId,
     startedAt: now,
@@ -167,8 +201,8 @@ export async function assembleCompletedVideoScript(input: {
   } satisfies Partial<typeof mediaGenerationJob.$inferInsert>;
 
   let claimed = false;
-  if (existing?.status === "failed") {
-    const [updated] = await db
+  if (existing && ["failed", "canceled", "running"].includes(existing.status)) {
+    const [updated] = await database
       .update(mediaGenerationJob)
       .set({
         ...baseJob,
@@ -177,17 +211,22 @@ export async function assembleCompletedVideoScript(input: {
         failureStage: null,
         errorRetryable: null,
         finishedAt: null,
+        outputStorageKey: null,
+        mediaTaskId: null,
       })
       .where(
         and(
           eq(mediaGenerationJob.id, jobId),
-          eq(mediaGenerationJob.status, "failed"),
+          eq(mediaGenerationJob.status, existing.status),
+          existing.startedAt
+            ? eq(mediaGenerationJob.startedAt, existing.startedAt)
+            : isNull(mediaGenerationJob.startedAt),
         ),
       )
       .returning({ id: mediaGenerationJob.id });
     claimed = Boolean(updated);
   } else {
-    const [inserted] = await db
+    const [inserted] = await database
       .insert(mediaGenerationJob)
       .values({ id: jobId, ...baseJob, createdAt: now })
       .onConflictDoNothing()
@@ -195,7 +234,7 @@ export async function assembleCompletedVideoScript(input: {
     claimed = Boolean(inserted);
   }
   if (!claimed) {
-    const current = await db.query.mediaGenerationJob.findFirst({
+    const current = await database.query.mediaGenerationJob.findFirst({
       where: eq(mediaGenerationJob.id, jobId),
     });
     return current
@@ -208,33 +247,96 @@ export async function assembleCompletedVideoScript(input: {
       : null;
   }
 
-  await db
+  await database
     .update(mediaVideoScript)
     .set({ status: "assembling", updatedAt: now })
-    .where(eq(mediaVideoScript.id, script.id));
-
-  const storageKey = `media-hub/scripts/${input.userId}/${script.id}/${jobId}.mp4`;
-  try {
-    const video = await renderScriptCut(
-      await Promise.all(
-        sourceJobs.map((job) => {
-          if (!job.outputStorageKey) throw new Error("镜头视频文件不可用");
-          return getMediaHubObject(job.outputStorageKey);
-        }),
+    .where(
+      and(
+        eq(mediaVideoScript.id, script.id),
+        eq(mediaVideoScript.version, script.version),
+        isNull(mediaVideoScript.deletedAt),
       ),
-      script.shots,
-      burnCaptions,
     );
+
+  const storageKey = `media-hub/scripts/${input.userId}/${script.id}/${jobId}/${crypto.randomUUID()}.mp4`;
+  const attemptWhere = and(
+    eq(mediaGenerationJob.id, jobId),
+    eq(mediaGenerationJob.status, "running"),
+    eq(mediaGenerationJob.startedAt, now),
+  );
+  const assertCurrent = async () => {
+    const [currentJob, currentScript] = await Promise.all([
+      database.query.mediaGenerationJob.findFirst({
+        where: eq(mediaGenerationJob.id, jobId),
+      }),
+      database.query.mediaVideoScript.findFirst({
+        where: eq(mediaVideoScript.id, script.id),
+      }),
+    ]);
+    if (
+      currentJob?.status !== "running" ||
+      currentJob.startedAt?.getTime() !== now.getTime() ||
+      !currentScript ||
+      currentScript.deletedAt ||
+      currentScript.version !== script.version
+    ) {
+      throw new AssemblyStoppedError("合片已取消或脚本已更新，请重新合成");
+    }
+  };
+  try {
+    const video = await withScriptRenderSlot(async (signal) => {
+      await assertCurrent();
+      const controller = new AbortController();
+      const poll = setInterval(() => {
+        void assertCurrent().catch((error: unknown) => controller.abort(error));
+      }, 1000);
+      poll.unref();
+      try {
+        const renderSignal = AbortSignal.any([signal, controller.signal]);
+        return await renderScriptCut(
+          sourceJobs.map((job) => () => {
+            if (!job.outputStorageKey) throw new Error("镜头视频文件不可用");
+            return getMediaHubObject(job.outputStorageKey, renderSignal);
+          }),
+          script.shots,
+          burnCaptions,
+          renderSignal,
+          { width: script.width, height: script.height },
+        );
+      } finally {
+        clearInterval(poll);
+      }
+    });
+    await assertCurrent();
     await validateGeneratedVideoOutput(video, {
       durationSeconds: totalDurationSeconds,
       width: script.width,
       height: script.height,
       fps: sourceJobs[0]?.fps ?? 24,
     });
-    await putMediaHubObject(storageKey, video, "video/mp4");
+    await assertCurrent();
+    await putMediaHubObject(
+      storageKey,
+      video,
+      "video/mp4",
+      AbortSignal.timeout(120_000),
+    );
     const finishedAt = new Date();
     const mediaTaskId = crypto.randomUUID();
-    await db.transaction(async (transaction) => {
+    await database.transaction(async (transaction) => {
+      const [currentScript] = await transaction
+        .update(mediaVideoScript)
+        .set({ status: "completed", updatedAt: finishedAt })
+        .where(
+          and(
+            eq(mediaVideoScript.id, script.id),
+            eq(mediaVideoScript.version, script.version),
+            isNull(mediaVideoScript.deletedAt),
+          ),
+        )
+        .returning({ id: mediaVideoScript.id });
+      if (!currentScript)
+        throw new AssemblyStoppedError("合片期间脚本已更新或删除");
       await transaction.insert(mediaTask).values({
         id: mediaTaskId,
         title: script.title,
@@ -246,9 +348,7 @@ export async function assembleCompletedVideoScript(input: {
           scriptId: script.id,
           scriptVersion: script.version,
           sourceGenerationJobIds: sourceJobIds,
-          workflowVersion: customRender
-            ? "script-cut-v2"
-            : "script-concat-copy-v1",
+          workflowVersion: baseJob.workflowVersion,
           burnCaptions,
         },
         status: "draft",
@@ -256,7 +356,7 @@ export async function assembleCompletedVideoScript(input: {
         createdAt: finishedAt,
         updatedAt: finishedAt,
       });
-      await transaction
+      const [completedJob] = await transaction
         .update(mediaGenerationJob)
         .set({
           status: "succeeded",
@@ -270,11 +370,9 @@ export async function assembleCompletedVideoScript(input: {
           finishedAt,
           updatedAt: finishedAt,
         })
-        .where(eq(mediaGenerationJob.id, jobId));
-      await transaction
-        .update(mediaVideoScript)
-        .set({ status: "completed", updatedAt: finishedAt })
-        .where(eq(mediaVideoScript.id, script.id));
+        .where(attemptWhere)
+        .returning({ id: mediaGenerationJob.id });
+      if (!completedJob) throw new AssemblyStoppedError("合片任务已取消");
     });
 
     await deliverGenerationResultNotification(jobId).catch((error: unknown) => {
@@ -289,12 +387,18 @@ export async function assembleCompletedVideoScript(input: {
   } catch (error) {
     await deleteMediaHubObject(storageKey).catch(() => undefined);
     const finishedAt = new Date();
+    // AbortError wraps its signal reason; the database remains the cancellation authority.
+    const current = await database.query.mediaGenerationJob.findFirst({
+      where: eq(mediaGenerationJob.id, jobId),
+    });
+    const stopped =
+      error instanceof AssemblyStoppedError || current?.status === "canceled";
     const message = error instanceof Error ? error.message : String(error);
-    await db.transaction(async (transaction) => {
-      await transaction
+    await database.transaction(async (transaction) => {
+      const [failedJob] = await transaction
         .update(mediaGenerationJob)
         .set({
-          status: "failed",
+          status: stopped ? "canceled" : "failed",
           errorMessage: message.slice(0, 1000),
           errorCode: "script_assembly_failed",
           failureStage: "assembly",
@@ -302,12 +406,30 @@ export async function assembleCompletedVideoScript(input: {
           finishedAt,
           updatedAt: finishedAt,
         })
-        .where(eq(mediaGenerationJob.id, jobId));
-      await transaction
-        .update(mediaVideoScript)
-        .set({ status: "assembly_failed", updatedAt: finishedAt })
-        .where(eq(mediaVideoScript.id, script.id));
+        .where(attemptWhere)
+        .returning({ id: mediaGenerationJob.id });
+      if (
+        failedJob ||
+        (current?.status === "canceled" &&
+          current.startedAt?.getTime() === now.getTime())
+      )
+        await transaction
+          .update(mediaVideoScript)
+          .set({
+            status: stopped ? "ready" : "assembly_failed",
+            updatedAt: finishedAt,
+          })
+          .where(
+            and(
+              eq(mediaVideoScript.id, script.id),
+              eq(mediaVideoScript.version, script.version),
+              eq(mediaVideoScript.status, "assembling"),
+              isNull(mediaVideoScript.deletedAt),
+            ),
+          );
     });
+    if (stopped)
+      return { jobId, mediaTaskId: null, status: "canceled", sourceJobIds };
     throw error;
   }
 }

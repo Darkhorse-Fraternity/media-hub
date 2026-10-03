@@ -11,7 +11,7 @@
     "dev": "pnpm --filter @acme/media-hub dev",
     "build": "pnpm --filter @acme/media-hub build",
     "start": "pnpm --filter @acme/media-hub start",
-    "test": "turbo run test --filter=@acme/media-hub --filter=@acme/api",
+    "test": "turbo run test --filter=@acme/media-hub --filter=@acme/api --filter=@acme/storage",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint --continue",
     "format": "prettier --check .",

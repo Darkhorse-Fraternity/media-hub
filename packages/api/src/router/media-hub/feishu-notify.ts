@@ -16,7 +16,10 @@ let cachedTenantAccessToken = "";
 let tenantAccessTokenExpiresAt = 0;
 const FEISHU_VIDEO_MAX_BYTES = 29_000_000;
 
-async function feishuFetch(url: string, init: RequestInit = {}) {
+async function feishuFetch(
+  url: string,
+  init: NonNullable<Parameters<typeof undiciFetch>[1]> = {},
+) {
   const requestInit = {
     ...init,
     dispatcher: directDispatcher,
@@ -711,7 +714,7 @@ export async function sendGenerationResultCard(
         chatId: destination.chatId,
         video: input.video,
         fileName: safeVideoFileName(
-          input.title?.trim() || `media-hub-${input.jobId}`,
+          input.title?.trim() ? input.title.trim() : `media-hub-${input.jobId}`,
         ),
         durationSeconds: input.durationSeconds,
       });

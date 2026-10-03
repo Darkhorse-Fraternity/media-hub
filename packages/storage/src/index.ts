@@ -2,10 +2,13 @@ import type { DeleteObjectCommandInput } from "@aws-sdk/client-s3";
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+export { scriptAnimaticKey, scriptAnimaticPrefix } from "./script-artifacts";
 
 // Lazy-initialized singleton
 let s3Client: S3Client | null = null;
@@ -176,12 +179,16 @@ export async function getMediaHubPresignedDownloadUrl(
 }
 
 /** 后台任务读取 Media Hub S3 中的小型输入文件（例如首帧图片）。 */
-export async function getMediaHubObject(key: string): Promise<Buffer> {
+export async function getMediaHubObject(
+  key: string,
+  signal?: AbortSignal,
+): Promise<Buffer> {
   const response = await getMediaHubClient().send(
     new GetObjectCommand({
       Bucket: getMediaHubBucket(),
       Key: key,
     }),
+    { abortSignal: signal },
   );
   if (!response.Body) {
     throw new Error(`Empty body for media-hub object: ${key}`);
@@ -243,6 +250,7 @@ export async function putMediaHubObject(
   key: string,
   body: Buffer,
   contentType: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const command = new PutObjectCommand({
     Bucket: getMediaHubBucket(),
@@ -251,7 +259,7 @@ export async function putMediaHubObject(
     ContentType: contentType,
     ContentLength: body.length,
   });
-  await getMediaHubClient().send(command);
+  await getMediaHubClient().send(command, { abortSignal: signal });
 }
 
 export async function deleteMediaHubObject(key: string): Promise<void> {
@@ -260,4 +268,26 @@ export async function deleteMediaHubObject(key: string): Promise<void> {
     Key: key,
   };
   await getMediaHubClient().send(new DeleteObjectCommand(input));
+}
+
+/** Only call with a server-generated, owner-scoped prefix. */
+export async function deleteMediaHubObjectsByPrefix(
+  prefix: string,
+): Promise<void> {
+  let continuationToken: string | undefined;
+  do {
+    const page = await getMediaHubClient().send(
+      new ListObjectsV2Command({
+        Bucket: getMediaHubBucket(),
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      }),
+    );
+    for (const object of page.Contents ?? []) {
+      if (object.Key) await deleteMediaHubObject(object.Key);
+    }
+    continuationToken = page.IsTruncated
+      ? page.NextContinuationToken
+      : undefined;
+  } while (continuationToken);
 }

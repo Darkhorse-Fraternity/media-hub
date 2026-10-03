@@ -905,3 +905,4 @@ export const optimizeMediaPlatformDescriptionSchema = z.object({
   accountId: z.string().min(1),
   currentDescription: z.string().trim().max(5000).optional(),
 });
+export { selectMediaVideoScriptTake } from "./video-script-takes";

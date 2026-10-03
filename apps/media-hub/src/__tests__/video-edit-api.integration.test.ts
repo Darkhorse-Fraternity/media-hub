@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -16,6 +15,8 @@ import {
   mediaVideoScript,
   user,
 } from "@acme/db/schema";
+
+import { closeTestServer, configureTestDockerHost } from "./helpers/postgres";
 
 const migrationsFolder = fileURLToPath(
   new URL("../../../../packages/db/drizzle", import.meta.url),
@@ -43,16 +44,6 @@ let handleTake: HandleShotRequest;
 let handleCaptions: HandleShotRequest;
 let providerServer: Server;
 let createdEditJobId: string | null = null;
-
-function configureDockerHostFromCurrentContext(): void {
-  if (process.env.DOCKER_HOST || process.platform !== "darwin") return;
-  const dockerHost = execFileSync(
-    "docker",
-    ["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"],
-    { encoding: "utf8" },
-  ).trim();
-  if (dockerHost) process.env.DOCKER_HOST = dockerHost;
-}
 
 function createEditRequest(
   body: Record<string, unknown>,
@@ -114,7 +105,7 @@ function validEditBody(overrides: Record<string, unknown> = {}) {
 
 describe("Agent video edit and director REST API", () => {
   beforeAll(async () => {
-    configureDockerHostFromCurrentContext();
+    configureTestDockerHost();
     container = await new PostgreSqlContainer(postgresImage)
       .withDatabase("media_hub_test")
       .withUsername("media_hub_test")
@@ -251,10 +242,12 @@ describe("Agent video edit and director REST API", () => {
       const { cancelMediaGenerationJob } = await import("@acme/api");
       await cancelMediaGenerationJob(createdEditJobId);
     }
-    await new Promise<void>((resolve, reject) => {
-      providerServer?.close((error) => (error ? reject(error) : resolve()));
-    });
-    await container?.stop();
+    try {
+      await closeTestServer(providerServer);
+      await database?.$client.end({ timeout: 5 });
+    } finally {
+      await container?.stop();
+    }
   }, 30_000);
 
   it("rejects requests without a valid Agent API token", async () => {

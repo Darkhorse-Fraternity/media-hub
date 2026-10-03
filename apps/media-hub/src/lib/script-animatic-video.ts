@@ -1,7 +1,7 @@
 import { and, eq, isNull } from "@acme/db";
 import { db } from "@acme/db/client";
 import { mediaVideoScript } from "@acme/db/schema";
-import { getMediaHubObjectResponse } from "@acme/storage";
+import { getMediaHubObjectResponse, scriptAnimaticKey } from "@acme/storage";
 
 const validRangePattern = /^bytes=(?:\d+-\d*|-\d+)$/;
 
@@ -30,7 +30,7 @@ export async function serveOwnedAnimatic(
   if (range && !validRangePattern.test(range)) {
     return new Response("Invalid range", { status: 416 });
   }
-  const key = `media-hub/animatics/${userId}/${scriptId}/preview.mp4`;
+  const key = scriptAnimaticKey(userId, scriptId, version);
   try {
     const object = await getMediaHubObjectResponse(key, range ?? undefined);
     const headers = new Headers({
@@ -50,9 +50,14 @@ export async function serveOwnedAnimatic(
   } catch (error) {
     if (
       error instanceof Error &&
-      ["NoSuchKey", "NotFound"].includes(error.name)
+      ["NoSuchKey", "NotFound", "InvalidRange"].includes(error.name)
     ) {
-      return new Response("Preview not found", { status: 404 });
+      return new Response(
+        error.name === "InvalidRange" ? "Invalid range" : "Preview not found",
+        {
+          status: error.name === "InvalidRange" ? 416 : 404,
+        },
+      );
     }
     throw error;
   }

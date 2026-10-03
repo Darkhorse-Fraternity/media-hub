@@ -71,6 +71,20 @@ describe("video script assembly", () => {
     ).toBeNull();
   });
 
+  it("invalidates assembly when output dimensions change", () => {
+    expect(
+      scriptAssemblyJobId("script", ["take"], [], false, {
+        width: 160,
+        height: 96,
+      }),
+    ).not.toBe(
+      scriptAssemblyJobId("script", ["take"], [], false, {
+        width: 320,
+        height: 192,
+      }),
+    );
+  });
+
   it("invalidates the cut for trim and caption changes without changing the source take", () => {
     const shot: MediaVideoScriptShot = {
       id: "shot-a",

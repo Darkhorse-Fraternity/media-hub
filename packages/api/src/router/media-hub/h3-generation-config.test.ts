@@ -93,8 +93,8 @@ describe("H3 generation configuration", () => {
       "overall_soundscape: No dialogue. Quiet room.",
       "non_diegetic_music: N/A",
     ].join("\n");
-    const query = vi.fn(
-      async (_instruction: string, _maxLength: number) => corrected,
+    const query = vi.fn((_instruction: string, _maxLength: number) =>
+      Promise.resolve(corrected),
     );
 
     expect(await repairH3NoDialoguePrompt(invalid, 30, query)).toBe(corrected);
@@ -115,10 +115,12 @@ describe("H3 generation configuration", () => {
   it("rejects a repair that still invents dialogue", async () => {
     const invalid =
       "integrated_multimodal_description: [Shot 1] A child says hello.\noverall_soundscape: Quiet room.\nnon_diegetic_music: N/A";
-    const query = vi.fn(async (_instruction: string, _maxLength: number) =>
-      invalid.replace(
-        "A child says hello.",
-        "A child (S1) <d>[English] Hello.</d>",
+    const query = vi.fn((_instruction: string, _maxLength: number) =>
+      Promise.resolve(
+        invalid.replace(
+          "A child says hello.",
+          "A child (S1) <d>[English] Hello.</d>",
+        ),
       ),
     );
     expect(await repairH3NoDialoguePrompt(invalid, 15, query)).toBeNull();

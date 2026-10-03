@@ -1,53 +1,34 @@
-import type { FormEvent } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 
-import type {
-  MediaVideoScriptContinuityBible,
-  MediaVideoScriptShot,
-} from "@acme/validators";
 import {
-  analyzeMediaVideoScriptShots,
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@acme/ui/alert-dialog";
+import {
   MEDIA_H3_SCRIPT_SHOT_SECONDS,
   MEDIA_H3_SCRIPT_TARGET_DURATIONS,
 } from "@acme/validators";
 
+import type {
+  QualityPreset,
+  ScriptLanguage,
+  ScriptTargetDuration,
+} from "~/lib/video-script-studio-state";
 import { authClient } from "~/auth/client";
 import { DirectorStage } from "~/components/director-stage";
 import { MediaHubAccountMenu } from "~/components/media-hub-account-menu";
+import { useVideoScriptStudio } from "~/hooks/use-video-script-studio";
 import { resolutionOptions } from "~/lib/generation-resolution";
-import { useTRPC } from "~/lib/trpc";
+import { emptyShot } from "~/lib/video-script-studio-state";
 
 export const Route = createFileRoute("/scripts")({
   component: VideoScriptStudioPage,
 });
-
-type ScriptLanguage = "zh" | "en";
-type QualityPreset = "fast" | "balanced" | "quality";
-type CopyStatus = "draft" | "approved";
-type ScriptTargetDuration = (typeof MEDIA_H3_SCRIPT_TARGET_DURATIONS)[number];
-
-const EMPTY_CONTINUITY_BIBLE: MediaVideoScriptContinuityBible = {
-  characters: "",
-  wardrobeAndProps: "",
-  locationsAndLighting: "",
-  visualRules: "",
-};
-
-function emptyShot(position: number): MediaVideoScriptShot {
-  return {
-    id: crypto.randomUUID(),
-    title: `镜头 ${position}`,
-    durationSeconds: MEDIA_H3_SCRIPT_SHOT_SECONDS,
-    visualDescription: "",
-    cameraDirection: "",
-    continuity: "",
-    soundscape: "",
-    music: "N/A",
-    dialogues: [],
-  };
-}
 
 export function VideoScriptStudioPage({
   initialScriptId,
@@ -57,14 +38,14 @@ export function VideoScriptStudioPage({
   const sessionQuery = authClient.useSession();
   if (sessionQuery.isPending) {
     return (
-      <main className="grid min-h-screen place-items-center bg-slate-950 text-sm text-slate-400">
+      <main className="grid min-h-dvh place-items-center bg-slate-950 text-sm text-slate-400">
         正在打开脚本制作台…
       </main>
     );
   }
   if (!sessionQuery.data?.user) {
     return (
-      <main className="grid min-h-screen place-items-center bg-slate-950 p-6 text-slate-100">
+      <main className="grid min-h-dvh place-items-center bg-slate-950 p-6 text-slate-100">
         <div className="max-w-md border border-slate-800 bg-slate-900 p-8 text-center">
           <p className="text-sm text-amber-300">PUMPKII SCRIPT STUDIO</p>
           <h1 className="mt-3 text-2xl font-semibold">登录后开始编排镜头</h1>
@@ -83,6 +64,7 @@ export function VideoScriptStudioPage({
   }
   return (
     <AuthenticatedVideoScriptStudio
+      key={`${sessionQuery.data.user.id}:${initialScriptId ?? "new"}`}
       initialScriptId={initialScriptId}
       userName={sessionQuery.data.user.name}
       userEmail={sessionQuery.data.user.email}
@@ -102,565 +84,77 @@ function AuthenticatedVideoScriptStudio({
   userEmail: string;
   isAdmin: boolean;
 }) {
-  const trpc = useTRPC();
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const [selectedScriptId, setSelectedScriptId] = useState<string | null>(
-    initialScriptId ?? null,
-  );
-  const hydratedScriptIdRef = useRef<string | null>(null);
-  const [newTitle, setNewTitle] = useState("");
-  const [newBrief, setNewBrief] = useState("");
-  const [targetDuration, setTargetDuration] =
-    useState<ScriptTargetDuration>(30);
-  const [language, setLanguage] = useState<ScriptLanguage>("zh");
-  const [title, setTitle] = useState("");
-  const [brief, setBrief] = useState("");
-  const [copy, setCopy] = useState("");
-  const [copyStatus, setCopyStatus] = useState<CopyStatus>("draft");
-  const [width, setWidth] = useState(1344);
-  const [height, setHeight] = useState(768);
-  const [defaultProfile, setDefaultProfile] = useState("");
-  const [continuityBible, setContinuityBible] =
-    useState<MediaVideoScriptContinuityBible>(EMPTY_CONTINUITY_BIBLE);
-  const [shots, setShots] = useState<MediaVideoScriptShot[]>([]);
-  const [version, setVersion] = useState(1);
-  const [dirty, setDirty] = useState(false);
-  const [selectedShotIds, setSelectedShotIds] = useState<string[]>([]);
-  const [qualityPreset, setQualityPreset] = useState<QualityPreset>("balanced");
-  const [message, setMessage] = useState<string | null>(null);
-  const [animaticVideoUrl, setAnimaticVideoUrl] = useState<string | null>(null);
-
-  const scriptQuery = useQuery({
-    ...trpc.mediaHub.script.get.queryOptions({
-      id: selectedScriptId ?? "none",
-    }),
-    enabled: Boolean(selectedScriptId),
-    refetchInterval: (query) =>
-      query.state.data?.shotJobs.some((job) =>
-        ["scheduled", "queued", "waiting_for_gpu", "running"].includes(
-          job.status,
-        ),
-      ) ||
-      query.state.data?.assembledJob?.status === "running" ||
-      query.state.data?.shotFrameCandidates.jobs.some((job) =>
-        ["queued", "running"].includes(job.status),
-      )
-        ? 5_000
-        : false,
-  });
-  const healthQuery = useQuery(
-    trpc.mediaHub.generation.providerHealth.queryOptions(undefined, {
-      retry: false,
-    }),
-  );
-  const imageQuery = useQuery(
-    trpc.mediaHub.image.list.queryOptions({ limit: 100 }),
-  );
-
-  const applyScript = useCallback(
-    (script: {
-      title: string;
-      brief: string;
-      copy: string;
-      copyStatus: string;
-      language: string;
-      width: number;
-      height: number;
-      defaultProfile: string | null;
-      continuityBible: MediaVideoScriptContinuityBible;
-      shots: MediaVideoScriptShot[];
-      version: number;
-    }) => {
-      setTitle(script.title);
-      setBrief(script.brief);
-      setCopy(script.copy);
-      setCopyStatus(script.copyStatus === "approved" ? "approved" : "draft");
-      setLanguage(script.language === "en" ? "en" : "zh");
-      setWidth(script.width);
-      setHeight(script.height);
-      setDefaultProfile(script.defaultProfile ?? "");
-      setContinuityBible(script.continuityBible);
-      setShots(script.shots);
-      setVersion(script.version);
-      setDirty(false);
-      setSelectedShotIds([]);
-      setAnimaticVideoUrl(null);
-    },
-    [],
-  );
-
-  useEffect(() => {
-    if (!initialScriptId || hydratedScriptIdRef.current === initialScriptId) {
-      return;
-    }
-    let canceled = false;
-    void queryClient
-      .fetchQuery(
-        trpc.mediaHub.script.get.queryOptions({ id: initialScriptId }),
-      )
-      .then((script) => {
-        if (canceled) return;
-        applyScript(script);
-        hydratedScriptIdRef.current = script.id;
-      })
-      .catch((error: unknown) => {
-        if (canceled) return;
-        setMessage(error instanceof Error ? error.message : "读取脚本失败");
-      });
-    return () => {
-      canceled = true;
-    };
-  }, [applyScript, initialScriptId, queryClient, trpc]);
-
-  const refreshScripts = async (id?: string) => {
-    await queryClient.invalidateQueries({
-      queryKey: trpc.mediaHub.script.list.queryKey(),
-    });
-    if (id) {
-      await queryClient.invalidateQueries({
-        queryKey: trpc.mediaHub.script.get.queryKey({ id }),
-      });
-    }
-  };
-
-  const createMutation = useMutation(
-    trpc.mediaHub.script.create.mutationOptions(),
-  );
-  const draftMutation = useMutation(
-    trpc.mediaHub.script.draft.mutationOptions(),
-  );
-  const updateMutation = useMutation(
-    trpc.mediaHub.script.update.mutationOptions(),
-  );
-  const deleteMutation = useMutation(
-    trpc.mediaHub.script.delete.mutationOptions(),
-  );
-  const generateMutation = useMutation(
-    trpc.mediaHub.script.generate.mutationOptions(),
-  );
-  const assembleMutation = useMutation(
-    trpc.mediaHub.script.assemble.mutationOptions(),
-  );
-  const bridgeMutation = useMutation(
-    trpc.mediaHub.script.bridgeLastFrame.mutationOptions(),
-  );
-  const createFrameCandidatesMutation = useMutation(
-    trpc.mediaHub.script.createFrameCandidates.mutationOptions(),
-  );
-  const selectFrameCandidateMutation = useMutation(
-    trpc.mediaHub.script.selectFrameCandidate.mutationOptions(),
-  );
-  const selectTakeMutation = useMutation(
-    trpc.mediaHub.script.selectTake.mutationOptions(),
-  );
-  const updateShotEditMutation = useMutation(
-    trpc.mediaHub.script.updateShotEdit.mutationOptions(),
-  );
-  const generateCaptionsMutation = useMutation(
-    trpc.mediaHub.script.generateCaptions.mutationOptions(),
-  );
-  const createAnimaticMutation = useMutation(
-    trpc.mediaHub.script.createAnimatic.mutationOptions(),
-  );
-
-  const generating =
-    draftMutation.isPending ||
-    createMutation.isPending ||
-    updateMutation.isPending ||
-    generateMutation.isPending ||
-    assembleMutation.isPending ||
-    bridgeMutation.isPending ||
-    createFrameCandidatesMutation.isPending ||
-    selectFrameCandidateMutation.isPending ||
-    selectTakeMutation.isPending ||
-    updateShotEditMutation.isPending ||
-    generateCaptionsMutation.isPending ||
-    createAnimaticMutation.isPending;
-  const generationProfiles = (healthQuery.data?.profiles ?? []).filter(
-    (profile) => profile.kind === "generate",
-  );
-  const assets = imageQuery.data?.assets ?? [];
-  const totalDuration = shots.reduce(
-    (total, shot) => total + shot.durationSeconds,
-    0,
-  );
-  const scriptIssues = analyzeMediaVideoScriptShots(shots);
-  const jobsByShot = new Map<
-    string,
-    NonNullable<typeof scriptQuery.data>["shotJobs"]
-  >();
-  for (const job of scriptQuery.data?.shotJobs ?? []) {
-    if (!job.scriptShotId) continue;
-    const list = jobsByShot.get(job.scriptShotId) ?? [];
-    list.push(job);
-    jobsByShot.set(job.scriptShotId, list);
-  }
-  const allShotsSucceeded =
-    shots.length > 0 &&
-    shots.every((shot) => {
-      const jobs = jobsByShot.get(shot.id) ?? [];
-      const take = shot.selectedGenerationJobId
-        ? jobs.find((job) => job.id === shot.selectedGenerationJobId)
-        : jobs[0];
-      return take?.status === "succeeded";
-    });
-
-  const markDirty = () => {
-    setDirty(true);
-    setAnimaticVideoUrl(null);
-  };
-  const updateShot = (id: string, patch: Partial<MediaVideoScriptShot>) => {
-    setShots((current) =>
-      current.map((shot) => (shot.id === id ? { ...shot, ...patch } : shot)),
-    );
-    markDirty();
-  };
-  const moveShot = (index: number, offset: -1 | 1) => {
-    const target = index + offset;
-    if (target < 0 || target >= shots.length) return;
-    setShots((current) => {
-      const next = [...current];
-      const [shot] = next.splice(index, 1);
-      if (shot) next.splice(target, 0, shot);
-      return next;
-    });
-    markDirty();
-  };
-  const removeShot = (id: string) => {
-    setShots((current) => current.filter((shot) => shot.id !== id));
-    setSelectedShotIds((current) => current.filter((value) => value !== id));
-    markDirty();
-  };
-  const addDialogue = (shot: MediaVideoScriptShot) => {
-    updateShot(shot.id, {
-      dialogues: [
-        ...shot.dialogues,
-        {
-          id: crypto.randomUUID(),
-          atSeconds: Math.min(2, shot.durationSeconds - 0.5),
-          speakerId: "S1",
-          language,
-          text: "",
-        },
-      ],
-    });
-  };
-
-  const createBlank = async () => {
-    if (!newTitle.trim() || !newBrief.trim()) {
-      setMessage("先填写标题和创作简报。");
-      return;
-    }
-    try {
-      const script = await createMutation.mutateAsync({
-        title: newTitle.trim(),
-        brief: newBrief.trim(),
-        copy: "",
-        copyStatus: "draft",
-        language,
-        continuityBible: EMPTY_CONTINUITY_BIBLE,
-        shots: [],
-      });
-      setNewTitle("");
-      setNewBrief("");
-      await refreshScripts(script.id);
-      await navigate({
-        to: "/scripts/$scriptId",
-        params: { scriptId: script.id },
-      });
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "创建脚本失败");
-    }
-  };
-
-  const createFromBrief = async () => {
-    if (!newBrief.trim()) {
-      setMessage("先填写创作简报。");
-      return;
-    }
-    setMessage("正在把简报拆成可生成的 H3 镜头…");
-    try {
-      const draft = await draftMutation.mutateAsync({
-        title: newTitle.trim() || undefined,
-        brief: newBrief.trim(),
-        language,
-        targetDurationSeconds: targetDuration,
-      });
-      const script = await createMutation.mutateAsync({
-        title: newTitle.trim() || draft.title,
-        brief: newBrief.trim(),
-        copy: draft.copy,
-        copyStatus: "draft",
-        language,
-        continuityBible: draft.continuityBible,
-        shots: draft.shots,
-      });
-      setNewTitle("");
-      setNewBrief("");
-      await refreshScripts(script.id);
-      await navigate({
-        to: "/scripts/$scriptId",
-        params: { scriptId: script.id },
-      });
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "AI 拆镜失败");
-    }
-  };
-
-  const persistScript = async (
-    requestedCopyStatus: CopyStatus = copyStatus,
-    expectedVersion = version,
-  ) => {
-    if (!selectedScriptId) throw new Error("请先选择脚本");
-    const updated = await updateMutation.mutateAsync({
-      id: selectedScriptId,
-      version: expectedVersion,
-      title,
-      brief,
-      copy,
-      copyStatus: requestedCopyStatus,
-      language,
-      width,
-      height,
-      defaultProfile: defaultProfile || undefined,
-      continuityBible,
-      shots,
-    });
-    setVersion(updated.version);
-    setCopyStatus(updated.copyStatus === "approved" ? "approved" : "draft");
-    setDirty(false);
-    await refreshScripts(selectedScriptId);
-    return updated;
-  };
-
-  const approveCopy = async () => {
-    if (!copy.trim()) {
-      setMessage("请先填写文案，再确认进入首帧制作。");
-      return;
-    }
-    try {
-      const saved = dirty ? await persistScript("draft") : null;
-      const approved = await persistScript(
-        "approved",
-        saved?.version ?? version,
-      );
-      setCopyStatus("approved");
-      setVersion(approved.version);
-      await refreshScripts(selectedScriptId ?? undefined);
-      setMessage("文案已确认，可以逐镜生成首帧候选。");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "确认文案失败");
-    }
-  };
-
-  const createFrameCandidates = async (shotId: string) => {
-    if (!selectedScriptId) return;
-    try {
-      if (dirty) await persistScript();
-      await createFrameCandidatesMutation.mutateAsync({
-        id: selectedScriptId,
-        shotId,
-        outputCount: 4,
-      });
-      await refreshScripts(selectedScriptId);
-      setMessage("4 张首帧候选已进入 HiDream 队列。");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "首帧生成失败");
-    }
-  };
-
-  const selectFrameCandidate = async (shotId: string, assetId: string) => {
-    if (!selectedScriptId) return;
-    try {
-      const saved = dirty ? await persistScript() : null;
-      const updated = await selectFrameCandidateMutation.mutateAsync({
-        id: selectedScriptId,
-        shotId,
-        assetId,
-        version: saved?.version ?? version,
-      });
-      applyScript(updated);
-      await refreshScripts(selectedScriptId);
-      await queryClient.invalidateQueries({
-        queryKey: trpc.mediaHub.image.list.queryKey(),
-      });
-      setMessage("已选定这个镜头的首帧。");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "选择首帧失败");
-    }
-  };
-
-  const saveScript = async (event?: FormEvent) => {
-    event?.preventDefault();
-    try {
-      await persistScript();
-      setMessage("脚本已保存。");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "保存脚本失败");
-    }
-  };
-
-  const generateShots = async (shotId?: string) => {
-    if (!selectedScriptId || shots.length === 0) return;
-    try {
-      if (dirty) await persistScript();
-      const result = await generateMutation.mutateAsync({
-        id: selectedScriptId,
-        shotIds: shotId ? [shotId] : selectedShotIds,
-        qualityPreset,
-        h3Profile: defaultProfile || undefined,
-      });
-      setSelectedShotIds([]);
-      await refreshScripts(selectedScriptId);
-      await queryClient.invalidateQueries({
-        queryKey: trpc.mediaHub.generation.list.queryKey(),
-      });
-      setMessage(`${result.jobs.length} 个镜头已进入 GPU 队列。`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "镜头生成失败");
-    }
-  };
-
-  const selectTake = async (shotId: string, jobId: string) => {
-    if (!selectedScriptId) return;
-    try {
-      const saved = dirty ? await persistScript() : null;
-      const updated = await selectTakeMutation.mutateAsync({
-        id: selectedScriptId,
-        shotId,
-        jobId,
-        version: saved?.version ?? version,
-      });
-      applyScript(updated);
-      await refreshScripts(selectedScriptId);
-      setMessage("已选定合片采用的镜头版本。");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "选择镜头版本失败");
-    }
-  };
-
-  const saveShotEdit = async (
-    shotId: string,
-    trimStartSeconds: number,
-    trimEndSeconds: number,
-    captions: NonNullable<MediaVideoScriptShot["captions"]>,
-  ) => {
-    if (!selectedScriptId) return;
-    try {
-      const saved = dirty ? await persistScript() : null;
-      const updated = await updateShotEditMutation.mutateAsync({
-        id: selectedScriptId,
-        shotId,
-        version: saved?.version ?? version,
-        trimStartSeconds,
-        trimEndSeconds,
-        captions,
-      });
-      applyScript(updated);
-      setAnimaticVideoUrl(null);
-      await refreshScripts(selectedScriptId);
-      setMessage("镜头裁切与字幕已保存，成片需要重新合成。");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "保存镜头编辑失败");
-    }
-  };
-
-  const generateShotCaptions = async (shotId: string) => {
-    if (!selectedScriptId) return;
-    try {
-      const saved = dirty ? await persistScript() : null;
-      const updated = await generateCaptionsMutation.mutateAsync({
-        id: selectedScriptId,
-        shotId,
-        version: saved?.version ?? version,
-      });
-      applyScript(updated);
-      await refreshScripts(selectedScriptId);
-      setMessage("已根据逐字台词生成字幕，请校对时间和文字。");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "生成字幕失败");
-    }
-  };
-
-  const createAnimatic = async () => {
-    if (!selectedScriptId) return;
-    try {
-      if (dirty) await persistScript();
-      const preview = await createAnimaticMutation.mutateAsync({
-        id: selectedScriptId,
-      });
-      setAnimaticVideoUrl(preview.videoUrl);
-      setMessage("分镜预演已生成，可在导演台播放。");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "生成分镜预演失败");
-    }
-  };
-
-  const assembleVideo = async (burnCaptions = false) => {
-    if (!selectedScriptId) return;
-    try {
-      if (dirty) await persistScript();
-      const result = await assembleMutation.mutateAsync({
-        id: selectedScriptId,
-        burnCaptions,
-      });
-      await refreshScripts(selectedScriptId);
-      await queryClient.invalidateQueries({
-        queryKey: trpc.mediaHub.generation.list.queryKey(),
-      });
-      setMessage(
-        result.status === "succeeded"
-          ? "完整成片已合成，并已创建可发布草稿。"
-          : "完整成片正在合成。",
-      );
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "完整成片合成失败");
-    }
-  };
-
-  const deleteScript = async () => {
-    if (
-      !selectedScriptId ||
-      !window.confirm("删除这个脚本项目？已生成的视频任务不会删除。")
-    ) {
-      return;
-    }
-    try {
-      await deleteMutation.mutateAsync({ id: selectedScriptId });
-      setSelectedScriptId(null);
-      hydratedScriptIdRef.current = null;
-      setDirty(false);
-      await refreshScripts();
-      await navigate({ to: "/scripts/history" });
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "删除脚本失败");
-    }
-  };
-
-  const bridgeLastFrame = async (sourceShotId: string) => {
-    if (!selectedScriptId) return;
-    try {
-      const saved = dirty ? await persistScript() : null;
-      const result = await bridgeMutation.mutateAsync({
-        id: selectedScriptId,
-        sourceShotId,
-        version: saved?.version ?? version,
-      });
-      applyScript(result);
-      await refreshScripts(selectedScriptId);
-      await queryClient.invalidateQueries({
-        queryKey: trpc.mediaHub.image.list.queryKey(),
-      });
-      setMessage("已把末帧存入图片素材，并设为下一镜首帧。");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "末帧接力失败");
-    }
-  };
-
+  const {
+    selectedScriptId,
+    newTitle,
+    setNewTitle,
+    newBrief,
+    setNewBrief,
+    targetDuration,
+    setTargetDuration,
+    language,
+    setLanguage,
+    title,
+    setTitle,
+    brief,
+    setBrief,
+    copy,
+    setCopy,
+    copyStatus,
+    setCopyStatus,
+    width,
+    setWidth,
+    height,
+    setHeight,
+    defaultProfile,
+    setDefaultProfile,
+    continuityBible,
+    setContinuityBible,
+    shots,
+    setShots,
+    dirty,
+    selectedShotIds,
+    setSelectedShotIds,
+    qualityPreset,
+    setQualityPreset,
+    message,
+    setMessage,
+    animaticVideoUrl,
+    scriptQuery,
+    healthQuery,
+    refreshScripts,
+    deleteMutation,
+    bridgeMutation,
+    generating,
+    generationProfiles,
+    assets,
+    totalDuration,
+    scriptIssues,
+    jobsByShot,
+    allShotsSucceeded,
+    markDirty,
+    updateShot,
+    moveShot,
+    removeShot,
+    addDialogue,
+    createBlank,
+    createFromBrief,
+    approveCopy,
+    createFrameCandidates,
+    selectFrameCandidate,
+    saveScript,
+    generateShots,
+    selectTake,
+    saveShotEdit,
+    generateShotCaptions,
+    createAnimatic,
+    assembleVideo,
+    deleteScript,
+    bridgeLastFrame,
+  } = useVideoScriptStudio(initialScriptId);
   return (
     <main
-      className="min-h-screen bg-slate-950 p-4 text-slate-100 sm:p-6"
+      className="min-h-dvh bg-slate-950 p-4 text-slate-100 sm:p-6"
       style={{
         backgroundImage:
           "linear-gradient(110deg, rgba(245, 158, 11, 0.05), transparent 28%)",
@@ -803,507 +297,532 @@ function AuthenticatedVideoScriptStudio({
               </div>
             ) : (
               <form onSubmit={(event) => void saveScript(event)}>
-                <div className="border-b border-slate-800 p-5 sm:p-6">
-                  <input
-                    value={title}
-                    onChange={(event) => {
-                      setTitle(event.target.value);
-                      markDirty();
-                    }}
-                    aria-label="脚本标题"
-                    className="w-full bg-transparent text-2xl font-semibold tracking-tight outline-none placeholder:text-slate-700"
-                    placeholder="未命名脚本"
-                  />
-                  <textarea
-                    value={brief}
-                    onChange={(event) => {
-                      setBrief(event.target.value);
-                      markDirty();
-                    }}
-                    aria-label="创作简报"
-                    rows={2}
-                    className="mt-3 w-full resize-y bg-transparent text-sm leading-6 text-slate-400 outline-none placeholder:text-slate-700"
-                    placeholder="创作简报"
-                  />
-                </div>
-
-                <section className="border-b border-slate-800 bg-slate-900/30 p-5 sm:p-6">
-                  <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div>
-                      <p className="font-mono text-[10px] tracking-[0.24em] text-cyan-300">
-                        01 · COPY LOCK
-                      </p>
-                      <h2 className="mt-2 text-lg font-semibold">成片文案</h2>
-                      <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500">
-                        先确认故事、节奏和台词。修改已确认文案会自动退回待确认，避免旧首帧继续流入制作。
-                      </p>
-                    </div>
-                    <span
-                      className={`border px-3 py-1 text-xs ${copyStatus === "approved" ? "border-emerald-400/30 text-emerald-300" : "border-amber-300/30 text-amber-200"}`}
-                    >
-                      {copyStatus === "approved" ? "已确认" : "待确认"}
-                    </span>
+                <fieldset disabled={generating}>
+                  <div className="border-b border-slate-800 p-5 sm:p-6">
+                    <input
+                      value={title}
+                      onChange={(event) => {
+                        setTitle(event.target.value);
+                        markDirty();
+                      }}
+                      aria-label="脚本标题"
+                      className="w-full bg-transparent text-2xl font-semibold tracking-tight outline-none placeholder:text-slate-700"
+                      placeholder="未命名脚本"
+                    />
+                    <textarea
+                      value={brief}
+                      onChange={(event) => {
+                        setBrief(event.target.value);
+                        markDirty();
+                      }}
+                      aria-label="创作简报"
+                      rows={2}
+                      className="mt-3 w-full resize-y bg-transparent text-sm leading-6 text-slate-400 outline-none placeholder:text-slate-700"
+                      placeholder="创作简报"
+                    />
                   </div>
-                  <textarea
-                    value={copy}
-                    onChange={(event) => {
-                      setCopy(event.target.value);
-                      setCopyStatus("draft");
-                      markDirty();
-                    }}
-                    rows={7}
-                    placeholder="完整故事文案、旁白、必须保留的台词与节奏说明…"
-                    className="mt-4 w-full resize-y border border-slate-700 bg-slate-950 px-4 py-3 text-sm leading-7 text-slate-200 outline-none focus:border-cyan-300"
-                  />
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                    <span className="text-xs text-slate-600">
-                      {copy.length.toLocaleString()} / 20,000 字符
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => void approveCopy()}
-                      disabled={
-                        !copy.trim() ||
-                        (copyStatus === "approved" && !dirty) ||
-                        generating
-                      }
-                      className="bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-30"
-                    >
-                      确认文案并锁定
-                    </button>
-                  </div>
-                </section>
 
-                <DirectorStage
-                  shots={shots}
-                  jobsByShot={jobsByShot}
-                  assembledJob={scriptQuery.data?.assembledJob ?? null}
-                  language={language}
-                  busy={generating}
-                  canAssemble={allShotsSucceeded}
-                  onSelectTake={selectTake}
-                  onGenerateShot={async (shotId) => generateShots(shotId)}
-                  onAssemble={assembleVideo}
-                  onSaveShotEdit={saveShotEdit}
-                  onGenerateCaptions={generateShotCaptions}
-                  onCreateAnimatic={createAnimatic}
-                  animaticVideoUrl={animaticVideoUrl}
-                  onEditCreated={async () => {
-                    if (selectedScriptId)
-                      await refreshScripts(selectedScriptId);
-                    setMessage(
-                      "修改任务已加入队列，完成后可在导演台预览并采用。",
-                    );
-                  }}
-                />
-
-                <div className="divide-y divide-slate-800">
-                  {shots.map((shot, index) => {
-                    const latestJob = jobsByShot.get(shot.id)?.[0];
-                    const frameJobs =
-                      scriptQuery.data?.shotFrameCandidates.jobs.filter(
-                        (job) => job.scriptShotId === shot.id,
-                      ) ?? [];
-                    const frameJobIds = new Set(frameJobs.map((job) => job.id));
-                    const frameAssets =
-                      scriptQuery.data?.shotFrameCandidates.assets.filter(
-                        (asset) => asset.jobId && frameJobIds.has(asset.jobId),
-                      ) ?? [];
-                    const activeFrameJob = frameJobs.find((job) =>
-                      ["queued", "running"].includes(job.status),
-                    );
-                    const failedFrameJob = frameJobs.find(
-                      (job) => job.status === "failed",
-                    );
-                    const shotIssues = scriptIssues.filter(
-                      (issue) => issue.shotId === shot.id,
-                    );
-                    return (
-                      <article
-                        id={`shot-${shot.id}`}
-                        key={shot.id}
-                        className="scroll-mt-5 p-5 sm:p-6"
+                  <section className="border-b border-slate-800 bg-slate-900/30 p-5 sm:p-6">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <p className="font-mono text-[10px] tracking-[0.24em] text-cyan-300">
+                          01 · COPY LOCK
+                        </p>
+                        <h2 className="mt-2 text-lg font-semibold">成片文案</h2>
+                        <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500">
+                          先确认故事、节奏和台词。修改已确认文案会自动退回待确认，避免旧首帧继续流入制作。
+                        </p>
+                      </div>
+                      <span
+                        className={`border px-3 py-1 text-xs ${copyStatus === "approved" ? "border-emerald-400/30 text-emerald-300" : "border-amber-300/30 text-amber-200"}`}
                       >
-                        <div className="flex flex-wrap items-center gap-3">
-                          <input
-                            type="checkbox"
-                            checked={selectedShotIds.includes(shot.id)}
-                            onChange={(event) =>
-                              setSelectedShotIds((current) =>
-                                event.target.checked
-                                  ? [...current, shot.id]
-                                  : current.filter((id) => id !== shot.id),
-                              )
-                            }
-                            aria-label={`选择镜头 ${index + 1}`}
-                            className="size-4 accent-amber-300"
-                          />
-                          <span className="font-mono text-xs text-amber-300">
-                            {String(index + 1).padStart(2, "0")}
-                          </span>
-                          <input
-                            value={shot.title}
-                            onChange={(event) =>
-                              updateShot(shot.id, { title: event.target.value })
-                            }
-                            className="min-w-44 flex-1 bg-transparent font-medium outline-none"
-                            aria-label={`镜头 ${index + 1} 标题`}
-                          />
-                          <label className="flex items-center gap-2 text-xs text-slate-500">
-                            时长
+                        {copyStatus === "approved" ? "已确认" : "待确认"}
+                      </span>
+                    </div>
+                    <textarea
+                      value={copy}
+                      onChange={(event) => {
+                        setCopy(event.target.value);
+                        setCopyStatus("draft");
+                        markDirty();
+                      }}
+                      rows={7}
+                      placeholder="完整故事文案、旁白、必须保留的台词与节奏说明…"
+                      className="mt-4 w-full resize-y border border-slate-700 bg-slate-950 px-4 py-3 text-sm leading-7 text-slate-200 outline-none focus:border-cyan-300"
+                    />
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                      <span className="text-xs text-slate-600">
+                        {copy.length.toLocaleString()} / 20,000 字符
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void approveCopy()}
+                        disabled={
+                          !copy.trim() ||
+                          (copyStatus === "approved" && !dirty) ||
+                          generating
+                        }
+                        className="bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-30"
+                      >
+                        确认文案并锁定
+                      </button>
+                    </div>
+                  </section>
+
+                  <DirectorStage
+                    shots={shots}
+                    jobsByShot={jobsByShot}
+                    assembledJob={
+                      scriptQuery.data?.assembledJob
+                        ? {
+                            ...scriptQuery.data.assembledJob,
+                            isCurrent:
+                              !dirty && scriptQuery.data.assembledJob.isCurrent,
+                          }
+                        : null
+                    }
+                    language={language}
+                    busy={generating}
+                    canAssemble={allShotsSucceeded}
+                    onSelectTake={selectTake}
+                    onGenerateShot={async (shotId) => generateShots(shotId)}
+                    onAssemble={assembleVideo}
+                    onSaveShotEdit={saveShotEdit}
+                    onChangeShotEdit={updateShot}
+                    onGenerateCaptions={generateShotCaptions}
+                    onCreateAnimatic={createAnimatic}
+                    animaticVideoUrl={animaticVideoUrl}
+                    onEditCreated={async () => {
+                      if (selectedScriptId)
+                        await refreshScripts(selectedScriptId);
+                      setMessage(
+                        "修改任务已加入队列，完成后可在导演台预览并采用。",
+                      );
+                    }}
+                  />
+
+                  <div className="divide-y divide-slate-800">
+                    {shots.map((shot, index) => {
+                      const latestJob = jobsByShot.get(shot.id)?.[0];
+                      const frameJobs =
+                        scriptQuery.data?.shotFrameCandidates.jobs.filter(
+                          (job) => job.scriptShotId === shot.id,
+                        ) ?? [];
+                      const frameJobIds = new Set(
+                        frameJobs.map((job) => job.id),
+                      );
+                      const frameAssets =
+                        scriptQuery.data?.shotFrameCandidates.assets.filter(
+                          (asset) =>
+                            asset.jobId && frameJobIds.has(asset.jobId),
+                        ) ?? [];
+                      const activeFrameJob = frameJobs.find((job) =>
+                        ["queued", "running"].includes(job.status),
+                      );
+                      const failedFrameJob = frameJobs.find(
+                        (job) => job.status === "failed",
+                      );
+                      const shotIssues = scriptIssues.filter(
+                        (issue) => issue.shotId === shot.id,
+                      );
+                      return (
+                        <article
+                          id={`shot-${shot.id}`}
+                          key={shot.id}
+                          className="scroll-mt-5 p-5 sm:p-6"
+                        >
+                          <div className="flex flex-wrap items-center gap-3">
                             <input
-                              type="number"
-                              min={5}
-                              max={Math.min(
-                                MEDIA_H3_SCRIPT_SHOT_SECONDS,
-                                60 - (totalDuration - shot.durationSeconds),
-                              )}
-                              step={1}
-                              value={shot.durationSeconds}
+                              type="checkbox"
+                              checked={selectedShotIds.includes(shot.id)}
+                              onChange={(event) =>
+                                setSelectedShotIds((current) =>
+                                  event.target.checked
+                                    ? [...current, shot.id]
+                                    : current.filter((id) => id !== shot.id),
+                                )
+                              }
+                              aria-label={`选择镜头 ${index + 1}`}
+                              className="size-4 accent-amber-300"
+                            />
+                            <span className="font-mono text-xs text-amber-300">
+                              {String(index + 1).padStart(2, "0")}
+                            </span>
+                            <input
+                              value={shot.title}
                               onChange={(event) =>
                                 updateShot(shot.id, {
-                                  durationSeconds: Math.min(
-                                    Number(event.target.value),
-                                    MEDIA_H3_SCRIPT_SHOT_SECONDS,
-                                    60 - (totalDuration - shot.durationSeconds),
-                                  ),
+                                  title: event.target.value,
                                 })
                               }
-                              className="w-16 border border-slate-800 bg-slate-900 px-2 py-1 text-right font-mono text-xs text-slate-300 outline-none focus:border-amber-300"
-                              aria-label={`镜头 ${index + 1} 时长`}
+                              className="min-w-44 flex-1 bg-transparent font-medium outline-none"
+                              aria-label={`镜头 ${index + 1} 标题`}
                             />
-                            秒
-                          </label>
-                          {latestJob && (
-                            <span
-                              className={`border px-2 py-1 text-[10px] ${latestJob.status === "succeeded" ? "border-emerald-400/30 text-emerald-300" : latestJob.status === "failed" ? "border-rose-400/30 text-rose-300" : "border-cyan-400/30 text-cyan-300"}`}
-                            >
-                              {latestJob.kind === "edit" ? "修改" : "生成"} ·{" "}
-                              {latestJob.status}
-                            </span>
-                          )}
-                          {(shot.selectedGenerationJobId ??
-                            latestJob?.status === "succeeded") &&
-                            index < shots.length - 1 && (
-                              <button
-                                type="button"
-                                onClick={() => void bridgeLastFrame(shot.id)}
-                                disabled={bridgeMutation.isPending}
-                                className="border border-amber-300/30 px-2 py-1 text-[10px] text-amber-200 disabled:opacity-40"
+                            <label className="flex items-center gap-2 text-xs text-slate-500">
+                              时长
+                              <input
+                                type="number"
+                                min={5}
+                                max={Math.min(
+                                  MEDIA_H3_SCRIPT_SHOT_SECONDS,
+                                  60 - (totalDuration - shot.durationSeconds),
+                                )}
+                                step={1}
+                                value={shot.durationSeconds}
+                                onChange={(event) =>
+                                  updateShot(shot.id, {
+                                    durationSeconds: Math.min(
+                                      Number(event.target.value),
+                                      MEDIA_H3_SCRIPT_SHOT_SECONDS,
+                                      60 -
+                                        (totalDuration - shot.durationSeconds),
+                                    ),
+                                  })
+                                }
+                                className="w-16 border border-slate-800 bg-slate-900 px-2 py-1 text-right font-mono text-xs text-slate-300 outline-none focus:border-amber-300"
+                                aria-label={`镜头 ${index + 1} 时长`}
+                              />
+                              秒
+                            </label>
+                            {latestJob && (
+                              <span
+                                className={`border px-2 py-1 text-[10px] ${latestJob.status === "succeeded" ? "border-emerald-400/30 text-emerald-300" : latestJob.status === "failed" ? "border-rose-400/30 text-rose-300" : "border-cyan-400/30 text-cyan-300"}`}
                               >
-                                末帧 → 下一镜
-                              </button>
+                                {latestJob.kind === "edit" ? "修改" : "生成"} ·{" "}
+                                {latestJob.status}
+                              </span>
                             )}
-                          <div className="flex gap-1">
-                            <button
-                              type="button"
-                              onClick={() => moveShot(index, -1)}
-                              disabled={index === 0}
-                              className="px-2 py-1 text-xs text-slate-500 disabled:opacity-20"
-                            >
-                              ↑
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => moveShot(index, 1)}
-                              disabled={index === shots.length - 1}
-                              className="px-2 py-1 text-xs text-slate-500 disabled:opacity-20"
-                            >
-                              ↓
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => removeShot(shot.id)}
-                              className="px-2 py-1 text-xs text-rose-300"
-                            >
-                              删除
-                            </button>
-                          </div>
-                        </div>
-
-                        <section className="mt-5 border-y border-slate-800 bg-slate-900/30 py-4">
-                          <div className="flex flex-wrap items-center justify-between gap-3 px-1">
-                            <div>
-                              <p className="text-xs font-medium text-slate-300">
-                                首帧候选
-                              </p>
-                              <p className="mt-1 text-[11px] text-slate-600">
-                                HiDream 按当前镜头与连续性设定生成 4 个开场构图
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void createFrameCandidates(shot.id)
-                              }
-                              disabled={
-                                copyStatus !== "approved" ||
-                                Boolean(activeFrameJob) ||
-                                generating
-                              }
-                              className="border border-cyan-300/30 px-3 py-2 text-xs text-cyan-200 hover:bg-cyan-300/10 disabled:opacity-30"
-                            >
-                              {activeFrameJob
-                                ? `生成中 · ${activeFrameJob.status}`
-                                : frameAssets.length > 0
-                                  ? "再生成 4 张"
-                                  : "生成 4 张首帧"}
-                            </button>
-                          </div>
-                          {copyStatus !== "approved" && (
-                            <p className="mt-3 px-1 text-xs text-amber-200/70">
-                              先确认上方文案，才能生成首帧候选。
-                            </p>
-                          )}
-                          {failedFrameJob?.errorMessage && !activeFrameJob && (
-                            <p className="mt-3 px-1 text-xs text-rose-300">
-                              上次生成失败：{failedFrameJob.errorMessage}
-                            </p>
-                          )}
-                          {frameAssets.length > 0 && (
-                            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                              {frameAssets.map((asset) => {
-                                const selected =
-                                  shot.firstFrameAssetId === asset.id;
-                                return (
-                                  <button
-                                    key={asset.id}
-                                    type="button"
-                                    onClick={() =>
-                                      void selectFrameCandidate(
-                                        shot.id,
-                                        asset.id,
-                                      )
-                                    }
-                                    className={`group relative aspect-video overflow-hidden border text-left ${selected ? "border-amber-300 ring-1 ring-amber-300" : "border-slate-700 hover:border-cyan-300"}`}
-                                    aria-label={`选择 ${shot.title} 的首帧 ${asset.filename}`}
-                                  >
-                                    <img
-                                      src={asset.url}
-                                      alt={asset.filename}
-                                      className="size-full object-cover transition duration-200 group-hover:scale-[1.02]"
-                                    />
-                                    <span
-                                      className={`absolute right-1 bottom-1 px-2 py-1 text-[10px] ${selected ? "bg-amber-300 text-slate-950" : "bg-slate-950/80 text-slate-300"}`}
-                                    >
-                                      {selected ? "已选首帧" : "选用"}
-                                    </span>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </section>
-
-                        <div className="mt-5 grid gap-4 lg:grid-cols-2">
-                          <label className="block text-xs text-slate-500 lg:col-span-2">
-                            画面与动作
-                            <textarea
-                              value={shot.visualDescription}
-                              onChange={(event) =>
-                                updateShot(shot.id, {
-                                  visualDescription: event.target.value,
-                                })
-                              }
-                              rows={4}
-                              className="mt-2 w-full resize-y border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm leading-6 text-slate-200 outline-none focus:border-amber-300"
-                            />
-                          </label>
-                          <label className="block text-xs text-slate-500">
-                            摄影指令
-                            <textarea
-                              value={shot.cameraDirection}
-                              onChange={(event) =>
-                                updateShot(shot.id, {
-                                  cameraDirection: event.target.value,
-                                })
-                              }
-                              rows={3}
-                              className="mt-2 w-full resize-y border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm leading-6 outline-none focus:border-amber-300"
-                            />
-                          </label>
-                          <label className="block text-xs text-slate-500">
-                            连续性 / 结束构图
-                            <textarea
-                              value={shot.continuity}
-                              onChange={(event) =>
-                                updateShot(shot.id, {
-                                  continuity: event.target.value,
-                                })
-                              }
-                              rows={3}
-                              className="mt-2 w-full resize-y border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm leading-6 outline-none focus:border-amber-300"
-                            />
-                          </label>
-                          <label className="block text-xs text-slate-500">
-                            环境声
-                            <input
-                              value={shot.soundscape}
-                              onChange={(event) =>
-                                updateShot(shot.id, {
-                                  soundscape: event.target.value,
-                                })
-                              }
-                              className="mt-2 w-full border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm outline-none focus:border-amber-300"
-                            />
-                          </label>
-                          <label className="block text-xs text-slate-500">
-                            配乐
-                            <input
-                              value={shot.music}
-                              onChange={(event) =>
-                                updateShot(shot.id, {
-                                  music: event.target.value,
-                                })
-                              }
-                              className="mt-2 w-full border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm outline-none focus:border-amber-300"
-                            />
-                          </label>
-                        </div>
-
-                        <div className="mt-4 border-l border-slate-700 pl-4">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs text-slate-500">
-                              H3 原始人声台词
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => addDialogue(shot)}
-                              className="text-xs text-cyan-300"
-                            >
-                              + 台词
-                            </button>
-                          </div>
-                          <div className="mt-2 grid gap-2">
-                            {shot.dialogues.map((dialogue) => (
-                              <div
-                                key={dialogue.id}
-                                className="grid gap-2 sm:grid-cols-[70px_72px_minmax(0,1fr)_auto]"
-                              >
-                                <select
-                                  value={dialogue.speakerId}
-                                  onChange={(event) =>
-                                    updateShot(shot.id, {
-                                      dialogues: shot.dialogues.map((line) =>
-                                        line.id === dialogue.id
-                                          ? {
-                                              ...line,
-                                              speakerId: event.target
-                                                .value as typeof line.speakerId,
-                                            }
-                                          : line,
-                                      ),
-                                    })
-                                  }
-                                  className="border border-slate-800 bg-slate-900 px-2 py-2 text-xs"
-                                >
-                                  <option>S1</option>
-                                  <option>S2</option>
-                                  <option>S3</option>
-                                  <option>S4</option>
-                                </select>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={Math.max(0, shot.durationSeconds - 0.1)}
-                                  step={0.1}
-                                  value={dialogue.atSeconds}
-                                  onChange={(event) =>
-                                    updateShot(shot.id, {
-                                      dialogues: shot.dialogues.map((line) =>
-                                        line.id === dialogue.id
-                                          ? {
-                                              ...line,
-                                              atSeconds: Number(
-                                                event.target.value,
-                                              ),
-                                            }
-                                          : line,
-                                      ),
-                                    })
-                                  }
-                                  className="border border-slate-800 bg-slate-900 px-2 py-2 text-xs"
-                                  aria-label="台词时间"
-                                />
-                                <input
-                                  value={dialogue.text}
-                                  onChange={(event) =>
-                                    updateShot(shot.id, {
-                                      dialogues: shot.dialogues.map((line) =>
-                                        line.id === dialogue.id
-                                          ? {
-                                              ...line,
-                                              text: event.target.value,
-                                            }
-                                          : line,
-                                      ),
-                                    })
-                                  }
-                                  placeholder="逐字台词"
-                                  className="border border-slate-800 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-300"
-                                />
+                            {(shot.selectedGenerationJobId ??
+                              latestJob?.status === "succeeded") &&
+                              index < shots.length - 1 && (
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    updateShot(shot.id, {
-                                      dialogues: shot.dialogues.filter(
-                                        (line) => line.id !== dialogue.id,
-                                      ),
-                                    })
-                                  }
-                                  className="px-2 text-xs text-rose-300"
+                                  onClick={() => void bridgeLastFrame(shot.id)}
+                                  disabled={bridgeMutation.isPending}
+                                  className="border border-amber-300/30 px-2 py-1 text-[10px] text-amber-200 disabled:opacity-40"
                                 >
-                                  ×
+                                  末帧 → 下一镜
                                 </button>
-                              </div>
-                            ))}
+                              )}
+                            <div className="flex gap-1">
+                              <button
+                                type="button"
+                                onClick={() => moveShot(index, -1)}
+                                disabled={index === 0}
+                                className="px-2 py-1 text-xs text-slate-500 disabled:opacity-20"
+                              >
+                                ↑
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveShot(index, 1)}
+                                disabled={index === shots.length - 1}
+                                className="px-2 py-1 text-xs text-slate-500 disabled:opacity-20"
+                              >
+                                ↓
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeShot(shot.id)}
+                                className="px-2 py-1 text-xs text-rose-300"
+                              >
+                                删除
+                              </button>
+                            </div>
                           </div>
-                          {shotIssues.length > 0 && (
-                            <div className="mt-3 border-l-2 border-amber-300/50 bg-amber-300/5 px-3 py-2 text-xs leading-5 text-amber-100">
-                              {shotIssues.map((issue) => (
-                                <p
-                                  key={`${issue.code}-${issue.dialogueId ?? shot.id}`}
-                                >
-                                  {issue.message}
+
+                          <section className="mt-5 border-y border-slate-800 bg-slate-900/30 py-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3 px-1">
+                              <div>
+                                <p className="text-xs font-medium text-slate-300">
+                                  首帧候选
                                 </p>
+                                <p className="mt-1 text-[11px] text-slate-600">
+                                  HiDream 按当前镜头与连续性设定生成 4
+                                  个开场构图
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void createFrameCandidates(shot.id)
+                                }
+                                disabled={
+                                  copyStatus !== "approved" ||
+                                  Boolean(activeFrameJob) ||
+                                  generating
+                                }
+                                className="border border-cyan-300/30 px-3 py-2 text-xs text-cyan-200 hover:bg-cyan-300/10 disabled:opacity-30"
+                              >
+                                {activeFrameJob
+                                  ? `生成中 · ${activeFrameJob.status}`
+                                  : frameAssets.length > 0
+                                    ? "再生成 4 张"
+                                    : "生成 4 张首帧"}
+                              </button>
+                            </div>
+                            {copyStatus !== "approved" && (
+                              <p className="mt-3 px-1 text-xs text-amber-200/70">
+                                先确认上方文案，才能生成首帧候选。
+                              </p>
+                            )}
+                            {failedFrameJob?.errorMessage &&
+                              !activeFrameJob && (
+                                <p className="mt-3 px-1 text-xs text-rose-300">
+                                  上次生成失败：{failedFrameJob.errorMessage}
+                                </p>
+                              )}
+                            {frameAssets.length > 0 && (
+                              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                {frameAssets.map((asset) => {
+                                  const selected =
+                                    shot.firstFrameAssetId === asset.id;
+                                  return (
+                                    <button
+                                      key={asset.id}
+                                      type="button"
+                                      onClick={() =>
+                                        void selectFrameCandidate(
+                                          shot.id,
+                                          asset.id,
+                                        )
+                                      }
+                                      className={`group relative aspect-video overflow-hidden border text-left ${selected ? "border-amber-300 ring-1 ring-amber-300" : "border-slate-700 hover:border-cyan-300"}`}
+                                      aria-label={`选择 ${shot.title} 的首帧 ${asset.filename}`}
+                                    >
+                                      <img
+                                        src={asset.url}
+                                        alt={asset.filename}
+                                        className="size-full object-cover transition duration-200 group-hover:scale-[1.02]"
+                                      />
+                                      <span
+                                        className={`absolute right-1 bottom-1 px-2 py-1 text-[10px] ${selected ? "bg-amber-300 text-slate-950" : "bg-slate-950/80 text-slate-300"}`}
+                                      >
+                                        {selected ? "已选首帧" : "选用"}
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </section>
+
+                          <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                            <label className="block text-xs text-slate-500 lg:col-span-2">
+                              画面与动作
+                              <textarea
+                                value={shot.visualDescription}
+                                onChange={(event) =>
+                                  updateShot(shot.id, {
+                                    visualDescription: event.target.value,
+                                  })
+                                }
+                                rows={4}
+                                className="mt-2 w-full resize-y border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm leading-6 text-slate-200 outline-none focus:border-amber-300"
+                              />
+                            </label>
+                            <label className="block text-xs text-slate-500">
+                              摄影指令
+                              <textarea
+                                value={shot.cameraDirection}
+                                onChange={(event) =>
+                                  updateShot(shot.id, {
+                                    cameraDirection: event.target.value,
+                                  })
+                                }
+                                rows={3}
+                                className="mt-2 w-full resize-y border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm leading-6 outline-none focus:border-amber-300"
+                              />
+                            </label>
+                            <label className="block text-xs text-slate-500">
+                              连续性 / 结束构图
+                              <textarea
+                                value={shot.continuity}
+                                onChange={(event) =>
+                                  updateShot(shot.id, {
+                                    continuity: event.target.value,
+                                  })
+                                }
+                                rows={3}
+                                className="mt-2 w-full resize-y border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm leading-6 outline-none focus:border-amber-300"
+                              />
+                            </label>
+                            <label className="block text-xs text-slate-500">
+                              环境声
+                              <input
+                                value={shot.soundscape}
+                                onChange={(event) =>
+                                  updateShot(shot.id, {
+                                    soundscape: event.target.value,
+                                  })
+                                }
+                                className="mt-2 w-full border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm outline-none focus:border-amber-300"
+                              />
+                            </label>
+                            <label className="block text-xs text-slate-500">
+                              配乐
+                              <input
+                                value={shot.music}
+                                onChange={(event) =>
+                                  updateShot(shot.id, {
+                                    music: event.target.value,
+                                  })
+                                }
+                                className="mt-2 w-full border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm outline-none focus:border-amber-300"
+                              />
+                            </label>
+                          </div>
+
+                          <div className="mt-4 border-l border-slate-700 pl-4">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-slate-500">
+                                H3 原始人声台词
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => addDialogue(shot)}
+                                className="text-xs text-cyan-300"
+                              >
+                                + 台词
+                              </button>
+                            </div>
+                            <div className="mt-2 grid gap-2">
+                              {shot.dialogues.map((dialogue) => (
+                                <div
+                                  key={dialogue.id}
+                                  className="grid gap-2 sm:grid-cols-[70px_72px_minmax(0,1fr)_auto]"
+                                >
+                                  <select
+                                    value={dialogue.speakerId}
+                                    onChange={(event) =>
+                                      updateShot(shot.id, {
+                                        dialogues: shot.dialogues.map((line) =>
+                                          line.id === dialogue.id
+                                            ? {
+                                                ...line,
+                                                speakerId: event.target
+                                                  .value as typeof line.speakerId,
+                                              }
+                                            : line,
+                                        ),
+                                      })
+                                    }
+                                    className="border border-slate-800 bg-slate-900 px-2 py-2 text-xs"
+                                  >
+                                    <option>S1</option>
+                                    <option>S2</option>
+                                    <option>S3</option>
+                                    <option>S4</option>
+                                  </select>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={Math.max(
+                                      0,
+                                      shot.durationSeconds - 0.1,
+                                    )}
+                                    step={0.1}
+                                    value={dialogue.atSeconds}
+                                    onChange={(event) =>
+                                      updateShot(shot.id, {
+                                        dialogues: shot.dialogues.map((line) =>
+                                          line.id === dialogue.id
+                                            ? {
+                                                ...line,
+                                                atSeconds: Number(
+                                                  event.target.value,
+                                                ),
+                                              }
+                                            : line,
+                                        ),
+                                      })
+                                    }
+                                    className="border border-slate-800 bg-slate-900 px-2 py-2 text-xs"
+                                    aria-label="台词时间"
+                                  />
+                                  <input
+                                    value={dialogue.text}
+                                    onChange={(event) =>
+                                      updateShot(shot.id, {
+                                        dialogues: shot.dialogues.map((line) =>
+                                          line.id === dialogue.id
+                                            ? {
+                                                ...line,
+                                                text: event.target.value,
+                                              }
+                                            : line,
+                                        ),
+                                      })
+                                    }
+                                    placeholder="逐字台词"
+                                    className="border border-slate-800 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-300"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updateShot(shot.id, {
+                                        dialogues: shot.dialogues.filter(
+                                          (line) => line.id !== dialogue.id,
+                                        ),
+                                      })
+                                    }
+                                    className="px-2 text-xs text-rose-300"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
                               ))}
                             </div>
-                          )}
-                        </div>
-                      </article>
-                    );
-                  })}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShots((current) => [
-                        ...current,
-                        {
-                          ...emptyShot(current.length + 1),
-                          durationSeconds: Math.min(
-                            MEDIA_H3_SCRIPT_SHOT_SECONDS,
-                            60 -
-                              current.reduce(
-                                (sum, item) => sum + item.durationSeconds,
-                                0,
-                              ),
-                          ),
-                        },
-                      ]);
-                      markDirty();
-                    }}
-                    disabled={shots.length >= 12 || totalDuration > 55}
-                    className="w-full px-6 py-5 text-left text-sm text-slate-500 hover:bg-slate-900 hover:text-amber-200 disabled:opacity-30"
-                  >
-                    + 添加镜头
-                  </button>
-                </div>
+                            {shotIssues.length > 0 && (
+                              <div className="mt-3 border-l-2 border-amber-300/50 bg-amber-300/5 px-3 py-2 text-xs leading-5 text-amber-100">
+                                {shotIssues.map((issue) => (
+                                  <p
+                                    key={`${issue.code}-${issue.dialogueId ?? shot.id}`}
+                                  >
+                                    {issue.message}
+                                  </p>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </article>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShots((current) => [
+                          ...current,
+                          {
+                            ...emptyShot(current.length + 1),
+                            durationSeconds: Math.min(
+                              MEDIA_H3_SCRIPT_SHOT_SECONDS,
+                              60 -
+                                current.reduce(
+                                  (sum, item) => sum + item.durationSeconds,
+                                  0,
+                                ),
+                            ),
+                          },
+                        ]);
+                        markDirty();
+                      }}
+                      disabled={shots.length >= 12 || totalDuration > 55}
+                      className="w-full px-6 py-5 text-left text-sm text-slate-500 hover:bg-slate-900 hover:text-amber-200 disabled:opacity-30"
+                    >
+                      + 添加镜头
+                    </button>
+                  </div>
+                </fieldset>
               </form>
             )}
           </section>
 
           <aside className="space-y-5 xl:sticky xl:top-5 xl:self-start">
-            <section className="border border-slate-800 bg-slate-900/90 p-5">
+            <fieldset
+              disabled={generating}
+              className="border border-slate-800 bg-slate-900/90 p-5"
+            >
               <h2 className="font-semibold">制作检查器</h2>
               <div className="mt-5 space-y-4">
                 <label className="block text-xs text-slate-500">
@@ -1450,18 +969,47 @@ function AuthenticatedVideoScriptStudio({
                     ? `生成选中的 ${selectedShotIds.length} 镜`
                     : `生成全部 ${shots.length} 镜`}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void deleteScript()}
-                  disabled={!selectedScriptId || deleteMutation.isPending}
-                  className="mt-2 px-4 py-2 text-xs text-rose-300 disabled:opacity-30"
-                >
-                  删除脚本
-                </button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <button
+                      type="button"
+                      disabled={
+                        !selectedScriptId ||
+                        generating ||
+                        deleteMutation.isPending
+                      }
+                      className="mt-2 px-4 py-2 text-xs text-rose-300 disabled:opacity-30"
+                    >
+                      删除脚本
+                    </button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogTitle className="text-lg font-semibold">
+                      删除这个脚本项目？
+                    </AlertDialogTitle>
+                    <AlertDialogDescription className="mt-2 text-sm text-slate-400">
+                      脚本和分镜预演会删除，已生成的视频任务会保留。
+                    </AlertDialogDescription>
+                    <div className="mt-6 flex justify-end gap-3">
+                      <AlertDialogCancel className="border border-slate-600 px-3 py-2 text-sm">
+                        取消
+                      </AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => void deleteScript()}
+                        className="bg-rose-400 px-3 py-2 text-sm text-slate-950"
+                      >
+                        删除脚本
+                      </AlertDialogAction>
+                    </div>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
-            </section>
+            </fieldset>
 
-            <section className="border-t border-slate-800 pt-4">
+            <fieldset
+              disabled={generating}
+              className="border-t border-slate-800 pt-4"
+            >
               <h2 className="text-sm font-semibold">首帧素材</h2>
               <p className="mt-2 text-xs leading-5 text-slate-500">
                 在镜头中选择私有素材作为首帧。当前已加载 {assets.length} 张。
@@ -1490,7 +1038,7 @@ function AuthenticatedVideoScriptStudio({
                   </select>
                 </label>
               ))}
-            </section>
+            </fieldset>
           </aside>
         </div>
       </div>

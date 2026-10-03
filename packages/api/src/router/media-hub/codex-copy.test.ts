@@ -207,12 +207,16 @@ describe("Media Hub Codex copy prompts", () => {
     const originalFetch = globalThis.fetch;
     let requestedUrl = "";
     let requestedBody: unknown;
-    globalThis.fetch = async (input, init) => {
-      requestedUrl = String(input);
-      requestedBody = JSON.parse(String(init?.body));
-      return Response.json({
-        message: { content: "```text\n优化后的提示词\n```" },
-      });
+    globalThis.fetch = (input, init) => {
+      requestedUrl = input instanceof Request ? input.url : input.toString();
+      if (typeof init?.body !== "string")
+        throw new Error("Expected a JSON request body");
+      requestedBody = JSON.parse(init.body);
+      return Promise.resolve(
+        Response.json({
+          message: { content: "```text\n优化后的提示词\n```" },
+        }),
+      );
     };
     try {
       await expect(
