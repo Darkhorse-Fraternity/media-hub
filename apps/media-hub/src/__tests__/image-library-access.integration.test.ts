@@ -1,10 +1,10 @@
 import { fileURLToPath } from "node:url";
 import type { StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { db as applicationDb } from "@acme/db/client";
+import { migrate } from "@acme/db/migrate";
 import { mediaImageAsset, user } from "@acme/db/schema";
 
 import { configureTestDockerHost } from "./helpers/postgres";

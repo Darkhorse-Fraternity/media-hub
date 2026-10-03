@@ -4,11 +4,11 @@ import { fileURLToPath } from "node:url";
 import type { StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import type { Server } from "node:http";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { db as applicationDb } from "@acme/db/client";
 import { and, count, eq } from "@acme/db";
+import { migrate } from "@acme/db/migrate";
 import {
   mediaApiToken,
   mediaGenerationJob,

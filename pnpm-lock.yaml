@@ -45,9 +45,6 @@ catalogs:
     better-auth:
       specifier: 1.4.0-beta.9
       version: 1.4.0-beta.9
-    drizzle-orm:
-      specifier: ^0.44.7
-      version: 0.44.7
     eslint:
       specifier: ^9.38.0
       version: 9.39.4
@@ -169,7 +166,7 @@ importers:
         version: 1.4.0-beta.9(better-sqlite3@12.6.2)(react-dom@19.1.4(react@19.1.4))(react@19.1.4)
       nitro:
         specifier: 3.0.1-alpha.1
-        version: 3.0.1-alpha.1(better-sqlite3@12.6.2)(chokidar@5.0.0)(drizzle-orm@0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.27.6)(postgres@3.4.8)(prisma@5.22.0))(lru-cache@11.5.3)(rollup@4.59.0)(vite@7.1.12(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.23.12)(yaml@2.8.2))
+        version: 3.0.1-alpha.1(better-sqlite3@12.6.2)(chokidar@5.0.0)(drizzle-orm@0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.28.11)(postgres@3.4.8)(prisma@5.22.0))(lru-cache@11.5.3)(rollup@4.59.0)(vite@7.1.12(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.23.12)(yaml@2.8.2))
       react:
         specifier: catalog:react19
         version: 19.1.4
@@ -228,9 +225,6 @@ importers:
       '@vitejs/plugin-react':
         specifier: 'catalog:'
         version: 5.1.0(vite@7.1.12(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.23.12)(yaml@2.8.2))
-      drizzle-orm:
-        specifier: 'catalog:'
-        version: 0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.27.6)(postgres@3.4.8)(prisma@5.22.0)
       eslint:
         specifier: 'catalog:'
         version: 9.39.4(jiti@2.6.1)
@@ -11638,10 +11632,10 @@ snapshots:
       es-errors: 1.3.0
       is-data-view: 1.0.2
 
-  db0@0.3.4(better-sqlite3@12.6.2)(drizzle-orm@0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.27.6)(postgres@3.4.8)(prisma@5.22.0)):
+  db0@0.3.4(better-sqlite3@12.6.2)(drizzle-orm@0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.28.11)(postgres@3.4.8)(prisma@5.22.0)):
     optionalDependencies:
       better-sqlite3: 12.6.2
-      drizzle-orm: 0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.27.6)(postgres@3.4.8)(prisma@5.22.0)
+      drizzle-orm: 0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.28.11)(postgres@3.4.8)(prisma@5.22.0)
 
   debug@3.2.7:
     dependencies:
@@ -11799,15 +11793,6 @@ snapshots:
       postgres: 3.4.8
       prisma: 5.22.0
       react: 19.1.4
-
-  drizzle-orm@0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.27.6)(postgres@3.4.8)(prisma@5.22.0):
-    optionalDependencies:
-      '@prisma/client': 5.22.0(prisma@5.22.0)
-      '@types/better-sqlite3': 7.6.13
-      better-sqlite3: 12.6.2
-      kysely: 0.27.6
-      postgres: 3.4.8
-      prisma: 5.22.0
 
   drizzle-orm@0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.28.11)(postgres@3.4.8)(prisma@5.22.0):
     optionalDependencies:
@@ -13020,11 +13005,11 @@ snapshots:
 
   nf3@0.1.12: {}
 
-  nitro@3.0.1-alpha.1(better-sqlite3@12.6.2)(chokidar@5.0.0)(drizzle-orm@0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.27.6)(postgres@3.4.8)(prisma@5.22.0))(lru-cache@11.5.3)(rollup@4.59.0)(vite@7.1.12(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.23.12)(yaml@2.8.2)):
+  nitro@3.0.1-alpha.1(better-sqlite3@12.6.2)(chokidar@5.0.0)(drizzle-orm@0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.28.11)(postgres@3.4.8)(prisma@5.22.0))(lru-cache@11.5.3)(rollup@4.59.0)(vite@7.1.12(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.23.12)(yaml@2.8.2)):
     dependencies:
       consola: 3.4.2
       crossws: 0.4.4(srvx@0.9.8)
-      db0: 0.3.4(better-sqlite3@12.6.2)(drizzle-orm@0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.27.6)(postgres@3.4.8)(prisma@5.22.0))
+      db0: 0.3.4(better-sqlite3@12.6.2)(drizzle-orm@0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.28.11)(postgres@3.4.8)(prisma@5.22.0))
       h3: 2.0.1-rc.5(crossws@0.4.4(srvx@0.9.8))
       jiti: 2.6.1
       nf3: 0.1.12
@@ -13035,7 +13020,7 @@ snapshots:
       srvx: 0.9.8
       undici: 7.22.0
       unenv: 2.0.0-rc.24
-      unstorage: 2.0.0-alpha.6(chokidar@5.0.0)(db0@0.3.4(better-sqlite3@12.6.2)(drizzle-orm@0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.27.6)(postgres@3.4.8)(prisma@5.22.0)))(lru-cache@11.5.3)(ofetch@2.0.0-alpha.3)
+      unstorage: 2.0.0-alpha.6(chokidar@5.0.0)(db0@0.3.4(better-sqlite3@12.6.2)(drizzle-orm@0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.28.11)(postgres@3.4.8)(prisma@5.22.0)))(lru-cache@11.5.3)(ofetch@2.0.0-alpha.3)
     optionalDependencies:
       rollup: 4.59.0
       vite: 7.1.12(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.23.12)(yaml@2.8.2)
@@ -14290,10 +14275,10 @@ snapshots:
       picomatch: 4.0.3
       webpack-virtual-modules: 0.6.2
 
-  unstorage@2.0.0-alpha.6(chokidar@5.0.0)(db0@0.3.4(better-sqlite3@12.6.2)(drizzle-orm@0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.27.6)(postgres@3.4.8)(prisma@5.22.0)))(lru-cache@11.5.3)(ofetch@2.0.0-alpha.3):
+  unstorage@2.0.0-alpha.6(chokidar@5.0.0)(db0@0.3.4(better-sqlite3@12.6.2)(drizzle-orm@0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.28.11)(postgres@3.4.8)(prisma@5.22.0)))(lru-cache@11.5.3)(ofetch@2.0.0-alpha.3):
     optionalDependencies:
       chokidar: 5.0.0
-      db0: 0.3.4(better-sqlite3@12.6.2)(drizzle-orm@0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.27.6)(postgres@3.4.8)(prisma@5.22.0))
+      db0: 0.3.4(better-sqlite3@12.6.2)(drizzle-orm@0.44.7(@prisma/client@5.22.0(prisma@5.22.0))(@types/better-sqlite3@7.6.13)(better-sqlite3@12.6.2)(kysely@0.28.11)(postgres@3.4.8)(prisma@5.22.0))
       lru-cache: 11.5.3
       ofetch: 2.0.0-alpha.3
 

@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
 import {
   afterAll,
   beforeAll,
@@ -16,6 +15,7 @@ import {
 import type { db as applicationDb } from "@acme/db/client";
 import type { MediaVideoScriptShot } from "@acme/validators";
 import { and, eq } from "@acme/db";
+import { migrate } from "@acme/db/migrate";
 import {
   mediaApiToken,
   mediaGenerationJob,
