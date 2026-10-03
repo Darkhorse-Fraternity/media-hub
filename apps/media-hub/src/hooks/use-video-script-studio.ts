@@ -20,10 +20,16 @@ import type {
   ScriptTargetDuration,
 } from "~/lib/video-script-studio-state";
 import { useTRPC } from "~/lib/trpc";
-import { EMPTY_CONTINUITY_BIBLE } from "~/lib/video-script-studio-state";
+import {
+  EMPTY_CONTINUITY_BIBLE,
+  emptyShot,
+} from "~/lib/video-script-studio-state";
 import { useScriptWorkflow } from "./use-script-workflow";
 
-export function useVideoScriptStudio(initialScriptId?: string) {
+export function useVideoScriptStudio(
+  initialScriptId?: string,
+  imageAssetIds: string[] = [],
+) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -73,6 +79,20 @@ export function useVideoScriptStudio(initialScriptId?: string) {
         ? 5_000
         : false,
   });
+  const importedImagesQuery = useQuery({
+    ...trpc.mediaHub.image.prepareVideoInputs.queryOptions({
+      assetIds: imageAssetIds.length ? imageAssetIds.slice(0, 4) : ["none"],
+    }),
+    enabled: imageAssetIds.length > 0 && !initialScriptId,
+  });
+  const importedFrameIds = (importedImagesQuery.data ?? []).map(
+    (asset) => asset.id,
+  );
+  const imageImportPending =
+    imageAssetIds.length > 0 &&
+    !initialScriptId &&
+    importedImagesQuery.isPending;
+
   const healthQuery = useQuery(
     trpc.mediaHub.generation.providerHealth.queryOptions(undefined, {
       retry: false,
@@ -111,7 +131,22 @@ export function useVideoScriptStudio(initialScriptId?: string) {
       setSelectedShotIds([]);
       setAnimaticVideoUrl(null);
     },
-    [],
+    [
+      setTitle,
+      setBrief,
+      setCopy,
+      setCopyStatus,
+      setLanguage,
+      setWidth,
+      setHeight,
+      setDefaultProfile,
+      setContinuityBible,
+      setShots,
+      setVersion,
+      setDirty,
+      setSelectedShotIds,
+      setAnimaticVideoUrl,
+    ],
   );
 
   useEffect(() => {
@@ -186,6 +221,7 @@ export function useVideoScriptStudio(initialScriptId?: string) {
   );
 
   const generating =
+    imageImportPending ||
     workflowPending ||
     draftMutation.isPending ||
     createMutation.isPending ||
@@ -275,14 +311,23 @@ export function useVideoScriptStudio(initialScriptId?: string) {
         return;
       }
 
+      if (importedImagesQuery.isError)
+        throw new Error(importedImagesQuery.error.message);
       const script = await createMutation.mutateAsync({
         title: newTitle.trim(),
         brief: newBrief.trim(),
         copy: "",
         copyStatus: "draft",
         language,
+        width,
+        height,
+        defaultProfile: defaultProfile || undefined,
         continuityBible: EMPTY_CONTINUITY_BIBLE,
-        shots: [],
+        shots: importedFrameIds.map((assetId, index) => ({
+          ...emptyShot(index + 1),
+          visualDescription: newBrief.trim(),
+          firstFrameAssetId: assetId,
+        })),
       });
       setNewTitle("");
       setNewBrief("");
@@ -302,6 +347,8 @@ export function useVideoScriptStudio(initialScriptId?: string) {
       }
       setMessage("正在把简报拆成可生成的 H3 镜头…");
 
+      if (importedImagesQuery.isError)
+        throw new Error(importedImagesQuery.error.message);
       const draft = await draftMutation.mutateAsync({
         title: newTitle.trim() || undefined,
         brief: newBrief.trim(),
@@ -314,8 +361,14 @@ export function useVideoScriptStudio(initialScriptId?: string) {
         copy: draft.copy,
         copyStatus: "draft",
         language,
+        width,
+        height,
+        defaultProfile: defaultProfile || undefined,
         continuityBible: draft.continuityBible,
-        shots: draft.shots,
+        shots: draft.shots.map((shot, index) => ({
+          ...shot,
+          firstFrameAssetId: importedFrameIds[index] ?? shot.firstFrameAssetId,
+        })),
       });
       setNewTitle("");
       setNewBrief("");
@@ -579,6 +632,10 @@ export function useVideoScriptStudio(initialScriptId?: string) {
     qualityPreset,
     setQualityPreset,
     message,
+    imageImportError: importedImagesQuery.isError
+      ? importedImagesQuery.error.message
+      : null,
+    importedImages: importedImagesQuery.data ?? [],
     setMessage,
     animaticVideoUrl,
     scriptQuery,

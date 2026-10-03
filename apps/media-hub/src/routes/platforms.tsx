@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { authClient } from "~/auth/client";
-import { PlatformAccountManagementPanel } from "~/routes/index";
+import { PlatformAccountManagementPanel } from "~/components/platform-account-management";
 
 export const Route = createFileRoute("/platforms")({
   component: PlatformManagementPage,

@@ -81,16 +81,16 @@ function AuthenticatedScriptHistory({
           </div>
           <nav className="mt-5 flex flex-wrap gap-2" aria-label="脚本导航">
             <Link
-              to="/scripts"
+              to="/"
               className="bg-amber-300 px-4 py-2 text-sm font-semibold text-slate-950"
             >
               新建脚本
             </Link>
             <Link
-              to="/"
-              className="border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:border-cyan-400 hover:text-cyan-200"
+              to="/videos"
+              className="border border-slate-700 px-4 py-2 text-sm text-slate-300"
             >
-              快速生成
+              作品库
             </Link>
             <Link
               to="/images"
@@ -134,7 +134,7 @@ function AuthenticatedScriptHistory({
                 从一段创作简报开始，AI 会把它拆成可生成的镜头。
               </p>
               <Link
-                to="/scripts"
+                to="/"
                 className="mt-6 inline-flex bg-amber-300 px-5 py-2.5 text-sm font-semibold text-slate-950"
               >
                 创建第一份脚本

@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { authClient } from "~/auth/client";
-import { AgentApiManagementPanel } from "~/routes/index";
+import { AgentApiManagementPanel } from "~/components/agent-api-management";
 
 export const Route = createFileRoute("/agent-api")({
   component: AgentApiPage,

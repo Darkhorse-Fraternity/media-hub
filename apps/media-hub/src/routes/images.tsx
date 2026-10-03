@@ -44,7 +44,7 @@ function ImageStudioPage() {
             先登录，再打开你的素材库
           </h1>
           <p className="mt-3 text-sm leading-6 text-slate-400">
-            图片素材按用户隔离。请返回视频工作台登录后继续。
+            图片素材按用户隔离。请返回导演台登录后继续。
           </p>
           <Link
             to="/"
@@ -239,8 +239,8 @@ function AuthenticatedImageStudio({
   const toggleVideoAsset = (id: string) => {
     setVideoAssetIds((current) => {
       if (current.includes(id)) return current.filter((value) => value !== id);
-      if (current.length >= 5) {
-        setMessage("视频最多使用 5 张图片。");
+      if (current.length >= 4) {
+        setMessage("一次最多带入 4 张镜头首帧。");
         return current;
       }
       return [...current, id];
@@ -291,7 +291,7 @@ function AuthenticatedImageStudio({
               to="/"
               className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-300 transition hover:border-cyan-400/50 hover:text-cyan-200"
             >
-              视频创作
+              返回导演台
             </Link>
           </div>
           <div className="absolute top-0 right-0 z-50">
@@ -310,7 +310,7 @@ function AuthenticatedImageStudio({
                 SELECTED FOR MOTION
               </p>
               <p className="mt-1 text-sm text-slate-300">
-                第 1 张将作为首帧，其余图片作为主体参考。
+                选中的图片将按顺序用作镜头首帧。
               </p>
             </div>
             <Link
@@ -323,7 +323,7 @@ function AuthenticatedImageStudio({
                   : "pointer-events-none bg-slate-800 text-slate-500"
               }`}
             >
-              用这 {videoAssetIds.length} 张图生成视频 →
+              带 {videoAssetIds.length} 张图去导演台 →
             </Link>
           </div>
           <div className="flex min-h-24 gap-3 overflow-x-auto p-4">

@@ -105,11 +105,11 @@ export function DirectorStage({
     >
       <section
         className="border-b border-slate-800 bg-[#101820] p-5 sm:p-6"
-        aria-label="短视频导演台"
+        aria-label="镜头预览与剪辑"
       >
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h2 className="text-xl font-semibold text-slate-100">导演台</h2>
+            <h2 className="text-xl font-semibold text-slate-100">预览与剪辑</h2>
             <p className="mt-1 text-xs leading-5 text-slate-400">
               预览每一镜，选定采用版本；需要调整画面时直接修改，再合成完整成片。
             </p>

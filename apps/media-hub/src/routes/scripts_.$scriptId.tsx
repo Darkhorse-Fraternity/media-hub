@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { VideoScriptStudioPage } from "~/routes/scripts";
+import { DirectorWorkspace } from "~/components/director-workspace";
 
 export const Route = createFileRoute("/scripts_/$scriptId")({
   component: VideoScriptDetailPage,
@@ -11,5 +11,5 @@ export const Route = createFileRoute("/scripts_/$scriptId")({
 
 function VideoScriptDetailPage() {
   const { scriptId } = Route.useParams();
-  return <VideoScriptStudioPage initialScriptId={scriptId} />;
+  return <DirectorWorkspace initialScriptId={scriptId} />;
 }
