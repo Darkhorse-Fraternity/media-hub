@@ -29,10 +29,18 @@ const postgresImage = process.env.TEST_POSTGRES_IMAGE ?? "postgres:17";
 
 type Database = typeof applicationDb;
 type HandlePost = (request: Request, sourceJobId: string) => Promise<Response>;
+type HandleShotRequest = (
+  request: Request,
+  scriptId: string,
+  shotId: string,
+) => Promise<Response>;
 
 let container: StartedPostgreSqlContainer;
 let database: Database;
 let handlePost: HandlePost;
+let handleEditPlan: HandleShotRequest;
+let handleTake: HandleShotRequest;
+let handleCaptions: HandleShotRequest;
 let providerServer: Server;
 let createdEditJobId: string | null = null;
 
@@ -63,6 +71,22 @@ function createEditRequest(
   );
 }
 
+function createShotRequest(
+  action: "edit-plan" | "take" | "captions/generate",
+  method: "PATCH" | "POST",
+  body: Record<string, unknown>,
+  authorization = `Bearer ${agentToken}`,
+): Request {
+  return new Request(
+    `http://media-hub.test/api/v1/scripts/${scriptId}/shots/${scriptShotId}/${action}`,
+    {
+      method,
+      headers: { authorization, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
 function validEditBody(overrides: Record<string, unknown> = {}) {
   return {
     title: "修改：接口集成测试",
@@ -88,7 +112,7 @@ function validEditBody(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe("POST /api/v1/generations/:jobId/edits", () => {
+describe("Agent video edit and director REST API", () => {
   beforeAll(async () => {
     configureDockerHostFromCurrentContext();
     container = await new PostgreSqlContainer(postgresImage)
@@ -144,6 +168,15 @@ describe("POST /api/v1/generations/:jobId/edits", () => {
     const routeModule =
       await import("../routes/api/v1/generations/$jobId/edits");
     handlePost = routeModule.handlePost;
+    handleEditPlan = (
+      await import("../routes/api/v1/scripts/$scriptId/shots/$shotId/edit-plan")
+    ).handlePatch;
+    handleTake = (
+      await import("../routes/api/v1/scripts/$scriptId/shots/$shotId/take")
+    ).handlePatch;
+    handleCaptions = (
+      await import("../routes/api/v1/scripts/$scriptId/shots/$shotId/captions/generate")
+    ).handlePost;
 
     const now = new Date();
     await database.insert(user).values({
@@ -169,7 +202,27 @@ describe("POST /api/v1/generations/:jobId/edits", () => {
       id: scriptId,
       title: "Integration video script",
       brief: "Verify that Ref2VA versions stay attached to their source shot",
-      shots: [],
+      shots: [
+        {
+          id: scriptShotId,
+          title: "Opening shot",
+          durationSeconds: 15,
+          visualDescription: "A robot turns toward the camera",
+          cameraDirection: "Static",
+          continuity: "",
+          soundscape: "",
+          music: "N/A",
+          dialogues: [
+            {
+              id: "dialogue-1",
+              atSeconds: 2,
+              speakerId: "S1",
+              language: "zh",
+              text: "你好",
+            },
+          ],
+        },
+      ],
       createdBy: ownerId,
       createdAt: now,
       updatedAt: now,
@@ -316,5 +369,84 @@ describe("POST /api/v1/generations/:jobId/edits", () => {
         ),
       );
     expect(editCounts[0]?.value).toBe(1);
+  });
+
+  it("protects the shot edit plan with the Agent token", async () => {
+    const response = await handleEditPlan(
+      createShotRequest(
+        "edit-plan",
+        "PATCH",
+        { version: 1 },
+        "Bearer invalid-token",
+      ),
+      scriptId,
+      scriptShotId,
+    );
+    expect(response.status).toBe(401);
+  });
+
+  it("persists trims, captions, generated dialogue cues, and selected take with version locks", async () => {
+    const edited = await handleEditPlan(
+      createShotRequest("edit-plan", "PATCH", {
+        version: 1,
+        trim_start_seconds: 1,
+        trim_end_seconds: 12,
+        captions: [{ start_seconds: 2, end_seconds: 4, text: "校正字幕" }],
+      }),
+      scriptId,
+      scriptShotId,
+    );
+    expect(edited.status).toBe(200);
+    await expect(edited.json()).resolves.toMatchObject({
+      version: 2,
+      shots: [
+        {
+          trimStartSeconds: 1,
+          trimEndSeconds: 12,
+          captions: [{ text: "校正字幕" }],
+        },
+      ],
+    });
+
+    const stale = await handleEditPlan(
+      createShotRequest("edit-plan", "PATCH", {
+        version: 1,
+        trim_start_seconds: 2,
+      }),
+      scriptId,
+      scriptShotId,
+    );
+    expect(stale.status).toBe(409);
+
+    const generated = await handleCaptions(
+      createShotRequest("captions/generate", "POST", { version: 2 }),
+      scriptId,
+      scriptShotId,
+    );
+    expect(generated.status).toBe(200);
+    await expect(generated.json()).resolves.toMatchObject({
+      version: 3,
+      shots: [{ captions: [{ startSeconds: 2, text: "你好" }] }],
+    });
+
+    const selected = await handleTake(
+      createShotRequest("take", "PATCH", { version: 3, job_id: sourceJobId }),
+      scriptId,
+      scriptShotId,
+    );
+    expect(selected.status).toBe(200);
+    await expect(selected.json()).resolves.toMatchObject({
+      version: 4,
+      shots: [{ selectedGenerationJobId: sourceJobId }],
+    });
+    const saved = await database.query.mediaVideoScript.findFirst({
+      where: eq(mediaVideoScript.id, scriptId),
+    });
+    expect(saved?.shots[0]).toMatchObject({
+      trimStartSeconds: 1,
+      trimEndSeconds: 12,
+      captions: [{ text: "你好" }],
+      selectedGenerationJobId: sourceJobId,
+    });
   });
 });
