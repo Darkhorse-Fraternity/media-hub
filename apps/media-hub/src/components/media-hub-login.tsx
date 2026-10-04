@@ -5,12 +5,38 @@ import { mediaHubSignInSchema } from "@acme/validators";
 
 import { authClient } from "~/auth/client";
 
-export function SessionLoadingScreen() {
+export function SessionLoadingScreen({
+  onRetry = () => window.location.reload(),
+}: {
+  onRetry?: () => void;
+}) {
+  const [isSlow, setIsSlow] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setIsSlow(true), 8000);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   return (
     <main className="grid min-h-dvh place-items-center bg-slate-950 p-6 text-slate-100">
-      <div className="flex items-center gap-3 text-sm text-slate-400">
-        <span className="size-2 animate-pulse rounded-full bg-cyan-300" />
-        正在检查登录状态…
+      <div className="max-w-sm text-center text-sm text-slate-400">
+        <p role={isSlow ? "alert" : "status"}>
+          {!isSlow && (
+            <span className="mr-3 inline-block size-2 animate-pulse rounded-full bg-cyan-300" />
+          )}
+          {isSlow ? "登录状态检查耗时较长" : "正在检查登录状态…"}
+        </p>
+        {isSlow && (
+          <>
+            <p className="mt-3 leading-6">请检查网络连接后重试。</p>
+            <button
+              type="button"
+              onClick={onRetry}
+              className="mt-4 rounded-xl border border-slate-700 px-4 py-2 text-slate-100 hover:border-cyan-400 focus-visible:outline-2 focus-visible:outline-cyan-300"
+            >
+              重新检查
+            </button>
+          </>
+        )}
       </div>
     </main>
   );

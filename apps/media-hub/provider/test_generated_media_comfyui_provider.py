@@ -105,6 +105,16 @@ def hidream_profile():
 
 
 class Ref2VAWorkflowTests(unittest.TestCase):
+    def test_av_capability_is_not_advertised_without_the_official_guide_node(self) -> None:
+        client = object.__new__(provider.ComfyUiClient)
+        def objects(method, path):
+            node = path.rsplit("/", 1)[-1]
+            return {} if node == "MiniMaxH3AddGuide" else {node: {}}
+        client._json = objects
+        self.assertFalse(client.healthcheck_h3({})["native_av_continuation"])
+        client._json = lambda method, path: {path.rsplit("/", 1)[-1]: {}}
+        self.assertTrue(client.healthcheck_h3({})["native_av_continuation"])
+
     def test_health_exposes_profile_capabilities_for_admin_selection(self) -> None:
         service = object.__new__(provider.ProviderService)
         service.config = types.SimpleNamespace(
@@ -134,6 +144,7 @@ class Ref2VAWorkflowTests(unittest.TestCase):
                     "model_version": "platform-managed",
                     "max_reference_images": 4,
                     "max_reference_audios": 0,
+                    "supports_native_av_continuation": False,
                     "minimum_steps": 20,
                 }
             ],
@@ -177,6 +188,22 @@ class Ref2VAWorkflowTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.code, "profile_reference_images_unsupported")
 
+    def test_native_continuation_conditions_both_streams_and_anchors_new_scene(self) -> None:
+        workflow = provider._build_comfyui_h3_official_i2v_prompt(
+            official_i2v_profile(), first_frame_ref="next.png", reference_image_refs=[],
+            continuation_video_ref="previous-av.mp4", positive="Next scene, same narrator.",
+            width=960, height=544, length=175, seed=9, filename_prefix="test/av",
+            steps=20, fps=24,
+        )
+        self.assertNotIn("first_frame", workflow["30"]["inputs"])
+        guide = workflow["31"]["inputs"]
+        self.assertEqual(guide["image"], ["23", 0])
+        self.assertEqual(guide["audio"], ["23", 1])
+        self.assertEqual(guide["audio_vae"], ["14", 0])
+        self.assertEqual(workflow["32"]["inputs"]["frame_idx"], 22)
+        self.assertEqual(workflow["43"]["inputs"]["conditioning"], ["32", 0])
+        self.assertEqual(workflow["60"]["inputs"]["audio"], ["51", 0])
+
     def test_official_i2v_accepts_prompt_without_source_artifacts(self) -> None:
         profile = official_i2v_profile()
         service = object.__new__(provider.ProviderService)
@@ -197,8 +224,7 @@ class Ref2VAWorkflowTests(unittest.TestCase):
                 "cfg": 1,
             },
         }
-        normalized = service._normalize_request(
-            {
+        payload = {
                 "schema_version": provider.REQUEST_CONTRACT,
                 "orchestration_run_id": "official-i2v:run-1",
                 "project_id": "media-hub",
@@ -211,8 +237,17 @@ class Ref2VAWorkflowTests(unittest.TestCase):
                 ),
                 "source_artifacts": [],
             }
-        )
+        normalized = service._normalize_request(payload)
         self.assertEqual(normalized["source_artifacts"], [])
+        context = b"synchronized-context"
+        artifact = {"name": "context.mp4", "content_type": "video/mp4",
+                    "checksum": provider._checksum(context), "content_base64": base64.b64encode(context).decode(),
+                    "role": "continuation_video"}
+        payload["source_artifacts"] = [artifact]
+        self.assertEqual(service._normalize_request(payload)["source_artifacts"][0]["role"], "continuation_video")
+        payload["source_artifacts"] = [artifact, artifact]
+        with self.assertRaises(provider.ProviderJobError):
+            service._normalize_request(payload)
 
     def test_profile_does_not_require_fl2va_turbo_lora(self) -> None:
         profile = ref2va_profile()

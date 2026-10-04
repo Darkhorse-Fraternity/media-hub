@@ -582,11 +582,17 @@ class ComfyUiClient:
                         "comfyui_model_missing",
                         "platform H3 generation model is not available",
                     )
+        try:
+            continuation_node = self._json("GET", "/object_info/MiniMaxH3AddGuide")
+            native_av_continuation = "MiniMaxH3AddGuide" in continuation_node
+        except ProviderJobError:
+            native_av_continuation = False
         return {
             "status": "healthy",
             "profiles": sorted(profiles),
             "nodes_verified": len(H3_REQUIRED_NODES),
             "backend": "comfyui_h3",
+            "native_av_continuation": native_av_continuation,
         }
 
     def healthcheck_hidream_image(
@@ -1139,6 +1145,7 @@ def _build_comfyui_h3_official_i2v_prompt(
     filename_prefix: str,
     steps: int,
     fps: float,
+    continuation_video_ref: str | None = None,
 ) -> dict[str, Any]:
     """Build the pinned Comfy-Org H3 I2V baseline in API prompt format."""
     if reference_image_refs:
@@ -1170,7 +1177,7 @@ def _build_comfyui_h3_official_i2v_prompt(
         "height": height,
         "length": length,
     }
-    if first_frame_ref:
+    if first_frame_ref and not continuation_video_ref:
         nodes["20"] = {
             "class_type": "LoadImage",
             "inputs": {"image": first_frame_ref},
@@ -1180,6 +1187,27 @@ def _build_comfyui_h3_official_i2v_prompt(
         "class_type": "MiniMaxH3ImageToVideo",
         "inputs": conditioning_inputs,
     }
+    conditioning = ["30", 0]
+    if continuation_video_ref:
+        nodes["22"] = {"class_type": "LoadVideo", "inputs": {"file": continuation_video_ref}}
+        nodes["23"] = {"class_type": "GetVideoComponents", "inputs": {"video": ["22", 0]}}
+        nodes["31"] = {
+            "class_type": "MiniMaxH3AddGuide",
+            "inputs": {
+                "positive": conditioning, "latent": ["30", 1],
+                "vae": ["13", 0], "audio_vae": ["14", 0],
+                "image": ["23", 0], "audio": ["23", 1], "frame_idx": 0,
+            },
+        }
+        conditioning = ["31", 0]
+        if first_frame_ref:
+            nodes["20"] = {"class_type": "LoadImage", "inputs": {"image": first_frame_ref}}
+            nodes["32"] = {
+                "class_type": "MiniMaxH3AddGuide",
+                "inputs": {"positive": conditioning, "latent": ["30", 1],
+                           "vae": ["13", 0], "image": ["20", 0], "frame_idx": 22},
+            }
+            conditioning = ["32", 0]
     official_steps = max(steps, profile.default_steps)
     nodes.update(
         {
@@ -1199,7 +1227,7 @@ def _build_comfyui_h3_official_i2v_prompt(
             },
             "43": {
                 "class_type": "BasicGuider",
-                "inputs": {"model": ["10", 0], "conditioning": ["30", 0]},
+                "inputs": {"model": ["10", 0], "conditioning": conditioning},
             },
             "44": {
                 "class_type": "SamplerCustomAdvanced",
@@ -1637,6 +1665,10 @@ class ProviderService:
                     # audio only from reference videos and cannot bind a
                     # standalone <Audio N> artifact yet.
                     "max_reference_audios": 0,
+                    "supports_native_av_continuation": (
+                        profile.adapter == COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND
+                        and any(item.get("native_av_continuation", False) for item in values)
+                    ),
                     "minimum_steps": minimum_steps,
                 }
             )
@@ -1921,6 +1953,8 @@ class ProviderService:
             is_video = content_type in {"video/mp4", "video/webm", "video/quicktime"}
             if profile.adapter == COMFYUI_H3_REF2VA_ADAPTER_KIND:
                 type_supported = is_image or is_video
+            elif profile.adapter == COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND:
+                type_supported = is_image or is_video
             else:
                 type_supported = is_image
             if not type_supported:
@@ -1942,6 +1976,8 @@ class ProviderService:
                 allowed_roles = {"source_video", "reference_video", "style", "subject"}
             elif profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
                 allowed_roles = {"reference"}
+            elif profile.adapter == COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND:
+                allowed_roles = {"first_frame", "continuation_video"}
             else:
                 allowed_roles = {"first_frame", "style", "subject"}
             if role not in allowed_roles:
@@ -1949,7 +1985,7 @@ class ProviderService:
                     "invalid_source_artifact",
                     "source artifact role is not supported by the selected profile",
                 )
-            if is_video != (role in {"source_video", "reference_video"}):
+            if is_video != (role in {"source_video", "reference_video", "continuation_video"}):
                 raise ProviderJobError(
                     "invalid_source_artifact",
                     "video roles require video files and image roles require image files",
@@ -1984,6 +2020,10 @@ class ProviderService:
                     "invalid_source_artifact",
                     "HiDream image editing accepts up to four reference images",
                 )
+        elif profile.adapter == COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND:
+            if any(sum(source["role"] == role for source in normalized_sources) > 1
+                   for role in ("first_frame", "continuation_video")):
+                raise ProviderJobError("invalid_source_artifact", "official H3 accepts one first frame and one synchronized continuation clip")
         else:
             first_frame_count = sum(
                 source["role"] == "first_frame" for source in normalized_sources
@@ -2334,6 +2374,7 @@ class ProviderService:
             source_path: Path | None = None
             first_frame_ref = ""
             source_video_ref = ""
+            continuation_video_ref = ""
             reference_video_refs: list[str] = []
             reference_image_refs: list[str] = []
             reference_roles: list[str] = []
@@ -2384,6 +2425,8 @@ class ProviderService:
                         source_video_ref = uploaded_ref
                     elif role == "reference_video":
                         reference_video_refs.append(uploaded_ref)
+                    elif role == "continuation_video":
+                        continuation_video_ref = uploaded_ref
                     else:
                         reference_image_refs.append(uploaded_ref)
                         reference_roles.append(role)
@@ -2500,6 +2543,7 @@ class ProviderService:
                         filename_prefix=f"ydc_generated_media/{job_id}/{sample_id}",
                         steps=int(parameters["steps"]),
                         fps=float(parameters["fps"]),
+                        continuation_video_ref=continuation_video_ref or None,
                     )
                     content = self._run_or_resume_comfyui_prompt(job_id, prompt)
                 elif profile.adapter == COMFYUI_H3_ADAPTER_KIND:

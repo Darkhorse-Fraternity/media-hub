@@ -456,6 +456,8 @@ export const mediaVideoScriptDialogueSchema = z.object({
   speakerId: z.enum(["S1", "S2", "S3", "S4"]),
   language: mediaContentLanguageEnum,
   text: z.string().trim().min(1).max(300),
+  voice: mediaH3DialogueSchema.shape.voice,
+  delivery: z.enum(["on_screen", "off_screen_voiceover"]).optional(),
 });
 
 export const mediaVideoScriptCaptionSchema = z.object({
@@ -632,6 +634,7 @@ export const generateMediaVideoScriptSchema = z.object({
     MEDIA_H3_DEFAULT_QUALITY_PRESET,
   ),
   h3Profile: z.string().trim().min(1).max(200).optional(),
+  continuityMode: z.enum(["independent", "native_av"]).default("native_av"),
 });
 
 export const bridgeMediaVideoScriptFrameSchema = z.object({

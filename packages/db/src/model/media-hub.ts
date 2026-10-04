@@ -43,6 +43,8 @@ export interface MediaVideoScriptDialogue {
   speakerId: "S1" | "S2" | "S3" | "S4";
   language: "zh" | "en";
   text: string;
+  voice?: string;
+  delivery?: "on_screen" | "off_screen_voiceover";
 }
 
 export interface MediaVideoScriptCaption {
@@ -247,7 +249,7 @@ export const mediaGenerationJob = pgTable(
     scriptShotId: text("script_shot_id"),
     /** generate | edit | assemble；脚本合成任务复用成片读取和发布能力。 */
     kind: text("kind").notNull().default("generate"),
-    /** 编辑任务的源成片任务 ID；源文件仍通过源任务的 MinIO key 获取。 */
+    /** 编辑源成片或原生音视频延续的上一镜；通过源任务的 MinIO key 获取。 */
     sourceGenerationJobId: text("source_generation_job_id"),
     /** Ref2VA 时间轴编辑片段，按开始时间排序且不可重叠。 */
     editSegments: jsonb("edit_segments")

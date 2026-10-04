@@ -1,7 +1,10 @@
 import { z } from "zod/v4";
 
 import type { MediaVideoScriptShot } from "@acme/validators";
-import { mediaH3ScriptTargetDurationSchema } from "@acme/validators";
+import {
+  mediaH3ScriptTargetDurationSchema,
+  mediaVideoScriptDialogueSchema,
+} from "@acme/validators";
 
 const dialogueBody = z.object({
   id: z.string().trim().min(1).max(100).optional(),
@@ -9,6 +12,8 @@ const dialogueBody = z.object({
   speaker_id: z.enum(["S1", "S2", "S3", "S4"]),
   language: z.enum(["zh", "en"]),
   text: z.string().trim().min(1).max(300),
+  voice: mediaVideoScriptDialogueSchema.shape.voice,
+  delivery: mediaVideoScriptDialogueSchema.shape.delivery,
 });
 
 const continuityBibleObject = z.object({
@@ -78,6 +83,7 @@ export const generateScriptBody = z.object({
   shot_ids: z.array(z.string().trim().min(1)).max(12).default([]),
   quality_preset: z.enum(["fast", "balanced", "quality"]).default("balanced"),
   generation_profile: z.string().trim().min(1).max(200).optional(),
+  continuity_mode: z.enum(["independent", "native_av"]).default("native_av"),
 });
 
 export const analyzeScriptBody = z.object({
@@ -157,6 +163,8 @@ export function mapScriptShots(
       speakerId: dialogue.speaker_id,
       language: dialogue.language,
       text: dialogue.text,
+      voice: dialogue.voice,
+      delivery: dialogue.delivery,
     })),
     firstFrameAssetId:
       shot.first_frame_asset_id ??

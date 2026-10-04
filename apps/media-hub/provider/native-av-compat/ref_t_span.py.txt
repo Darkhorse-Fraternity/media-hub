@@ -1,0 +1,11 @@
+# From Comfy-Org/ComfyUI master, retrieved 2026-10-04; GPL-3.0.
+def _ref_t_span(blk):
+    # time-axis span a reference block occupies ahead of the target streams
+    kind = blk["kind"]
+    if kind == "image":
+        return 1.0
+    if kind == "audio":
+        return float(blk["ref_audio_t"])
+    if kind in ("video", "video_audio"):
+        return max(float(blk["ref_audio_t"]), sum(_video_t_spans(blk["latent_t"])))
+    return 0.0

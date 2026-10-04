@@ -62,3 +62,20 @@ Example payload:
 `GET /api/v1/scripts` and `GET /api/v1/scripts/{scriptId}` expose the structured script, ordered shots, `shotJobs`, and `assembledJob`. `POST /api/v1/scripts` creates a script with `title`, `brief`, and up to 12 ordered `shots`; each shot needs `title`, `duration_seconds` (5–15), and `visual_description`. `POST /api/v1/scripts/{scriptId}/generate` accepts `{}` for every shot or `shot_ids` for a subset. Successful shots are automatically concatenated into a single `assemble` generation job after every latest shot succeeds. `POST /api/v1/scripts/{scriptId}/assemble` can request the same deterministic assembly when ready and returns 412 while any shot is still active or lacks a latest successful video.
 
 The complete assembly job has `kind: "assemble"`, `scriptShotId: null`, an MP4, and a media task for platform publishing. Individual script-shot jobs are intermediate and must not be offered as publishable final videos. For `GET /api/v1/generations`, `whole_videos_only=true` removes those individual script-shot jobs from a final-video listing after the updated API is deployed.
+
+After deployment of the native-continuation update, script generation also accepts
+`continuity_mode: native_av | independent` (default `native_av`). Native mode
+requires a profile with `supportsNativeAVContinuation: true`. Each later shot
+waits for the preceding shot to pass validation, then receives its synchronized
+22-frame audio-video tail through the official H3 guide node. Later authored
+shots default to 15 seconds and must be no longer than 15 seconds. The official
+Provider profile must allow 396 frames, including the context prefix and grid
+alignment, to preserve the complete authored duration. For partial reruns the preceding shot
+must be included or have an accepted take. Unsupported profiles fail preflight;
+never quietly fall back to still-frame-only chaining or system TTS.
+
+Script dialogue entries can include `voice` and
+`delivery: on_screen | off_screen_voiceover`. These are native H3 directions,
+not a voice identity guarantee. Confirm adjacent-shot voice and motion by
+reviewing the actual generated result. `maxReferenceAudios: 0` describes
+standalone audio artifacts and does not rule out synchronized AV continuation.

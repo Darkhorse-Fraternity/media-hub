@@ -30,6 +30,13 @@ import {
   h3SegmentPrompts,
 } from "./h3-generation-config";
 import {
+  extractH3AVContext,
+  H3_AV_MAX_SHOT_SECONDS,
+  h3ContinuationPrompt,
+  h3NativeContinuationFrameCount,
+  trimH3AVContinuation,
+} from "./h3-native-continuation";
+import {
   checksumProviderValue,
   providerOrchestrationRunId,
 } from "./provider-contract";
@@ -68,6 +75,7 @@ export interface MediaGenerationProviderProfile {
   modelVersion: string | null;
   maxReferenceImages: number | null;
   maxReferenceAudios: number;
+  supportsNativeAVContinuation: boolean;
   minimumSteps: number | null;
 }
 
@@ -79,6 +87,7 @@ interface ProviderHealthProfile {
   model_version?: string;
   max_reference_images?: number;
   max_reference_audios?: number;
+  supports_native_av_continuation?: boolean;
   minimum_steps?: number;
 }
 
@@ -121,6 +130,8 @@ function normalizeProviderProfiles(
           typeof detail?.max_reference_audios === "number"
             ? detail.max_reference_audios
             : 0,
+        supportsNativeAVContinuation:
+          detail?.supports_native_av_continuation === true,
         minimumSteps:
           typeof detail?.minimum_steps === "number"
             ? detail.minimum_steps
@@ -315,6 +326,7 @@ async function createProviderJob(
   segmentPrompt: string,
   segmentIndex: number,
   continuationFrame?: Buffer,
+  continuationVideo?: Buffer,
 ) {
   let sourceArtifacts: Record<string, string>[] = [];
   let firstFrame:
@@ -359,11 +371,22 @@ async function createProviderJob(
     }),
   );
   sourceArtifacts = [...sourceArtifacts, ...referenceArtifacts];
+  if (continuationVideo) {
+    sourceArtifacts.push({
+      name: "previous-shot-av-context.mp4",
+      content_type: "video/mp4",
+      checksum: checksumBytes(continuationVideo),
+      contract: "generated_media_source.v1",
+      role: "continuation_video",
+      content_base64: continuationVideo.toString("base64"),
+    });
+  }
 
   const segmentDurationSeconds =
     job.durationSeconds / h3SegmentCount(job.durationSeconds);
-  const effectivePrompt =
-    firstFrame && !segmentPrompt.includes(H3_I2VA_ALIGNMENT)
+  const effectivePrompt = continuationVideo
+    ? h3ContinuationPrompt(segmentPrompt)
+    : firstFrame && !segmentPrompt.includes(H3_I2VA_ALIGNMENT)
       ? `${H3_I2VA_ALIGNMENT}\n\n${segmentPrompt}`
       : segmentPrompt;
   const generationSpec = {
@@ -374,7 +397,9 @@ async function createProviderJob(
         "low quality, blurry, distorted anatomy, temporal flicker, duplicate objects, watermark",
       width: job.width,
       height: job.height,
-      length: h3FrameCount(segmentDurationSeconds),
+      length: continuationVideo
+        ? h3NativeContinuationFrameCount(segmentDurationSeconds)
+        : h3FrameCount(segmentDurationSeconds),
       fps: H3_FPS,
       steps: job.steps,
       cfg: 1,
@@ -577,6 +602,25 @@ async function runVideoGenerationPipeline(
   let continuationFrame: Buffer | undefined;
   let modelVersion: string | null = null;
   let workflowVersion: string | null = null;
+  let continuationVideo: Buffer | undefined;
+  if (job.sourceGenerationJobId) {
+    if (job.durationSeconds > H3_AV_MAX_SHOT_SECONDS) {
+      throw new Error(`原生音视频延续镜头超过 ${H3_AV_MAX_SHOT_SECONDS} 秒`);
+    }
+    const source = await db.query.mediaGenerationJob.findFirst({
+      where: and(
+        eq(mediaGenerationJob.id, job.sourceGenerationJobId),
+        eq(mediaGenerationJob.createdBy, job.createdBy),
+      ),
+    });
+    if (source?.status !== "succeeded" || !source.outputStorageKey) {
+      throw new Error("上一镜头尚未通过验收，不能开始原生音视频延续");
+    }
+    continuationVideo = await extractH3AVContext(
+      await getMediaHubObject(source.outputStorageKey),
+      source.durationSeconds,
+    );
+  }
 
   for (const [segmentIndex, segmentPrompt] of prompts.entries()) {
     const current = await db.query.mediaGenerationJob.findFirst({
@@ -591,6 +635,7 @@ async function runVideoGenerationPipeline(
       segmentPrompt,
       segmentIndex,
       continuationFrame,
+      continuationVideo,
     );
     providerJobIds.push(submitted.job_id);
     const [runningUpdate] = await db
@@ -622,7 +667,13 @@ async function runVideoGenerationPipeline(
     const completed = await waitForProviderJob(submitted.job_id, job.id);
     modelVersion = completed.model_version ?? modelVersion;
     workflowVersion = completed.workflow_version ?? workflowVersion;
-    const segmentVideo = await joinVideoSamples(completed.samples ?? []);
+    const generatedVideo = await joinVideoSamples(completed.samples ?? []);
+    const segmentVideo = continuationVideo
+      ? await trimH3AVContinuation(
+          generatedVideo,
+          job.durationSeconds / totalSegments,
+        )
+      : generatedVideo;
     samples.push({
       content_base64: segmentVideo.toString("base64"),
       content_type: "video/mp4",
@@ -885,6 +936,34 @@ function eightyChars(value: string): number {
 }
 
 async function runGenerationJob(jobId: string): Promise<void> {
+  const pending = await db.query.mediaGenerationJob.findFirst({
+    where: eq(mediaGenerationJob.id, jobId),
+  });
+  if (
+    pending?.kind === "generate" &&
+    ["scheduled", "queued"].includes(pending.status) &&
+    pending.sourceGenerationJobId
+  ) {
+    const dependency = await db.query.mediaGenerationJob.findFirst({
+      where: and(
+        eq(mediaGenerationJob.id, pending.sourceGenerationJobId),
+        eq(mediaGenerationJob.createdBy, pending.createdBy),
+      ),
+    });
+    if (
+      dependency &&
+      [
+        "scheduled",
+        "queued",
+        "waiting_for_gpu",
+        "running",
+        "validating_audio",
+      ].includes(dependency.status)
+    ) {
+      scheduleMediaGenerationJob(jobId, new Date(Date.now() + 5_000));
+      return;
+    }
+  }
   const claimedAt = new Date();
   const [job] = await db
     .update(mediaGenerationJob)
@@ -928,6 +1007,15 @@ async function runGenerationJob(jobId: string): Promise<void> {
     if (activeProfile.kind !== expectedProfileKind) {
       throw new Error(
         `H3 工作流 ${job.profile} 不支持${job.kind === "edit" ? "视频编辑" : "视频生成"}`,
+      );
+    }
+    if (
+      job.kind === "generate" &&
+      job.sourceGenerationJobId &&
+      !activeProfile.supportsNativeAVContinuation
+    ) {
+      throw new Error(
+        "当前工作流未启用 H3 原生音视频延续；不能用静态首帧代替声音条件",
       );
     }
     const result =

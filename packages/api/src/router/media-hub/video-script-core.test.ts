@@ -13,7 +13,7 @@ import {
 } from "./video-script-core";
 
 describe("video script core", () => {
-  it("asks for independently generatable H3 shots", () => {
+  it("reserves native AV context and plans action-driven H3 shots", () => {
     const prompt = buildVideoScriptDraftPrompt({
       brief: "A mother teaches her child to read",
       language: "zh",
@@ -21,12 +21,14 @@ describe("video script core", () => {
     });
     expect(prompt).toContain("exactly 2 shots");
     expect(prompt).toContain("15 + 15 seconds");
-    expect(prompt).toContain("full 15-second H3 generation units");
+    expect(prompt).toContain("Reserve 22 frames");
+    expect(prompt).toContain("slide pictures do not lock");
+    expect(prompt).toContain("off_screen_voiceover");
     expect(prompt).toContain("stable speakerId");
     expect(prompt).toContain("continuityBible");
   });
 
-  it("plans the four supported durations as full 15-second H3 shots", () => {
+  it("keeps authored durations exact while leaving native context headroom", () => {
     expect(preferredH3ScriptShotDurations(15)).toEqual([15]);
     expect(preferredH3ScriptShotDurations(30)).toEqual([15, 15]);
     expect(preferredH3ScriptShotDurations(45)).toEqual([15, 15, 15]);
@@ -91,7 +93,8 @@ describe("video script core", () => {
         visualRules: "Naturalistic family drama.",
       },
     );
-    expect(prompt).toContain("opening frame");
+    expect(prompt).toContain("opening still frame");
+    expect(prompt).not.toContain("Create a photorealistic");
     expect(prompt).toContain("Beige cardigan");
     expect(prompt).toContain("No subtitles");
   });
@@ -123,6 +126,8 @@ describe("video script core", () => {
             speakerId: "S1",
             language: "zh",
             text: "跟我读。",
+            voice: "Warm adult female voice.",
+            delivery: "off_screen_voiceover",
           },
         ],
       },
@@ -135,6 +140,8 @@ describe("video script core", () => {
     );
     expect(prompt).toContain("integrated_multimodal_description: [Shot 1]");
     expect(prompt).toContain("(S1) <d>[Mandarin Chinese] 跟我读。</d>");
+    expect(prompt).toContain("Voice direction: Warm adult female voice.");
+    expect(prompt).toContain("Off-screen voiceover");
     expect(prompt).toContain("Fixed continuity bible");
     expect(prompt.indexOf("overall_soundscape:")).toBeLessThan(
       prompt.indexOf("non_diegetic_music:"),

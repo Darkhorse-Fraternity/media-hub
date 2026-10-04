@@ -19,6 +19,7 @@ import type {
   ScriptLanguage,
   ScriptTargetDuration,
 } from "~/lib/video-script-studio-state";
+import { scriptNativeContinuityIssue } from "~/lib/script-native-continuity";
 import { useTRPC } from "~/lib/trpc";
 import {
   EMPTY_CONTINUITY_BIBLE,
@@ -56,6 +57,9 @@ export function useVideoScriptStudio(
   const [dirty, setDirty] = useState(false);
   const [selectedShotIds, setSelectedShotIds] = useState<string[]>([]);
   const [qualityPreset, setQualityPreset] = useState<QualityPreset>("balanced");
+  const [continuityMode, setContinuityMode] = useState<
+    "native_av" | "independent"
+  >("native_av");
   const [message, setMessage] = useState<string | null>(null);
   const { run: runWorkflow, pending: workflowPending } =
     useScriptWorkflow(setMessage);
@@ -96,6 +100,7 @@ export function useVideoScriptStudio(
   const healthQuery = useQuery(
     trpc.mediaHub.generation.providerHealth.queryOptions(undefined, {
       retry: false,
+      refetchInterval: continuityMode === "native_av" ? 30_000 : false,
     }),
   );
   const imageQuery = useQuery(
@@ -237,6 +242,14 @@ export function useVideoScriptStudio(
   const generationProfiles = (healthQuery.data?.profiles ?? []).filter(
     (profile) => profile.kind === "generate",
   );
+  const nativeContinuityIssue = scriptNativeContinuityIssue({
+    mode: continuityMode,
+    healthStatus: healthQuery.data?.status,
+    healthError: healthQuery.error?.message,
+    selectedProfile: defaultProfile,
+    defaultProfile: healthQuery.data?.defaultGenerationProfile,
+    profiles: generationProfiles,
+  });
   const assets = imageQuery.data?.assets ?? [];
   const totalDuration = shots.reduce(
     (total, shot) => total + shot.durationSeconds,
@@ -471,6 +484,7 @@ export function useVideoScriptStudio(
   const generateShots = async (shotId?: string) => {
     return runWorkflow(async () => {
       if (!selectedScriptId || shots.length === 0) return;
+      if (nativeContinuityIssue) throw new Error(nativeContinuityIssue);
 
       if (dirty) await persistScript();
       const result = await generateMutation.mutateAsync({
@@ -478,13 +492,18 @@ export function useVideoScriptStudio(
         shotIds: shotId ? [shotId] : selectedShotIds,
         qualityPreset,
         h3Profile: defaultProfile || undefined,
+        continuityMode,
       });
       setSelectedShotIds([]);
       await refreshScripts(selectedScriptId);
       await queryClient.invalidateQueries({
         queryKey: trpc.mediaHub.generation.list.queryKey(),
       });
-      setMessage(`${result.jobs.length} 个镜头已进入 GPU 队列。`);
+      setMessage(
+        continuityMode === "native_av"
+          ? `${result.jobs.length} 个镜头已排队，按顺序延续 H3 原生画面和声音。`
+          : `${result.jobs.length} 个独立镜头已进入 GPU 队列。`,
+      );
     }, "镜头生成失败");
   };
 
@@ -631,6 +650,9 @@ export function useVideoScriptStudio(
     setSelectedShotIds,
     qualityPreset,
     setQualityPreset,
+    continuityMode,
+    setContinuityMode,
+    nativeContinuityIssue,
     message,
     imageImportError: importedImagesQuery.isError
       ? importedImagesQuery.error.message

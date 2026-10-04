@@ -5,6 +5,7 @@ import type { MediaVideoScriptShot } from "@acme/validators";
 import {
   assembleScriptBody,
   draftScriptBody,
+  generateScriptBody,
   mapScriptShots,
   patchScriptBody,
   scriptShotBody,
@@ -18,6 +19,29 @@ it("keeps assembly sources, transitions, rebuild and captions together", () => {
     burn_captions: true,
   };
   expect(assembleScriptBody.parse(body)).toEqual(body);
+});
+
+it("preserves native voice direction in the director API and defaults to AV continuity", () => {
+  const body = scriptShotBody.parse({
+    title: "旁白",
+    duration_seconds: 12,
+    visual_description: "The traveler boards.",
+    dialogues: [
+      {
+        at_seconds: 1,
+        speaker_id: "S1",
+        language: "zh",
+        text: "出发。",
+        voice: "Warm Mandarin narrator.",
+        delivery: "off_screen_voiceover",
+      },
+    ],
+  });
+  expect(mapScriptShots([body])[0]?.dialogues[0]).toMatchObject({
+    voice: "Warm Mandarin narrator.",
+    delivery: "off_screen_voiceover",
+  });
+  expect(generateScriptBody.parse({}).continuity_mode).toBe("native_av");
 });
 
 describe("agent video script PATCH schema", () => {

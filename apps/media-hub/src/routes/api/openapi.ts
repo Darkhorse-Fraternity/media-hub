@@ -238,6 +238,11 @@ function openApiDocument(request: Request) {
             speaker_id: { type: "string", enum: ["S1", "S2", "S3", "S4"] },
             language: { type: "string", enum: ["zh", "en"] },
             text: { type: "string", minLength: 1, maxLength: 300 },
+            voice: { type: "string", maxLength: 500 },
+            delivery: {
+              type: "string",
+              enum: ["on_screen", "off_screen_voiceover"],
+            },
           },
         },
         VideoScriptContinuityBible: {
@@ -408,6 +413,13 @@ function openApiDocument(request: Request) {
               default: "balanced",
             },
             generation_profile: { type: "string", maxLength: 200 },
+            continuity_mode: {
+              type: "string",
+              enum: ["native_av", "independent"],
+              default: "native_av",
+              description:
+                "Native AV waits for the preceding accepted shot and conditions H3 on its synchronized tail. Shots default to 15 seconds and must be at most 15 seconds. The official Provider profile reserves additional context frames (396 total for a 15-second continuation). Requires supportsNativeAVContinuation; never silently substitutes a still frame or TTS.",
+            },
           },
         },
         AnalyzeVideoScript: {

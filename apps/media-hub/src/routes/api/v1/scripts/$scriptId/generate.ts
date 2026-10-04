@@ -21,6 +21,7 @@ async function handlePost(
         shotIds: input.shot_ids,
         qualityPreset: input.quality_preset,
         h3Profile: input.generation_profile,
+        continuityMode: input.continuity_mode,
       }),
       201,
     );

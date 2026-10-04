@@ -61,6 +61,7 @@ import {
   selectLatestScriptShotJobs,
   selectScriptAssemblyJob,
 } from "./video-script-assembly-core";
+import { scriptContinuationSource } from "./video-script-continuation";
 import {
   buildVideoScriptDraftPrompt,
   buildVideoScriptFirstFramePrompt,
@@ -762,6 +763,27 @@ export const mediaVideoScriptRouter = {
         script.defaultProfile ??
         settings.h3GenerationProfile;
       const profile = await requireH3Profile(profileId, "generate");
+      const nativeAV = input.continuityMode === "native_av";
+      if (nativeAV && !profile.supportsNativeAVContinuation) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message:
+            "当前工作流未接入 H3 原生音视频延续。请启用支持该能力的工作流；独立镜头模式不保持跨镜声音条件。",
+        });
+      }
+      const jobIdByShotId = new Map(
+        shots.map((shot) => [shot.id, crypto.randomUUID()]),
+      );
+      const previousJobs = nativeAV
+        ? await ctx.db.query.mediaGenerationJob.findMany({
+            where: and(
+              eq(mediaGenerationJob.scriptId, script.id),
+              eq(mediaGenerationJob.createdBy, ctx.session.user.id),
+              eq(mediaGenerationJob.status, "succeeded"),
+            ),
+            orderBy: desc(mediaGenerationJob.createdAt),
+          })
+        : [];
       const assetById = await requireOwnedFirstFrameAssets(
         ctx.db,
         ctx.session.user.id,
@@ -786,11 +808,39 @@ export const mediaVideoScriptRouter = {
         const shotIndex = script.shots.findIndex(
           (candidate) => candidate.id === shot.id,
         );
+        let previousJobId: string | undefined;
+        if (nativeAV) {
+          try {
+            previousJobId = scriptContinuationSource(
+              script.shots,
+              shot,
+              jobIdByShotId,
+              previousJobs,
+            );
+          } catch (error) {
+            throw new TRPCError({
+              code: "PRECONDITION_FAILED",
+              message:
+                error instanceof Error ? error.message : "原生衔接预检失败",
+            });
+          }
+        }
+        const jobId = jobIdByShotId.get(shot.id);
+        if (!jobId) throw new Error("镜头任务 ID 缺失");
         return {
-          id: crypto.randomUUID(),
+          id: jobId,
+          sourceGenerationJobId: previousJobId,
           scriptId: script.id,
           scriptShotId: shot.id,
           prompt,
+          dialogues: shot.dialogues.map((dialogue) => ({
+            segment: 1,
+            speakerId: dialogue.speakerId,
+            language: dialogue.language,
+            text: dialogue.text,
+            voice: dialogue.voice,
+            delivery: dialogue.delivery ?? ("on_screen" as const),
+          })),
           title:
             `${script.title} / ${String(shotIndex + 1).padStart(2, "0")} ${shot.title}`.slice(
               0,

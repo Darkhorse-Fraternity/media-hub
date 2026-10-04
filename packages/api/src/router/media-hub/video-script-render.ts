@@ -95,22 +95,14 @@ export async function renderScriptCut(
   const dir = await mkdtemp(join(tmpdir(), "media-hub-script-cut-"));
   try {
     const paths: string[] = [];
-    const requiresTranscode =
-      transition !== "cut" ||
-      shots.some((shot) => {
-        const trim = shotTrim(shot);
-        return trim.start !== 0 || trim.end !== shot.durationSeconds;
-      });
     for (const [index, video] of videos.entries()) {
       const shot = shots[index];
       if (!shot) throw new Error("镜头不存在");
       const inputPath = join(dir, `source-${index}.mp4`);
       await writeFile(inputPath, await resolveInput(video, signal));
       const trim = shotTrim(shot);
-      if (!requiresTranscode) {
-        paths.push(inputPath);
-        continue;
-      }
+      // H3's 17k+5 frame grid produces tails even with the default trim plan.
+      // Always trim to the authored duration so tails cannot accumulate in a cut.
       const trimmedPath = join(dir, `trimmed-${index}.mp4`);
       await ffmpeg(
         [

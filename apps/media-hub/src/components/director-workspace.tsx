@@ -101,6 +101,9 @@ function AuthenticatedVideoScriptStudio({
     setSelectedShotIds,
     qualityPreset,
     setQualityPreset,
+    continuityMode,
+    setContinuityMode,
+    nativeContinuityIssue,
     message,
     imageImportError,
     importedImages,
@@ -761,6 +764,50 @@ function AuthenticatedVideoScriptStudio({
                                   >
                                     ×
                                   </button>
+                                  <select
+                                    aria-label="台词呈现方式"
+                                    value={dialogue.delivery ?? "on_screen"}
+                                    onChange={(event) =>
+                                      updateShot(shot.id, {
+                                        dialogues: shot.dialogues.map((line) =>
+                                          line.id === dialogue.id
+                                            ? {
+                                                ...line,
+                                                delivery: event.target.value as
+                                                  | "on_screen"
+                                                  | "off_screen_voiceover",
+                                              }
+                                            : line,
+                                        ),
+                                      })
+                                    }
+                                    className="border border-slate-800 bg-slate-900 px-2 py-2 text-xs sm:col-span-2"
+                                  >
+                                    <option value="on_screen">人物对白</option>
+                                    <option value="off_screen_voiceover">
+                                      画外旁白
+                                    </option>
+                                  </select>
+                                  <input
+                                    aria-label="音色描述"
+                                    value={dialogue.voice ?? ""}
+                                    onChange={(event) =>
+                                      updateShot(shot.id, {
+                                        dialogues: shot.dialogues.map((line) =>
+                                          line.id === dialogue.id
+                                            ? {
+                                                ...line,
+                                                voice:
+                                                  event.target.value ||
+                                                  undefined,
+                                              }
+                                            : line,
+                                        ),
+                                      })
+                                    }
+                                    placeholder="音色与语气，同一说话人保持相同描述"
+                                    className="border border-slate-800 bg-slate-900 px-3 py-2 text-xs sm:col-span-2"
+                                  />
                                 </div>
                               ))}
                             </div>
@@ -871,6 +918,9 @@ function AuthenticatedVideoScriptStudio({
                         {profile.minimumSteps
                           ? ` · ${profile.minimumSteps} 步`
                           : ""}
+                        {profile.supportsNativeAVContinuation
+                          ? " · 原生音视频衔接"
+                          : ""}
                       </option>
                     ))}
                   </select>
@@ -888,6 +938,34 @@ function AuthenticatedVideoScriptStudio({
                     <option value="balanced">均衡</option>
                     <option value="quality">高质量</option>
                   </select>
+                </label>
+                <label className="block text-xs text-slate-500">
+                  镜头衔接
+                  <select
+                    value={continuityMode}
+                    onChange={(event) =>
+                      setContinuityMode(
+                        event.target.value as "native_av" | "independent",
+                      )
+                    }
+                    className="mt-2 w-full border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
+                  >
+                    <option value="native_av">延续 H3 原生画面和声音</option>
+                    <option value="independent">独立生成每个镜头</option>
+                  </select>
+                  <span className="mt-2 block leading-relaxed">
+                    {continuityMode === "native_av"
+                      ? "默认每镜 15 秒，按顺序延续上一镜的画面和声音，保留 H3 原声。"
+                      : "每镜重新生成声音，适合独立场景。"}
+                  </span>
+                  {nativeContinuityIssue && (
+                    <span
+                      role="status"
+                      className="mt-2 block leading-relaxed text-amber-300"
+                    >
+                      {nativeContinuityIssue}
+                    </span>
+                  )}
                 </label>
               </div>
 
@@ -952,7 +1030,10 @@ function AuthenticatedVideoScriptStudio({
                   type="button"
                   onClick={() => void generateShots()}
                   disabled={
-                    !selectedScriptId || shots.length === 0 || generating
+                    !selectedScriptId ||
+                    shots.length === 0 ||
+                    generating ||
+                    Boolean(nativeContinuityIssue)
                   }
                   className="bg-amber-300 px-4 py-3 text-sm font-semibold text-slate-950 disabled:opacity-30"
                 >

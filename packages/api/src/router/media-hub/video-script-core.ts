@@ -3,12 +3,12 @@ import type {
   MediaVideoScriptShot,
 } from "@acme/validators";
 import {
-  MEDIA_H3_SCRIPT_SHOT_SECONDS,
   mediaVideoScriptContinuityBibleSchema,
   mediaVideoScriptDraftShotSchema,
 } from "@acme/validators";
 
 import { H3_I2VA_ALIGNMENT } from "./h3-generation-config";
+import { H3_AV_MAX_SHOT_SECONDS } from "./h3-native-continuation";
 
 interface VideoScriptDraftInput {
   title?: string;
@@ -33,23 +33,16 @@ export function resolveVideoScriptCopyStatus(
 export function preferredH3ScriptShotDurations(
   targetDurationSeconds: number,
 ): number[] {
-  const durations: number[] = [];
-  let remaining = targetDurationSeconds;
-  while (remaining > MEDIA_H3_SCRIPT_SHOT_SECONDS) {
-    durations.push(MEDIA_H3_SCRIPT_SHOT_SECONDS);
-    remaining -= MEDIA_H3_SCRIPT_SHOT_SECONDS;
-  }
-  if (remaining > 0 && remaining < 5 && durations.length > 0) {
-    const borrowedSeconds = 5 - remaining;
-    const previousIndex = durations.length - 1;
-    const previousDuration = durations[previousIndex];
-    if (previousDuration !== undefined) {
-      durations[previousIndex] = previousDuration - borrowedSeconds;
-    }
-    remaining = 5;
-  }
-  if (remaining > 0) durations.push(remaining);
-  return durations;
+  const count = Math.max(
+    1,
+    Math.ceil(targetDurationSeconds / H3_AV_MAX_SHOT_SECONDS),
+  );
+  const base = Math.floor(targetDurationSeconds / count);
+  const extra = targetDurationSeconds % count;
+  return Array.from(
+    { length: count },
+    (_, index) => base + (index < extra ? 1 : 0),
+  );
 }
 
 export function buildVideoScriptDraftPrompt(
@@ -61,23 +54,27 @@ export function buildVideoScriptDraftPrompt(
   const suggestedShotCount =
     input.shotCount ?? Math.min(12, Math.max(1, preferredDurations.length));
   const durationPlan = input.shotCount
-    ? `The caller explicitly requested ${input.shotCount} shots. Distribute the target duration across that exact count, keeping every shot between 5 and ${MEDIA_H3_SCRIPT_SHOT_SECONDS} seconds.`
-    : `Use this exact duration schedule: ${preferredDurations.join(" + ")} seconds. Use full ${MEDIA_H3_SCRIPT_SHOT_SECONDS}-second H3 generation units wherever the target duration allows; only the tail of the schedule may be shorter.`;
+    ? `The caller explicitly requested ${input.shotCount} shots. Distribute the target duration across that exact count, keeping every shot between 5 and ${H3_AV_MAX_SHOT_SECONDS} seconds. If this is impossible, report the incompatible count instead of exceeding the limit.`
+    : `Use this exact duration schedule: ${preferredDurations.join(" + ")} seconds. Reserve 22 frames per continuation for synchronized H3 audio-video context; authored shots must not exceed ${H3_AV_MAX_SHOT_SECONDS} seconds.`;
   return [
     "You are a production script planner for MiniMax H3 native-audio video generation.",
     "Do not inspect files, browse, or use tools. Work only from the supplied brief.",
     "Return one valid JSON object and nothing else. Do not use a Markdown fence.",
-    `Create exactly ${suggestedShotCount} shots totaling ${input.targetDurationSeconds} seconds. ${durationPlan} Every shot must be independently generatable and no longer than ${MEDIA_H3_SCRIPT_SHOT_SECONDS} seconds.`,
+    `Create exactly ${suggestedShotCount} shots totaling ${input.targetDurationSeconds} seconds. ${durationPlan} Every shot must be no longer than ${H3_AV_MAX_SHOT_SECONDS} seconds and begin from the preceding shot's ending composition unless a cut is requested.`,
     "Preserve the requested story, facts, characters, products, visible text, and dialogue. Do not invent unrelated characters, claims, speech, lyrics, or plot events.",
     "First write a concise production copy in the requested authoring language. It must express the complete story, intended pacing, and every supplied line of dialogue before the shot breakdown.",
     "Write shot titles in the requested authoring language. Write visualDescription, cameraDirection, continuity, soundscape, and music in precise natural English for H3.",
     `Authoring and dialogue language: ${requestedLanguage(input.language)}. Dialogue text must remain verbatim in that language.`,
     "Use one achievable camera idea and one clear action arc per shot. State concrete subject positions, lighting, environment reactions, and the ending composition.",
+    "Make the explanation visible through actions, consequences and environment reactions. Do not turn a video request into static title cards or substitute abstract mechanisms for a supplied human story unless the brief requests that style.",
+    "Treat supplied slides as factual source material. Reuse their pictures only when the brief explicitly requires their appearance or identity; slide pictures do not lock the video's visual style.",
     "Continuity must explain what identity, wardrobe, props, layout, lighting, and ending composition carry into the next shot.",
     "Create a concise continuityBible for the entire script. Treat it as fixed production truth shared by every shot.",
     "For each spoken line, choose a stable speakerId S1–S4 and an atSeconds value within that shot. Omit dialogue when the brief does not provide exact words; never invent placeholder or unintelligible speech.",
+    "For narration, set delivery to off_screen_voiceover and give each recurring speaker the same voice description across shots. Keep native H3 narration and action sound together; never plan a silent video for replacement with system TTS. Speaker labels alone are not a voice reference; the director supplies synchronized prior-shot context during native continuation.",
+    "For a recurring narrator, schedule the final phrase to finish near the shot's end so the synchronized tail contains their audible voice, without cutting off words or exceeding the natural speaking rate.",
     "Use N/A for music when no audience-only score was requested.",
-    'JSON shape: {"title":"...","copy":"complete production copy in the requested language","continuityBible":{"characters":"...","wardrobeAndProps":"...","locationsAndLighting":"...","visualRules":"..."},"shots":[{"title":"...","durationSeconds":15,"visualDescription":"...","cameraDirection":"...","continuity":"...","soundscape":"...","music":"N/A","dialogues":[{"atSeconds":1.5,"speakerId":"S1","language":"zh","text":"..."}]}]}',
+    'JSON shape: {"title":"...","copy":"complete production copy in the requested language","continuityBible":{"characters":"...","wardrobeAndProps":"...","locationsAndLighting":"...","visualRules":"..."},"shots":[{"title":"...","durationSeconds":15,"visualDescription":"...","cameraDirection":"...","continuity":"...","soundscape":"...","music":"N/A","dialogues":[{"atSeconds":1.5,"speakerId":"S1","language":"zh","text":"...","voice":"stable timbre and delivery","delivery":"off_screen_voiceover"}]}]}',
     input.title ? `Working title: ${input.title}` : "",
     "Creative brief:",
     input.brief,
@@ -164,7 +161,7 @@ export function buildVideoScriptFirstFramePrompt(
   continuityBible?: MediaVideoScriptContinuityBible,
 ): string {
   return [
-    "Create a photorealistic cinematic still image for the opening frame of a video shot.",
+    "Create the opening still frame in the visual style requested by the brief and continuity bible. Do not change an illustrated or animated brief into photorealism.",
     shot.visualDescription,
     shot.cameraDirection ? `Composition and lens: ${shot.cameraDirection}` : "",
     continuityBible ? continuityDirection(continuityBible).trim() : "",
@@ -204,7 +201,7 @@ export function compileVideoScriptShotPrompt(
   continuityBible?: MediaVideoScriptContinuityBible,
 ): string {
   const visualParts = [
-    `[Shot 1] ${shot.visualDescription}${continuityDirection(continuityBible)}`,
+    `[Shot 1] ${shot.visualDescription.replace(/^\s*\[Shot 1\]\s*/i, "")}${continuityDirection(continuityBible)}`,
     shot.cameraDirection
       ? `Camera direction: ${shot.cameraDirection}`
       : "Camera direction: hold one physically achievable composition and movement.",
@@ -213,7 +210,7 @@ export function compileVideoScriptShotPrompt(
       .sort((a, b) => a.atSeconds - b.atSeconds)
       .map(
         (dialogue) =>
-          `At ${timestamp(dialogue.atSeconds)}, (${dialogue.speakerId}) <d>[${dialogue.language === "zh" ? "Mandarin Chinese" : "English"}] ${dialogue.text}</d>`,
+          `At ${timestamp(dialogue.atSeconds)}, ${dialogue.voice ? `Voice direction: ${dialogue.voice}. ` : ""}${dialogue.delivery === "off_screen_voiceover" ? "Off-screen voiceover; visible people do not lip-sync: " : ""}(${dialogue.speakerId}) <d>[${dialogue.language === "zh" ? "Mandarin Chinese" : "English"}] ${dialogue.text}</d>`,
       ),
     `The shot lasts ${shot.durationSeconds} seconds and ends on the composition described above without adding unrequested text, logos, subtitles, or characters.`,
   ].filter(Boolean);
