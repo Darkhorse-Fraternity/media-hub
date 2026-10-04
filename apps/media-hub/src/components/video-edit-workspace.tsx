@@ -35,12 +35,14 @@ export function VideoEditWorkspace({
   sourceTitle,
   durationSeconds,
   initialLanguage,
+  sourceVideoUrl,
   onCreated,
 }: {
   sourceJobId: string;
   sourceTitle: string;
   durationSeconds: number;
   initialLanguage: ContentLanguage;
+  sourceVideoUrl?: string;
   onCreated: (jobId: string) => void;
 }) {
   const trpc = useTRPC();
@@ -59,6 +61,12 @@ export function VideoEditWorkspace({
     },
   ]);
   const segmentsRef = useRef(segments);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const playbackEndRef = useRef<number | null>(null);
+  const [currentSeconds, setCurrentSeconds] = useState(0);
+  const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
+  const activeSegment =
+    segments.find((item) => item.id === activeSegmentId) ?? segments[0];
   const [preparingSegmentId, setPreparingSegmentId] = useState<string | null>(
     null,
   );
@@ -319,6 +327,83 @@ export function VideoEditWorkspace({
       </header>
 
       <div className="space-y-5 p-5 sm:p-6">
+        {sourceVideoUrl && activeSegment && (
+          <div className="space-y-3">
+            <video
+              ref={videoRef}
+              src={sourceVideoUrl}
+              controls
+              playsInline
+              preload="metadata"
+              aria-label="片段修改源视频"
+              className="aspect-video w-full max-w-3xl bg-black"
+              onTimeUpdate={(event) => {
+                const time = event.currentTarget.currentTime;
+                setCurrentSeconds(time);
+                if (
+                  playbackEndRef.current !== null &&
+                  time >= playbackEndRef.current
+                ) {
+                  event.currentTarget.pause();
+                  playbackEndRef.current = null;
+                }
+              }}
+            />
+            <div className="flex flex-wrap items-center gap-3 text-xs">
+              <span className="text-slate-400">
+                当前 {currentSeconds.toFixed(1)} 秒 · 修改片段{" "}
+                {segments.indexOf(activeSegment) + 1}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  updateSegment(activeSegment.id, {
+                    startSeconds: Math.min(
+                      durationSeconds,
+                      Math.max(0, videoRef.current?.currentTime ?? 0),
+                    ),
+                  })
+                }
+                className="border border-violet-300/40 px-3 py-2 text-violet-200"
+              >
+                当前帧设为开始
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  updateSegment(activeSegment.id, {
+                    endSeconds: Math.min(
+                      durationSeconds,
+                      Math.max(0, videoRef.current?.currentTime ?? 0),
+                    ),
+                  })
+                }
+                className="border border-violet-300/40 px-3 py-2 text-violet-200"
+              >
+                当前帧设为结束
+              </button>
+              <button
+                type="button"
+                disabled={
+                  activeSegment.endSeconds <= activeSegment.startSeconds
+                }
+                onClick={() => {
+                  const video = videoRef.current;
+                  if (!video) return;
+                  video.currentTime = activeSegment.startSeconds;
+                  playbackEndRef.current = activeSegment.endSeconds;
+                  void video.play().catch(() => {
+                    playbackEndRef.current = null;
+                    setMessage("播放未开始，请使用播放器的播放按钮。");
+                  });
+                }}
+                className="text-cyan-300 disabled:opacity-40"
+              >
+                播放选中片段
+              </button>
+            </div>
+          </div>
+        )}
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="text-xs text-slate-400">
             <span className="flex items-center justify-between gap-2">
@@ -361,8 +446,12 @@ export function VideoEditWorkspace({
           <div className="relative h-10 overflow-hidden rounded-lg border border-slate-700 bg-slate-950">
             <span className="absolute inset-x-0 top-1/2 h-px bg-slate-800" />
             {segments.map((segment, index) => (
-              <span
+              <button
+                type="button"
                 key={segment.id}
+                aria-label={`选择修改片段 ${index + 1}`}
+                aria-pressed={activeSegment?.id === segment.id}
+                onClick={() => setActiveSegmentId(segment.id)}
                 title={`${segment.startSeconds}s–${segment.endSeconds}s`}
                 className="absolute inset-y-1 flex min-w-6 items-center justify-center rounded-md bg-violet-300 text-[10px] font-bold text-slate-950 shadow-[0_0_18px_rgba(196,181,253,0.2)]"
                 style={{
@@ -371,7 +460,7 @@ export function VideoEditWorkspace({
                 }}
               >
                 {index + 1}
-              </span>
+              </button>
             ))}
           </div>
         </div>

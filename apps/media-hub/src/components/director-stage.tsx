@@ -22,6 +22,9 @@ interface DirectorTake {
 }
 
 interface DirectorCut {
+  id: string;
+  title: string | null;
+  durationSeconds: number;
   status: string;
   videoUrl: string | null;
   isCurrent: boolean;
@@ -33,6 +36,7 @@ export function DirectorStage({
   shots,
   jobsByShot,
   assembledJob,
+  cutEditJobs = [],
   language,
   busy,
   canAssemble,
@@ -49,6 +53,7 @@ export function DirectorStage({
   shots: MediaVideoScriptShot[];
   jobsByShot: Map<string, DirectorTake[]>;
   assembledJob: DirectorCut | null;
+  cutEditJobs?: DirectorTake[];
   language: "zh" | "en";
   busy: boolean;
   canAssemble: boolean;
@@ -73,6 +78,7 @@ export function DirectorStage({
   const [focusedShotId, setFocusedShotId] = useState<string | null>(null);
   const [previewJobId, setPreviewJobId] = useState<string | null>(null);
   const [editingJobId, setEditingJobId] = useState<string | null>(null);
+  const [previewCutEditId, setPreviewCutEditId] = useState<string | null>(null);
   const [showFinal, setShowFinal] = useState(false);
   const [showAnimatic, setShowAnimatic] = useState(false);
   const [burnCaptions, setBurnCaptions] = useState(false);
@@ -82,6 +88,13 @@ export function DirectorStage({
   const selected = shot ? selectMediaVideoScriptTake(shot, takes) : null;
   const preview = takes.find((item) => item.id === previewJobId) ?? selected;
   const editingTake = takes.find((item) => item.id === editingJobId);
+  const previewCutEdit = cutEditJobs.find(
+    (item) => item.id === previewCutEditId && item.videoUrl,
+  );
+  const finalPreview = previewCutEdit ?? assembledJob;
+  const editingSource = showFinal
+    ? [assembledJob, ...cutEditJobs].find((item) => item?.id === editingJobId)
+    : editingTake;
   const totalDuration = shots.reduce(
     (sum, item) =>
       sum +
@@ -211,10 +224,10 @@ export function DirectorStage({
           {showFinal && assembledJob ? (
             <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(240px,0.6fr)]">
               <div className="aspect-video overflow-hidden border border-slate-700 bg-black">
-                {assembledJob.videoUrl ? (
+                {finalPreview?.videoUrl ? (
                   <video
-                    key={assembledJob.videoUrl}
-                    src={assembledJob.videoUrl}
+                    key={finalPreview.id}
+                    src={finalPreview.videoUrl}
                     controls
                     playsInline
                     preload="metadata"
@@ -232,12 +245,17 @@ export function DirectorStage({
               <div className="flex flex-col justify-between border border-slate-700 bg-slate-950/70 p-4 text-sm">
                 <div>
                   <h3 className="font-semibold">
-                    完整成片{assembledJob.captioned ? " · 带字幕" : ""}
+                    {previewCutEdit ? "成片修改版" : "完整成片"}
+                    {!previewCutEdit && assembledJob.captioned
+                      ? " · 带字幕"
+                      : ""}
                   </h3>
                   <p className="mt-2 text-xs leading-5 text-slate-400">
-                    {cutIsCurrent
-                      ? "与当前选定镜头一致。"
-                      : "镜头选择已变化，请重新合片。"}
+                    {previewCutEdit
+                      ? "基于成片的局部修改版本，可随时对比原成片。"
+                      : cutIsCurrent
+                        ? "与当前选定镜头一致。"
+                        : "镜头选择已变化，请重新合片。"}
                   </p>
                   {assembledJob.errorMessage && (
                     <p className="mt-3 text-xs text-rose-300">
@@ -245,13 +263,72 @@ export function DirectorStage({
                     </p>
                   )}
                 </div>
-                {assembledJob.videoUrl && (
-                  <a
-                    href={`${assembledJob.videoUrl}?download=1`}
-                    className="mt-5 text-xs text-cyan-300"
-                  >
-                    下载 MP4
-                  </a>
+                {finalPreview?.videoUrl && (
+                  <div className="mt-5 space-y-3">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setEditingJobId(finalPreview.id)}
+                      className="w-full border border-violet-300/50 px-3 py-2 text-xs text-violet-200 disabled:opacity-40"
+                    >
+                      按片段修改成片
+                    </button>
+                    <p className="text-xs leading-5 text-slate-400">
+                      选择起止秒数并描述画面修改，保留原配音，生成新的修改版本。
+                    </p>
+                    <a
+                      href={`${finalPreview.videoUrl}?download=1`}
+                      className="block text-xs text-cyan-300"
+                    >
+                      下载 MP4
+                    </a>
+                    {previewCutEdit && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPreviewCutEditId(null);
+                          setEditingJobId(null);
+                        }}
+                        className="text-xs text-slate-400"
+                      >
+                        对比原成片
+                      </button>
+                    )}
+                  </div>
+                )}
+                {cutEditJobs.length > 0 && (
+                  <div className="mt-4 space-y-2 border-t border-slate-700 pt-4">
+                    <h4 className="text-xs text-slate-300">成片修改版本</h4>
+                    {cutEditJobs.map((item, index) => (
+                      <div
+                        key={item.id}
+                        className="border border-slate-700 p-2 text-xs"
+                      >
+                        <p>
+                          {item.title ??
+                            `修改版本 ${cutEditJobs.length - index}`}
+                        </p>
+                        <p className="mt-1 text-slate-500">{item.status}</p>
+                        {item.errorMessage && (
+                          <p className="mt-1 text-rose-300">
+                            {item.errorMessage}
+                          </p>
+                        )}
+                        {item.videoUrl && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPreviewCutEditId(item.id);
+                              setEditingJobId(null);
+                            }}
+                            className="mt-2 text-cyan-300"
+                          >
+                            预览修改版
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>
@@ -351,7 +428,7 @@ export function DirectorStage({
                             onClick={() => setEditingJobId(take.id)}
                             className="text-violet-300"
                           >
-                            修改此版
+                            按片段修改此版
                           </button>
                         </div>
                       )}
@@ -375,10 +452,12 @@ export function DirectorStage({
           )}
         </TabsContent>
 
-        {editingTake?.videoUrl && !showFinal && (
+        {editingSource?.videoUrl && (
           <div className="mt-5 border-t border-slate-700 pt-5">
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold">修改当前版本</h3>
+              <h3 className="text-sm font-semibold">
+                {showFinal ? "修改成片片段" : "修改镜头片段"}
+              </h3>
               <button
                 type="button"
                 onClick={() => setEditingJobId(null)}
@@ -388,10 +467,15 @@ export function DirectorStage({
               </button>
             </div>
             <VideoEditWorkspace
-              key={editingTake.id}
-              sourceJobId={editingTake.id}
-              sourceTitle={editingTake.title ?? shot?.title ?? "镜头"}
-              durationSeconds={editingTake.durationSeconds}
+              key={editingSource.id}
+              sourceJobId={editingSource.id}
+              sourceTitle={
+                editingSource.title ??
+                (showFinal ? "完整成片" : shot?.title) ??
+                "镜头"
+              }
+              durationSeconds={editingSource.durationSeconds}
+              sourceVideoUrl={editingSource.videoUrl}
               initialLanguage={language}
               onCreated={() => {
                 setEditingJobId(null);

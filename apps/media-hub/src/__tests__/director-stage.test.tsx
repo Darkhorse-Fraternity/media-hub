@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { ComponentProps } from "react";
 import { useState } from "react";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -9,7 +10,18 @@ import type { MediaVideoScriptShot } from "@acme/validators";
 import { DirectorStage } from "../components/director-stage";
 
 vi.mock("../components/video-edit-workspace", () => ({
-  VideoEditWorkspace: () => null,
+  VideoEditWorkspace: (props: {
+    sourceJobId: string;
+    durationSeconds: number;
+    sourceVideoUrl?: string;
+  }) => (
+    <div
+      data-testid="segment-editor"
+      data-source={props.sourceJobId}
+      data-duration={props.durationSeconds}
+      data-video={props.sourceVideoUrl}
+    />
+  ),
 }));
 afterEach(cleanup);
 
@@ -32,9 +44,13 @@ const initialShots: MediaVideoScriptShot[] = ["a", "b"].map((id) => ({
 function Harness({
   onAssemble = vi.fn(),
   busy = false,
+  assembledJob = null,
+  cutEditJobs = [],
 }: {
   onAssemble?: (shots: MediaVideoScriptShot[], burnCaptions: boolean) => void;
   busy?: boolean;
+  assembledJob?: ComponentProps<typeof DirectorStage>["assembledJob"];
+  cutEditJobs?: ComponentProps<typeof DirectorStage>["cutEditJobs"];
 }) {
   const [shots, setShots] = useState(initialShots);
   const jobs = new Map(
@@ -60,7 +76,8 @@ function Harness({
     <DirectorStage
       shots={shots}
       jobsByShot={jobs}
-      assembledJob={null}
+      assembledJob={assembledJob}
+      cutEditJobs={cutEditJobs}
       language="zh"
       busy={busy}
       canAssemble
@@ -84,6 +101,63 @@ function Harness({
 }
 
 describe("director stage drafts and keyboard interaction", () => {
+  const cut = {
+    id: "assembly-example",
+    title: "完整成片",
+    durationSeconds: 30,
+    status: "succeeded",
+    videoUrl: "/complete.mp4",
+    isCurrent: true,
+    captioned: false,
+    errorMessage: null,
+  };
+
+  it("opens a segment editor for the full assembly with its actual duration", async () => {
+    const user = userEvent.setup();
+    render(<Harness assembledJob={cut} />);
+    await user.click(screen.getByRole("tab", { name: /完整成片/ }));
+    await user.click(screen.getByRole("button", { name: "按片段修改成片" }));
+    const editor = screen.getByTestId("segment-editor");
+    expect(editor.getAttribute("data-source")).toBe(cut.id);
+    expect(editor.getAttribute("data-duration")).toBe("30");
+    expect(editor.getAttribute("data-video")).toBe(cut.videoUrl);
+  });
+
+  it("previews and edits a completed cut revision without replacing its source assembly", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        assembledJob={cut}
+        cutEditJobs={[
+          {
+            id: "edited-cut",
+            scriptShotId: null,
+            kind: "edit",
+            status: "succeeded",
+            title: "只改 12–16 秒",
+            durationSeconds: 30,
+            createdAt: new Date(),
+            videoUrl: "/edited.mp4",
+            errorMessage: null,
+            outputStorageKey: "edited.mp4",
+          },
+        ]}
+      />,
+    );
+    await user.click(screen.getByRole("tab", { name: /完整成片/ }));
+    await user.click(screen.getByRole("button", { name: "预览修改版" }));
+    await user.click(screen.getByRole("button", { name: "按片段修改成片" }));
+    expect(
+      screen.getByTestId("segment-editor").getAttribute("data-source"),
+    ).toBe("edited-cut");
+    await user.click(screen.getByRole("button", { name: "对比原成片" }));
+    expect(screen.queryByTestId("segment-editor")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "按片段修改成片" }));
+    expect(
+      screen.getByTestId("segment-editor").getAttribute("data-source"),
+    ).toBe(cut.id);
+  });
+
   it("keeps caption and trim edits across shot switches and passes them to assembly", async () => {
     const user = userEvent.setup();
     const assemble = vi.fn();

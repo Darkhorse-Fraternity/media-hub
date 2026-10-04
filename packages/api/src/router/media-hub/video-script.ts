@@ -254,6 +254,7 @@ export const mediaVideoScriptRouter = {
           (assembly ? [assembly] : []).map((job) => ({
             id: job.id,
             title: job.title,
+            durationSeconds: job.durationSeconds,
             status: job.status,
             errorMessage: job.errorMessage,
             outputStorageKey: job.outputStorageKey,

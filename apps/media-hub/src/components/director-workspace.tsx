@@ -375,6 +375,9 @@ function AuthenticatedVideoScriptStudio({
                           }
                         : null
                     }
+                    cutEditJobs={(scriptQuery.data?.shotJobs ?? []).filter(
+                      (job) => job.kind === "edit" && !job.scriptShotId,
+                    )}
                     language={language}
                     busy={generating}
                     canAssemble={allShotsSucceeded}
