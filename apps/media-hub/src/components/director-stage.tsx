@@ -1,12 +1,19 @@
-import { useState } from "react";
+import type { ReactNode } from "react";
+import { useCallback, useState } from "react";
 
 import type { MediaVideoScriptShot } from "@acme/validators";
 import { cn } from "@acme/ui";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@acme/ui/tabs";
 import { selectMediaVideoScriptTake } from "@acme/validators";
 
+import { CompositionPreviewPlayer } from "~/components/composition-preview-player";
 import { ShotEditControls } from "~/components/shot-edit-controls";
+import { CompositionTimeline } from "~/components/shot-timeline";
 import { VideoEditWorkspace } from "~/components/video-edit-workspace";
+import {
+  clampTime,
+  compositionCaptions,
+  compositionClips,
+} from "~/lib/shot-timeline";
 
 interface DirectorTake {
   id: string;
@@ -32,6 +39,15 @@ interface DirectorCut {
   errorMessage: string | null;
 }
 
+const takeStatusLabels: Record<string, string> = {
+  succeeded: "已完成",
+  running: "生成中",
+  queued: "排队中",
+  scheduled: "待开始",
+  failed: "失败",
+  canceled: "已取消",
+};
+
 export function DirectorStage({
   shots,
   jobsByShot,
@@ -49,6 +65,11 @@ export function DirectorStage({
   onGenerateCaptions,
   onCreateAnimatic,
   animaticVideoUrl,
+  selectedShotId,
+  onSelectShot,
+  onReorder,
+  shotSettings,
+  timelineActions,
 }: {
   shots: MediaVideoScriptShot[];
   jobsByShot: Map<string, DirectorTake[]>;
@@ -57,7 +78,11 @@ export function DirectorStage({
   language: "zh" | "en";
   busy: boolean;
   canAssemble: boolean;
-  onSelectTake: (shotId: string, jobId: string) => Promise<void>;
+  onSelectTake: (
+    shotId: string,
+    jobId: string,
+    options?: { throwOnError?: boolean },
+  ) => Promise<void>;
   onGenerateShot: (shotId: string) => Promise<void>;
   onAssemble: (burnCaptions: boolean) => Promise<void>;
   onEditCreated: () => Promise<void>;
@@ -74,454 +99,515 @@ export function DirectorStage({
   onGenerateCaptions: (shotId: string) => Promise<void>;
   onCreateAnimatic: () => Promise<void>;
   animaticVideoUrl: string | null;
+  selectedShotId?: string | null;
+  onSelectShot?: (id: string) => void;
+  onReorder?: (from: number, to: number) => void;
+  shotSettings?: ReactNode;
+  timelineActions?: ReactNode;
 }) {
   const [focusedShotId, setFocusedShotId] = useState<string | null>(null);
-  const [previewJobId, setPreviewJobId] = useState<string | null>(null);
+  const [selectedCaption, setSelectedCaption] = useState<{
+    shotId: string;
+    cueId: string;
+  } | null>(null);
   const [editingJobId, setEditingJobId] = useState<string | null>(null);
-  const [previewCutEditId, setPreviewCutEditId] = useState<string | null>(null);
-  const [showFinal, setShowFinal] = useState(false);
-  const [showAnimatic, setShowAnimatic] = useState(false);
+  const [editingRange, setEditingRange] = useState<{
+    start: number;
+    end: number;
+  } | null>(null);
+  const [editingBusy, setEditingBusy] = useState(false);
+  const controlsBusy = busy || editingBusy;
+  const [previewMode, setPreviewMode] = useState("composition");
   const [burnCaptions, setBurnCaptions] = useState(false);
-  const shot = shots.find((item) => item.id === focusedShotId) ?? shots[0];
+  const [showTakes, setShowTakes] = useState(false);
+  const [time, setTime] = useState(0);
+  const [seekRequest, setSeekRequest] = useState({ time: 0, serial: 0 });
+  const clips = compositionClips(shots);
+  const total = clips.at(-1)?.end ?? 0;
+  const currentTime = clampTime(time, 0, total);
+  const shot =
+    shots.find((item) => item.id === (selectedShotId ?? focusedShotId)) ??
+    shots[0];
+  const clip = clips.find((item) => item.shot.id === shot?.id);
   const takes = shot ? (jobsByShot.get(shot.id) ?? []) : [];
-  const latest = takes[0];
   const selected = shot ? selectMediaVideoScriptTake(shot, takes) : null;
-  const preview = takes.find((item) => item.id === previewJobId) ?? selected;
-  const editingTake = takes.find((item) => item.id === editingJobId);
-  const previewCutEdit = cutEditJobs.find(
-    (item) => item.id === previewCutEditId && item.videoUrl,
+  const finalPreview = [assembledJob, ...cutEditJobs].find(
+    (item) => item?.id === previewMode,
   );
-  const finalPreview = previewCutEdit ?? assembledJob;
-  const editingSource = showFinal
-    ? [assembledJob, ...cutEditJobs].find((item) => item?.id === editingJobId)
-    : editingTake;
-  const totalDuration = shots.reduce(
-    (sum, item) =>
-      sum +
-      (item.trimEndSeconds ?? item.durationSeconds) -
-      (item.trimStartSeconds ?? 0),
-    0,
+  const editingSource = [assembledJob, ...cutEditJobs, ...takes].find(
+    (item) => item?.id === editingJobId,
   );
-  const cutIsCurrent = assembledJob?.isCurrent ?? false;
+  const editingTake = takes.find((take) => take.id === editingJobId);
+  const timelineEditing = Boolean(
+    editingTake && editingTake.id === selected?.id && editingRange && clip,
+  );
+  const editEnd =
+    clip && selected ? Math.min(clip.source.end, selected.durationSeconds) : 0;
+  const canEditClip = Boolean(
+    selected?.videoUrl && clip && editEnd - clip.source.start >= 2,
+  );
+  const onTimeChange = useCallback((next: number) => setTime(next), []);
+  const seek = (next: number) => {
+    const value = clampTime(next, 0, total);
+    setPreviewMode("composition");
+    setTime(value);
+    setSeekRequest((request) => ({ time: value, serial: request.serial + 1 }));
+  };
+  const focusShot = (id: string) => {
+    setFocusedShotId(id);
+    onSelectShot?.(id);
+    setSelectedCaption(null);
+    setEditingJobId(null);
+    setEditingRange(null);
+    setShowTakes(false);
+  };
+  const change = (id: string, patch: Partial<MediaVideoScriptShot>) => {
+    setPreviewMode("composition");
+    onChangeShotEdit(id, patch);
+  };
+  const reorder = (from: number, to: number) => {
+    if (!onReorder || from === to) return;
+    const moved = clips[from];
+    if (moved) focusShot(moved.shot.id);
+    setPreviewMode("composition");
+    onReorder(from, to);
+    const reordered = [...shots];
+    const [item] = reordered.splice(from, 1);
+    if (item) reordered.splice(to, 0, item);
+    const next = compositionClips(reordered).find(
+      (value) => value.shot.id === moved?.shot.id,
+    );
+    if (next) seek(next.start);
+  };
   const hasCaptions = shots.some((item) => (item.captions?.length ?? 0) > 0);
+  const openClipEdit = () => {
+    if (!selected || !clip || !canEditClip) return;
+    setEditingJobId(selected.id);
+    setEditingRange({ start: clip.source.start, end: editEnd });
+    setShowTakes(false);
+    setSelectedCaption(null);
+    seek(clip.start);
+  };
 
   return (
-    <Tabs
-      value={showFinal ? "final" : (shot?.id ?? "")}
-      onValueChange={(value) => {
-        setShowFinal(value === "final");
-        if (value !== "final") setFocusedShotId(value);
-        setPreviewJobId(null);
-        setEditingJobId(null);
-        setShowAnimatic(false);
-      }}
+    <section
+      className="border-b border-slate-800 bg-slate-900/40 p-4 text-slate-300 sm:p-6"
+      aria-label="整片预览与剪辑"
     >
-      <section
-        className="border-b border-slate-800 bg-[#101820] p-5 sm:p-6"
-        aria-label="镜头预览与剪辑"
-      >
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h2 className="text-xl font-semibold text-slate-100">预览与剪辑</h2>
-            <p className="mt-1 text-xs leading-5 text-slate-400">
-              预览每一镜，选定采用版本；需要调整画面时直接修改，再合成完整成片。
-            </p>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-slate-400">
-            <span>{shots.length} 镜</span>
-            <span aria-hidden="true">/</span>
-            <span>{totalDuration} 秒</span>
-          </div>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-100">成片工作台</h2>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
+            所有镜头在同一条时间轴上组合、裁切和配置。
+          </p>
         </div>
-
-        <div className="mt-4 flex flex-wrap items-center gap-3 border-y border-slate-700/70 py-3">
-          <button
-            type="button"
-            disabled={
-              busy ||
-              shots.length === 0 ||
-              shots.some((item) => !item.firstFrameAssetId)
-            }
-            onClick={() => void onCreateAnimatic()}
-            className="border border-cyan-300/40 px-3 py-2 text-xs text-cyan-200 disabled:opacity-40"
-          >
-            生成分镜预演
-          </button>
-          {animaticVideoUrl && (
-            <button
-              type="button"
-              onClick={() => setShowAnimatic((current) => !current)}
-              className="text-xs text-cyan-300"
+        <span className="rounded-full bg-slate-800/60 px-3 py-1.5 text-xs text-slate-400 tabular-nums">
+          {shots.length} 镜 · {total.toFixed(1)} 秒
+        </span>
+      </div>
+      <div className="mx-auto max-w-3xl">
+        <div className="mb-3 flex flex-wrap items-center gap-3 text-xs">
+          <label className="flex items-center gap-2 text-slate-400">
+            预览
+            <select
+              aria-label="预览版本"
+              disabled={editingBusy}
+              value={previewMode}
+              onChange={(event) => {
+                setPreviewMode(event.target.value);
+                setEditingJobId(null);
+              }}
+              className="max-w-56 rounded-md bg-slate-800 px-3 py-2 text-slate-200"
             >
-              {showAnimatic ? "收起预演" : "播放预演"}
-            </button>
+              <option value="composition">当前时间轴</option>
+              {assembledJob && (
+                <option value={assembledJob.id}>
+                  完整成片
+                  {assembledJob.isCurrent ? " · 当前版本" : " · 需要重新合片"}
+                </option>
+              )}
+              {cutEditJobs
+                .filter((item) => item.videoUrl)
+                .map((item, index) => (
+                  <option key={item.id} value={item.id}>
+                    {item.title ?? `成片修改版 ${index + 1}`}
+                  </option>
+                ))}
+              {animaticVideoUrl && <option value="animatic">分镜预演</option>}
+            </select>
+          </label>
+          {finalPreview?.videoUrl && (
+            <>
+              <a
+                href={`${finalPreview.videoUrl}?download=1`}
+                className="text-cyan-300"
+              >
+                下载 MP4
+              </a>
+              <button
+                type="button"
+                disabled={controlsBusy}
+                onClick={() => setEditingJobId(finalPreview.id)}
+                className="text-slate-300 disabled:opacity-40"
+              >
+                按片段修改成片
+              </button>
+              {previewMode !== assembledJob?.id && assembledJob && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPreviewMode(assembledJob.id);
+                    setEditingJobId(null);
+                  }}
+                  className="text-slate-400"
+                >
+                  对比原成片
+                </button>
+              )}
+            </>
           )}
-          <span className="text-xs text-slate-500">
-            使用选定首帧检查镜头顺序与时长，不调用 H3。
-          </span>
         </div>
-        {showAnimatic && animaticVideoUrl && (
+        {finalPreview ? (
+          <div className="aspect-video overflow-hidden rounded-xl bg-black">
+            {finalPreview.videoUrl ? (
+              <video
+                key={finalPreview.id}
+                src={finalPreview.videoUrl}
+                controls
+                playsInline
+                preload="metadata"
+                aria-label="已导出成片预览"
+                className="size-full"
+              />
+            ) : (
+              <div className="grid size-full place-items-center text-sm text-slate-500">
+                成片
+                {finalPreview.status === "running" ? "合成中" : "暂不可预览"}
+              </div>
+            )}
+          </div>
+        ) : previewMode === "animatic" && animaticVideoUrl ? (
           <video
             src={animaticVideoUrl}
             controls
             playsInline
-            preload="metadata"
-            className="mt-4 aspect-video w-full border border-cyan-300/30 bg-black"
+            className="aspect-video w-full rounded-xl bg-black"
+          />
+        ) : (
+          <CompositionPreviewPlayer
+            shots={shots}
+            jobsByShot={jobsByShot}
+            currentTime={currentTime}
+            seekRequest={seekRequest}
+            onTimeChange={onTimeChange}
           />
         )}
-
-        <TabsList className="mt-5 overflow-x-auto pb-2" aria-label="镜头">
-          {shots.map((item, index) => {
-            const shotJobs = jobsByShot.get(item.id) ?? [];
-            const selectedJob = selectMediaVideoScriptTake(item, shotJobs);
-            const focused = item.id === shot?.id && !showFinal;
-            return (
-              <TabsTrigger
-                value={item.id}
-                key={item.id}
-                type="button"
-                className={cn(
-                  "min-w-36 flex-1 border px-3 py-3 text-left text-xs",
-                  focused
-                    ? "border-cyan-300 bg-cyan-300/10 text-white"
-                    : "border-slate-700 bg-slate-950/60 text-slate-400 hover:border-slate-500",
-                )}
-              >
-                <span className="block font-medium">
-                  {index + 1}. {item.title}
-                </span>
-                <span className="mt-1 block text-[11px] opacity-70">
-                  {item.durationSeconds}s ·{" "}
-                  {selectedJob
-                    ? "已选片"
-                    : shotJobs.length
-                      ? "待选片"
-                      : "待生成"}
-                </span>
-              </TabsTrigger>
-            );
-          })}
-          {assembledJob && (
-            <TabsTrigger
-              value="final"
-              type="button"
-              className={cn(
-                "min-w-36 border px-3 py-3 text-left text-xs",
-                showFinal
-                  ? "border-emerald-300 bg-emerald-300/10 text-white"
-                  : "border-slate-700 bg-slate-950/60 text-slate-400",
-              )}
-            >
-              <span className="block font-medium">完整成片</span>
-              <span className="mt-1 block opacity-70">
-                {cutIsCurrent ? "当前版本" : "旧版成片"}
-              </span>
-            </TabsTrigger>
-          )}
-        </TabsList>
-
-        <TabsContent value={showFinal ? "final" : (shot?.id ?? "")}>
-          {showFinal && assembledJob ? (
-            <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(240px,0.6fr)]">
-              <div className="aspect-video overflow-hidden border border-slate-700 bg-black">
-                {finalPreview?.videoUrl ? (
-                  <video
-                    key={finalPreview.id}
-                    src={finalPreview.videoUrl}
-                    controls
-                    playsInline
-                    preload="metadata"
-                    className="h-full w-full"
-                  />
-                ) : (
-                  <div className="grid h-full place-items-center text-sm text-slate-500">
-                    成片
-                    {assembledJob.status === "running"
-                      ? "合成中"
-                      : "暂不可预览"}
-                  </div>
-                )}
-              </div>
-              <div className="flex flex-col justify-between border border-slate-700 bg-slate-950/70 p-4 text-sm">
-                <div>
-                  <h3 className="font-semibold">
-                    {previewCutEdit ? "成片修改版" : "完整成片"}
-                    {!previewCutEdit && assembledJob.captioned
-                      ? " · 带字幕"
-                      : ""}
-                  </h3>
-                  <p className="mt-2 text-xs leading-5 text-slate-400">
-                    {previewCutEdit
-                      ? "基于成片的局部修改版本，可随时对比原成片。"
-                      : cutIsCurrent
-                        ? "与当前选定镜头一致。"
-                        : "镜头选择已变化，请重新合片。"}
-                  </p>
-                  {assembledJob.errorMessage && (
-                    <p className="mt-3 text-xs text-rose-300">
-                      {assembledJob.errorMessage}
-                    </p>
-                  )}
-                </div>
-                {finalPreview?.videoUrl && (
-                  <div className="mt-5 space-y-3">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => setEditingJobId(finalPreview.id)}
-                      className="w-full border border-violet-300/50 px-3 py-2 text-xs text-violet-200 disabled:opacity-40"
-                    >
-                      按片段修改成片
-                    </button>
-                    <p className="text-xs leading-5 text-slate-400">
-                      选择起止秒数并描述画面修改，保留原配音，生成新的修改版本。
-                    </p>
-                    <a
-                      href={`${finalPreview.videoUrl}?download=1`}
-                      className="block text-xs text-cyan-300"
-                    >
-                      下载 MP4
-                    </a>
-                    {previewCutEdit && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPreviewCutEditId(null);
-                          setEditingJobId(null);
-                        }}
-                        className="text-xs text-slate-400"
-                      >
-                        对比原成片
-                      </button>
-                    )}
-                  </div>
-                )}
-                {cutEditJobs.length > 0 && (
-                  <div className="mt-4 space-y-2 border-t border-slate-700 pt-4">
-                    <h4 className="text-xs text-slate-300">成片修改版本</h4>
-                    {cutEditJobs.map((item, index) => (
-                      <div
-                        key={item.id}
-                        className="border border-slate-700 p-2 text-xs"
-                      >
-                        <p>
-                          {item.title ??
-                            `修改版本 ${cutEditJobs.length - index}`}
-                        </p>
-                        <p className="mt-1 text-slate-500">{item.status}</p>
-                        {item.errorMessage && (
-                          <p className="mt-1 text-rose-300">
-                            {item.errorMessage}
-                          </p>
-                        )}
-                        {item.videoUrl && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setPreviewCutEditId(item.id);
-                              setEditingJobId(null);
-                            }}
-                            className="mt-2 text-cyan-300"
-                          >
-                            预览修改版
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : shot ? (
-            <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(260px,0.6fr)]">
-              <div className="aspect-video overflow-hidden border border-slate-700 bg-black">
-                {preview?.videoUrl ? (
-                  <video
-                    key={preview.id}
-                    src={preview.videoUrl}
-                    controls
-                    playsInline
-                    preload="metadata"
-                    className="h-full w-full"
-                  />
-                ) : (
-                  <div className="grid h-full place-items-center p-5 text-center text-sm text-slate-500">
-                    {latest
-                      ? `镜头${latest.status}，完成后可在这里预览`
-                      : "镜头尚未生成"}
-                  </div>
-                )}
-              </div>
-              <div className="flex min-h-0 flex-col border border-slate-700 bg-slate-950/70 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-semibold">{shot.title}</h3>
-                    <p className="mt-1 text-xs text-slate-500">
-                      镜头版本 · {takes.length}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      document
-                        .getElementById(`shot-${shot.id}`)
-                        ?.scrollIntoView({ behavior: "smooth", block: "start" })
-                    }
-                    className="text-xs text-cyan-300"
-                  >
-                    镜头设置
-                  </button>
-                </div>
-                <div className="mt-4 max-h-56 space-y-2 overflow-y-auto pr-1">
-                  {takes.length === 0 && (
-                    <p className="text-xs leading-5 text-slate-500">
-                      生成后可比较版本，并指定合片采用哪一条。
-                    </p>
-                  )}
-                  {takes.map((take, index) => (
-                    <div
-                      key={take.id}
-                      className={cn(
-                        "border p-2 text-xs",
-                        selected?.id === take.id
-                          ? "border-emerald-400/60 bg-emerald-400/5"
-                          : "border-slate-700",
-                      )}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span>
-                          {take.kind === "edit" ? "局部修改" : "原始生成"}{" "}
-                          {takes.length - index}
-                        </span>
-                        <span className="text-slate-500">{take.status}</span>
-                      </div>
-                      {take.errorMessage && (
-                        <p className="mt-1 text-rose-300">
-                          {take.errorMessage}
-                        </p>
-                      )}
-                      {take.videoUrl && (
-                        <div className="mt-2 flex flex-wrap gap-3">
-                          <button
-                            type="button"
-                            onClick={() => setPreviewJobId(take.id)}
-                            className="text-cyan-300"
-                          >
-                            预览
-                          </button>
-                          <button
-                            type="button"
-                            disabled={
-                              busy || shot.selectedGenerationJobId === take.id
-                            }
-                            onClick={() => void onSelectTake(shot.id, take.id)}
-                            className="text-emerald-300 disabled:opacity-40"
-                          >
-                            {shot.selectedGenerationJobId === take.id
-                              ? "已锁定"
-                              : selected?.id === take.id
-                                ? "锁定此版"
-                                : "采用此版"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setEditingJobId(take.id)}
-                            className="text-violet-300"
-                          >
-                            按片段修改此版
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void onGenerateShot(shot.id)}
-                  className="mt-4 border border-amber-300/50 px-3 py-2 text-xs text-amber-200 disabled:opacity-40"
-                >
-                  重新生成此镜
-                </button>
-              </div>
-            </div>
-          ) : (
-            <p className="mt-5 text-sm text-slate-500">
-              添加镜头后，可在这里预览和制作。
-            </p>
-          )}
-        </TabsContent>
-
-        {editingSource?.videoUrl && (
-          <div className="mt-5 border-t border-slate-700 pt-5">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold">
-                {showFinal ? "修改成片片段" : "修改镜头片段"}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setEditingJobId(null)}
-                className="text-xs text-slate-400"
-              >
-                收起
-              </button>
-            </div>
-            <VideoEditWorkspace
-              key={editingSource.id}
-              sourceJobId={editingSource.id}
-              sourceTitle={
-                editingSource.title ??
-                (showFinal ? "完整成片" : shot?.title) ??
-                "镜头"
-              }
-              durationSeconds={editingSource.durationSeconds}
-              sourceVideoUrl={editingSource.videoUrl}
-              initialLanguage={language}
-              onCreated={() => {
-                setEditingJobId(null);
-                void onEditCreated();
-              }}
-            />
-          </div>
-        )}
-
-        {shot && !showFinal && (
-          <ShotEditControls
-            key={shot.id}
-            shot={shot}
-            busy={busy}
-            onSave={onSaveShotEdit}
-            onChange={onChangeShotEdit}
-            onGenerateCaptions={onGenerateCaptions}
-          />
-        )}
-
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-700 pt-4">
-          <p className="text-xs text-slate-500">
-            镜头顺序在下方调整。合片采用每镜已选版本。
+        {finalPreview?.errorMessage && (
+          <p role="alert" className="mt-2 text-xs text-rose-300">
+            {finalPreview.errorMessage}
           </p>
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-xs text-slate-300">
-              <input
-                type="checkbox"
-                checked={burnCaptions}
-                disabled={!hasCaptions || busy}
-                onChange={(event) => setBurnCaptions(event.target.checked)}
-                className="accent-emerald-300"
-              />
-              输出带字幕版
-            </label>
+        )}
+        {finalPreview && (
+          <p className="mt-2 text-xs text-slate-500">
+            {assembledJob?.isCurrent && previewMode === assembledJob.id
+              ? "此成片与当前时间轴一致。"
+              : "正在查看已导出版本；修改下方时间轴后，请重新合片。"}
+          </p>
+        )}
+      </div>
+      <div className="mt-5">
+        {timelineActions && (
+          <fieldset disabled={editingBusy} className="mb-3 flex justify-end">
+            {timelineActions}
+          </fieldset>
+        )}
+        <CompositionTimeline
+          shots={shots}
+          busy={controlsBusy}
+          currentTime={currentTime}
+          selectedShotId={shot?.id ?? null}
+          selectedCaption={selectedCaption}
+          onSeek={seek}
+          onSelectShot={(id) => {
+            focusShot(id);
+            const item = clips.find((value) => value.shot.id === id);
+            if (item) seek(item.start);
+          }}
+          onSelectCaption={(shotId, cueId) => {
+            if (shotId !== shot?.id) focusShot(shotId);
+            setSelectedCaption({ shotId, cueId });
+            const cue = compositionCaptions(clips).find(
+              (item) => item.shotId === shotId && item.cueId === cueId,
+            );
+            if (cue) seek(cue.startSeconds);
+          }}
+          onChange={change}
+          onReorder={onReorder ? reorder : undefined}
+          modification={
+            timelineEditing && editingRange && clip
+              ? {
+                  start: editingRange.start + clip.start - clip.source.start,
+                  end: editingRange.end + clip.start - clip.source.start,
+                  min: clip.start,
+                  max: clip.start + editEnd - clip.source.start,
+                  onChange: (range) =>
+                    setEditingRange({
+                      start: range.start - clip.start + clip.source.start,
+                      end: range.end - clip.start + clip.source.start,
+                    }),
+                }
+              : undefined
+          }
+        />
+      </div>
+      {shot && clip && (
+        <>
+          <div className="mt-4 flex flex-wrap items-center gap-3 text-xs">
+            <span className="mr-auto text-slate-400">
+              选中片段 · {clip.start.toFixed(1)}–{clip.end.toFixed(1)} 秒
+            </span>
             <button
               type="button"
-              disabled={!canAssemble || busy}
-              onClick={() => void onAssemble(burnCaptions && hasCaptions)}
-              className="bg-emerald-300 px-4 py-2.5 text-sm font-semibold text-slate-950 disabled:opacity-30"
+              disabled={controlsBusy || !canEditClip}
+              onClick={() =>
+                timelineEditing ? setEditingJobId(null) : openClipEdit()
+              }
+              aria-expanded={timelineEditing}
+              aria-controls="timeline-clip-editor"
+              className="rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 py-2 font-medium text-cyan-200 disabled:opacity-30"
             >
-              合成完整成片
+              修改选中片段
+            </button>
+            <button
+              type="button"
+              disabled={
+                busy ||
+                timelineEditing ||
+                !onReorder ||
+                clips.indexOf(clip) === 0
+              }
+              onClick={() =>
+                reorder(clips.indexOf(clip), clips.indexOf(clip) - 1)
+              }
+              className="text-slate-400 disabled:opacity-30"
+            >
+              前移片段
+            </button>
+            <button
+              type="button"
+              disabled={
+                busy ||
+                timelineEditing ||
+                !onReorder ||
+                clips.indexOf(clip) === clips.length - 1
+              }
+              onClick={() =>
+                reorder(clips.indexOf(clip), clips.indexOf(clip) + 1)
+              }
+              className="text-slate-400 disabled:opacity-30"
+            >
+              后移片段
+            </button>
+            <button
+              type="button"
+              aria-expanded={showTakes}
+              disabled={editingBusy}
+              onClick={() => setShowTakes((value) => !value)}
+              className="text-cyan-300"
+            >
+              {showTakes ? "收起片段版本" : `片段版本 (${takes.length})`}
             </button>
           </div>
+          {!canEditClip && (
+            <p className="mt-2 text-xs text-slate-500">
+              {selected?.videoUrl
+                ? "局部修改至少需要 2 秒，请延长片段裁切范围。"
+                : "片段生成完成并选用后，可在这里修改画面。"}
+            </p>
+          )}
+          {showTakes && (
+            <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+              <div className="flex flex-wrap gap-2">
+                {takes.map((take, index) => (
+                  <div
+                    key={take.id}
+                    className={cn(
+                      "rounded-md bg-slate-900 p-3 text-xs",
+                      selected?.id === take.id && "ring-1 ring-cyan-300/40",
+                    )}
+                  >
+                    <p>
+                      {take.kind === "edit" ? "修改" : "生成"}{" "}
+                      {takes.length - index} ·{" "}
+                      {takeStatusLabels[take.status] ?? take.status}
+                    </p>
+                    {take.errorMessage && (
+                      <p className="mt-2 text-rose-300">{take.errorMessage}</p>
+                    )}
+                    {take.videoUrl && (
+                      <div className="mt-2 flex gap-3">
+                        <button
+                          type="button"
+                          disabled={
+                            controlsBusy ||
+                            shot.selectedGenerationJobId === take.id
+                          }
+                          onClick={() => void onSelectTake(shot.id, take.id)}
+                          className="text-cyan-300 disabled:opacity-40"
+                        >
+                          {selected?.id === take.id ? "锁定此版" : "采用此版"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={controlsBusy}
+                          onClick={() => setEditingJobId(take.id)}
+                          className="text-slate-400"
+                        >
+                          按片段修改此版
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                disabled={controlsBusy}
+                onClick={() => void onGenerateShot(shot.id)}
+                className="mt-3 text-xs text-cyan-300 disabled:opacity-40"
+              >
+                重新生成此镜
+              </button>
+            </div>
+          )}
+          {!timelineEditing && (
+            <ShotEditControls
+              key={shot.id}
+              shot={shot}
+              busy={busy}
+              onSave={onSaveShotEdit}
+              onChange={change}
+              onGenerateCaptions={onGenerateCaptions}
+              currentTime={currentTime}
+              onSeek={seek}
+              compositionOffset={clip.start}
+              activeCaptionId={
+                selectedCaption?.shotId === shot.id
+                  ? selectedCaption.cueId
+                  : null
+              }
+              onSelectCaption={(cueId) =>
+                setSelectedCaption({ shotId: shot.id, cueId })
+              }
+            />
+          )}
+          {shotSettings && !timelineEditing && (
+            <details
+              key={shot.id}
+              className="mt-3 rounded-xl border border-slate-800 bg-slate-950/50"
+            >
+              <summary className="cursor-pointer px-4 py-3 text-xs font-medium text-slate-300">
+                画面、首帧与声音配置
+              </summary>
+              {shotSettings}
+            </details>
+          )}
+        </>
+      )}
+      {editingSource?.videoUrl && (
+        <div
+          id="timeline-clip-editor"
+          className="mt-5 border-t border-slate-800 pt-4"
+        >
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-medium">
+              {timelineEditing ? `修改选中片段 · ${shot?.title}` : "修改片段"}
+            </h3>
+            <button
+              type="button"
+              onClick={() => setEditingJobId(null)}
+              disabled={controlsBusy}
+              className="text-xs text-slate-400"
+            >
+              收起
+            </button>
+          </div>
+          <VideoEditWorkspace
+            key={editingSource.id}
+            sourceJobId={editingSource.id}
+            sourceTitle={editingSource.title ?? "完整成片"}
+            durationSeconds={editingSource.durationSeconds}
+            sourceVideoUrl={editingSource.videoUrl}
+            initialLanguage={language}
+            busy={busy}
+            onPendingChange={setEditingBusy}
+            onBeforeCreate={
+              timelineEditing &&
+              shot &&
+              editingTake &&
+              shot.selectedGenerationJobId !== editingTake.id
+                ? async () =>
+                    onSelectTake(shot.id, editingTake.id, {
+                      throwOnError: true,
+                    })
+                : undefined
+            }
+            timelineSelection={
+              timelineEditing && editingRange && clip
+                ? {
+                    startSeconds: editingRange.start,
+                    endSeconds: editingRange.end,
+                    minSeconds: clip.source.start,
+                    maxSeconds: editEnd,
+                    timeOffset: clip.start - clip.source.start,
+                    currentTime,
+                    onChange: setEditingRange,
+                    onSeek: seek,
+                  }
+                : undefined
+            }
+            onCreated={() => {
+              setEditingJobId(null);
+              setShowTakes(true);
+              void onEditCreated();
+            }}
+          />
         </div>
-      </section>
-    </Tabs>
+      )}
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
+        <button
+          type="button"
+          disabled={
+            controlsBusy ||
+            shots.length === 0 ||
+            shots.some((item) => !item.firstFrameAssetId)
+          }
+          onClick={() => void onCreateAnimatic()}
+          className="text-xs text-slate-400 disabled:opacity-30"
+        >
+          生成分镜预演
+        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input
+              type="checkbox"
+              checked={burnCaptions}
+              disabled={!hasCaptions || controlsBusy}
+              onChange={(event) => setBurnCaptions(event.target.checked)}
+              className="accent-cyan-300"
+            />
+            输出带字幕版
+          </label>
+          <button
+            type="button"
+            disabled={!canAssemble || controlsBusy}
+            onClick={() => void onAssemble(burnCaptions && hasCaptions)}
+            className="rounded-lg bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-slate-950 hover:bg-cyan-200 disabled:opacity-30"
+          >
+            合成完整成片
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }

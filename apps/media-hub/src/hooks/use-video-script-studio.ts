@@ -507,21 +507,29 @@ export function useVideoScriptStudio(
     }, "镜头生成失败");
   };
 
-  const selectTake = async (shotId: string, jobId: string) => {
-    return runWorkflow(async () => {
-      if (!selectedScriptId) return;
+  const selectTake = async (
+    shotId: string,
+    jobId: string,
+    options: { throwOnError?: boolean } = {},
+  ) => {
+    return runWorkflow(
+      async () => {
+        if (!selectedScriptId) return;
 
-      const saved = dirty ? await persistScript() : null;
-      const updated = await selectTakeMutation.mutateAsync({
-        id: selectedScriptId,
-        shotId,
-        jobId,
-        version: saved?.version ?? version,
-      });
-      applyScript(updated);
-      await refreshScripts(selectedScriptId);
-      setMessage("已选定合片采用的镜头版本。");
-    }, "选择镜头版本失败");
+        const saved = dirty ? await persistScript() : null;
+        const updated = await selectTakeMutation.mutateAsync({
+          id: selectedScriptId,
+          shotId,
+          jobId,
+          version: saved?.version ?? version,
+        });
+        applyScript(updated);
+        await refreshScripts(selectedScriptId);
+        setMessage("已选定合片采用的镜头版本。");
+      },
+      "选择镜头版本失败",
+      options,
+    );
   };
 
   const saveShotEdit = async () => {

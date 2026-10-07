@@ -30,6 +30,17 @@ interface VideoEditSegmentDraft {
   referenceImages: ReferenceImageDraft[];
 }
 
+export interface VideoEditTimelineSelection {
+  startSeconds: number;
+  endSeconds: number;
+  minSeconds: number;
+  maxSeconds: number;
+  timeOffset: number;
+  currentTime: number;
+  onChange: (range: { start: number; end: number }) => void;
+  onSeek: (time: number) => void;
+}
+
 export function VideoEditWorkspace({
   sourceJobId,
   sourceTitle,
@@ -37,6 +48,10 @@ export function VideoEditWorkspace({
   initialLanguage,
   sourceVideoUrl,
   onCreated,
+  timelineSelection,
+  busy = false,
+  onBeforeCreate,
+  onPendingChange,
 }: {
   sourceJobId: string;
   sourceTitle: string;
@@ -44,6 +59,10 @@ export function VideoEditWorkspace({
   initialLanguage: ContentLanguage;
   sourceVideoUrl?: string;
   onCreated: (jobId: string) => void;
+  timelineSelection?: VideoEditTimelineSelection;
+  busy?: boolean;
+  onBeforeCreate?: () => Promise<void>;
+  onPendingChange?: (pending: boolean) => void;
 }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
@@ -51,7 +70,7 @@ export function VideoEditWorkspace({
   const [language, setLanguage] = useState<ContentLanguage>(initialLanguage);
   const [scheduleDay, setScheduleDay] = useState("now");
   const [scheduleTime, setScheduleTime] = useState("09:00");
-  const [segments, setSegments] = useState<VideoEditSegmentDraft[]>([
+  const [segmentDrafts, setSegments] = useState<VideoEditSegmentDraft[]>([
     {
       id: createReferenceImageDraftId(),
       startSeconds: 0,
@@ -60,6 +79,14 @@ export function VideoEditWorkspace({
       referenceImages: [],
     },
   ]);
+  const segments = timelineSelection
+    ? segmentDrafts.slice(0, 1).map((segment) => ({
+        ...segment,
+        startSeconds: timelineSelection.startSeconds,
+        endSeconds: timelineSelection.endSeconds,
+      }))
+    : segmentDrafts;
+  const timeOffset = timelineSelection?.timeOffset ?? 0;
   const segmentsRef = useRef(segments);
   const videoRef = useRef<HTMLVideoElement>(null);
   const playbackEndRef = useRef<number | null>(null);
@@ -74,6 +101,7 @@ export function VideoEditWorkspace({
     null,
   );
   const [message, setMessage] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     segmentsRef.current = segments;
@@ -105,11 +133,25 @@ export function VideoEditWorkspace({
   const optimizeMutation = useMutation(
     trpc.mediaHub.ai.optimizePrompt.mutationOptions(),
   );
+  useEffect(() => {
+    onPendingChange?.(submitting || createEditMutation.isPending);
+  }, [submitting, createEditMutation.isPending, onPendingChange]);
+  useEffect(() => () => onPendingChange?.(false), [onPendingChange]);
 
   const updateSegment = (
     segmentId: string,
     patch: Partial<Omit<VideoEditSegmentDraft, "id">>,
   ) => {
+    if (
+      timelineSelection &&
+      segmentId === segmentDrafts[0]?.id &&
+      (patch.startSeconds !== undefined || patch.endSeconds !== undefined)
+    ) {
+      timelineSelection.onChange({
+        start: patch.startSeconds ?? timelineSelection.startSeconds,
+        end: patch.endSeconds ?? timelineSelection.endSeconds,
+      });
+    }
     setSegments((current) =>
       current.map((segment) =>
         segment.id === segmentId ? { ...segment, ...patch } : segment,
@@ -239,6 +281,7 @@ export function VideoEditWorkspace({
   };
 
   const submitEdit = async () => {
+    if (busy || submitting || createEditMutation.isPending) return;
     const titleError = validateVideoEditTitle(title);
     if (titleError) {
       setMessage(titleError);
@@ -254,12 +297,17 @@ export function VideoEditWorkspace({
         return;
       }
       if (
-        segment.startSeconds < 0 ||
-        segment.endSeconds > durationSeconds ||
+        !Number.isFinite(segment.startSeconds) ||
+        !Number.isFinite(segment.endSeconds) ||
+        segment.startSeconds < (timelineSelection?.minSeconds ?? 0) ||
+        segment.endSeconds >
+          (timelineSelection?.maxSeconds ?? durationSeconds) ||
         clipDuration < 2 ||
         clipDuration > 15
       ) {
-        setMessage(`片段 ${index + 1} 必须在视频范围内且长度为 2–15 秒。`);
+        setMessage(
+          `片段 ${index + 1} 必须在${timelineSelection ? "选中镜头" : "视频"}范围内且长度为 2–15 秒。`,
+        );
         return;
       }
       const previous = ordered[index - 1];
@@ -274,6 +322,7 @@ export function VideoEditWorkspace({
       return;
     }
     setMessage("正在上传各时间片参考图…");
+    setSubmitting(true);
     try {
       const uploadedSegments = [];
       for (const segment of ordered) {
@@ -300,6 +349,7 @@ export function VideoEditWorkspace({
           referenceImages,
         });
       }
+      await onBeforeCreate?.();
       await createEditMutation.mutateAsync({
         sourceGenerationJobId: sourceJobId,
         title: title.trim() || undefined,
@@ -309,25 +359,29 @@ export function VideoEditWorkspace({
       });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "创建修改任务失败");
+    } finally {
+      setSubmitting(false);
     }
   };
 
   return (
-    <section className="rounded-2xl border border-violet-400/20 bg-slate-950/80 shadow-[0_24px_80px_rgba(76,29,149,0.12)]">
-      <header className="border-b border-violet-300/10 px-5 py-5 sm:px-6">
-        <p className="text-xs font-semibold tracking-[0.18em] text-violet-300 uppercase">
-          Ref2VA edit desk
-        </p>
-        <h2 className="mt-2 text-xl font-semibold text-violet-50">
-          编排修改片段
+    <section className="rounded-xl border border-slate-800 bg-slate-950/80">
+      <header className="border-b border-cyan-300/10 px-5 py-5 sm:px-6">
+        <h2 className="text-base font-semibold text-balance text-slate-100">
+          局部画面修改
         </h2>
-        <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-400">
-          只描述需要变化的时间片；未选片段保持源视频不变，源音轨默认保留。
+        <p className="mt-2 max-w-2xl text-xs leading-5 text-pretty text-slate-400">
+          {timelineSelection
+            ? "在上方整片时间轴拖动修改范围，再描述画面修改要求。保留 H3 原音轨，完成后可选用修改版。"
+            : "只描述需要变化的时间片；未选片段保持源视频不变，源音轨默认保留。"}
         </p>
       </header>
 
-      <div className="space-y-5 p-5 sm:p-6">
-        {sourceVideoUrl && activeSegment && (
+      <fieldset
+        disabled={busy || submitting || createEditMutation.isPending}
+        className="min-w-0 space-y-5 p-5 sm:p-6"
+      >
+        {sourceVideoUrl && activeSegment && !timelineSelection && (
           <div className="space-y-3">
             <video
               ref={videoRef}
@@ -364,7 +418,7 @@ export function VideoEditWorkspace({
                     ),
                   })
                 }
-                className="border border-violet-300/40 px-3 py-2 text-violet-200"
+                className="border border-cyan-300/40 px-3 py-2 text-cyan-200"
               >
                 当前帧设为开始
               </button>
@@ -378,7 +432,7 @@ export function VideoEditWorkspace({
                     ),
                   })
                 }
-                className="border border-violet-300/40 px-3 py-2 text-violet-200"
+                className="border border-cyan-300/40 px-3 py-2 text-cyan-200"
               >
                 当前帧设为结束
               </button>
@@ -404,6 +458,48 @@ export function VideoEditWorkspace({
             </div>
           </div>
         )}
+        {timelineSelection && activeSegment && (
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 tabular-nums">
+            <span>
+              整片修改范围{" "}
+              {(activeSegment.startSeconds + timeOffset).toFixed(1)}–
+              {(activeSegment.endSeconds + timeOffset).toFixed(1)} 秒
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                updateSegment(activeSegment.id, {
+                  startSeconds: timelineSelection.currentTime - timeOffset,
+                })
+              }
+              className="text-cyan-300"
+            >
+              当前帧设为开始
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                updateSegment(activeSegment.id, {
+                  endSeconds: timelineSelection.currentTime - timeOffset,
+                })
+              }
+              className="text-cyan-300"
+            >
+              当前帧设为结束
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                timelineSelection.onSeek(
+                  activeSegment.startSeconds + timeOffset,
+                )
+              }
+              className="text-cyan-300"
+            >
+              定位修改片段
+            </button>
+          </div>
+        )}
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="text-xs text-slate-400">
             <span className="flex items-center justify-between gap-2">
@@ -416,7 +512,7 @@ export function VideoEditWorkspace({
               value={title}
               maxLength={MAX_VIDEO_EDIT_TITLE_LENGTH}
               onChange={(event) => setTitle(event.target.value)}
-              className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-slate-200 transition outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/10"
+              className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-slate-200 transition-none outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/10"
             />
           </label>
           <label className="text-xs text-slate-400">
@@ -426,7 +522,7 @@ export function VideoEditWorkspace({
               onChange={(event) =>
                 setLanguage(event.target.value as ContentLanguage)
               }
-              className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-slate-200 transition outline-none focus:border-violet-400"
+              className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-slate-200 transition-none outline-none focus:border-cyan-400"
             >
               <option value="en">English</option>
               <option value="zh">中文</option>
@@ -437,33 +533,35 @@ export function VideoEditWorkspace({
           </label>
         </div>
 
-        <div>
-          <div className="mb-1.5 flex justify-between font-mono text-[10px] text-slate-500">
-            <span>0s</span>
-            <span>修改时间轴 · {durationSeconds}s</span>
-            <span>{durationSeconds}s</span>
+        {!timelineSelection && (
+          <div>
+            <div className="mb-1.5 flex justify-between font-mono text-[10px] text-slate-500">
+              <span>0s</span>
+              <span>修改时间轴 · {durationSeconds}s</span>
+              <span>{durationSeconds}s</span>
+            </div>
+            <div className="relative h-10 overflow-hidden rounded-lg border border-slate-700 bg-slate-950">
+              <span className="absolute inset-x-0 top-1/2 h-px bg-slate-800" />
+              {segments.map((segment, index) => (
+                <button
+                  type="button"
+                  key={segment.id}
+                  aria-label={`选择修改片段 ${index + 1}`}
+                  aria-pressed={activeSegment?.id === segment.id}
+                  onClick={() => setActiveSegmentId(segment.id)}
+                  title={`${segment.startSeconds}s–${segment.endSeconds}s`}
+                  className="absolute inset-y-1 flex min-w-6 items-center justify-center rounded-md bg-cyan-300 text-[10px] font-bold text-slate-950"
+                  style={{
+                    left: `${(segment.startSeconds / durationSeconds) * 100}%`,
+                    width: `${((segment.endSeconds - segment.startSeconds) / durationSeconds) * 100}%`,
+                  }}
+                >
+                  {index + 1}
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="relative h-10 overflow-hidden rounded-lg border border-slate-700 bg-slate-950">
-            <span className="absolute inset-x-0 top-1/2 h-px bg-slate-800" />
-            {segments.map((segment, index) => (
-              <button
-                type="button"
-                key={segment.id}
-                aria-label={`选择修改片段 ${index + 1}`}
-                aria-pressed={activeSegment?.id === segment.id}
-                onClick={() => setActiveSegmentId(segment.id)}
-                title={`${segment.startSeconds}s–${segment.endSeconds}s`}
-                className="absolute inset-y-1 flex min-w-6 items-center justify-center rounded-md bg-violet-300 text-[10px] font-bold text-slate-950 shadow-[0_0_18px_rgba(196,181,253,0.2)]"
-                style={{
-                  left: `${(segment.startSeconds / durationSeconds) * 100}%`,
-                  width: `${((segment.endSeconds - segment.startSeconds) / durationSeconds) * 100}%`,
-                }}
-              >
-                {index + 1}
-              </button>
-            ))}
-          </div>
-        </div>
+        )}
 
         <div className="space-y-4">
           {segments.map((segment, index) => (
@@ -473,10 +571,10 @@ export function VideoEditWorkspace({
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <span className="flex size-6 items-center justify-center rounded-md bg-violet-300 text-[11px] font-bold text-slate-950">
+                  <span className="flex size-6 items-center justify-center rounded-md bg-cyan-300 text-[11px] font-bold text-slate-950">
                     {index + 1}
                   </span>
-                  <p className="text-xs font-semibold text-violet-100">
+                  <p className="text-xs font-semibold text-cyan-100">
                     修改片段
                   </p>
                 </div>
@@ -484,7 +582,7 @@ export function VideoEditWorkspace({
                   <button
                     type="button"
                     onClick={() => removeSegment(segment.id)}
-                    className="text-[11px] text-rose-300 transition hover:text-rose-200"
+                    className="text-[11px] text-rose-300 transition-none hover:text-rose-200"
                   >
                     删除片段
                   </button>
@@ -492,35 +590,44 @@ export function VideoEditWorkspace({
               </div>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <label className="text-[11px] text-slate-400">
-                  开始时间（秒）
+                  {timelineSelection ? "开始时间（整片秒）" : "开始时间（秒）"}
                   <input
                     type="number"
-                    min="0"
-                    max={Math.max(0, durationSeconds - 2)}
-                    step="0.5"
-                    value={segment.startSeconds}
+                    min={(timelineSelection?.minSeconds ?? 0) + timeOffset}
+                    max={
+                      (timelineSelection?.maxSeconds ?? durationSeconds) -
+                      2 +
+                      timeOffset
+                    }
+                    step="0.1"
+                    value={Number(
+                      (segment.startSeconds + timeOffset).toFixed(1),
+                    )}
                     onChange={(event) =>
                       updateSegment(segment.id, {
-                        startSeconds: Number(event.target.value),
+                        startSeconds: Number(event.target.value) - timeOffset,
                       })
                     }
-                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs outline-none focus:border-violet-400"
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs outline-none focus:border-cyan-400"
                   />
                 </label>
                 <label className="text-[11px] text-slate-400">
-                  结束时间（秒）
+                  {timelineSelection ? "结束时间（整片秒）" : "结束时间（秒）"}
                   <input
                     type="number"
-                    min="2"
-                    max={durationSeconds}
-                    step="0.5"
-                    value={segment.endSeconds}
+                    min={(timelineSelection?.minSeconds ?? 0) + 2 + timeOffset}
+                    max={
+                      (timelineSelection?.maxSeconds ?? durationSeconds) +
+                      timeOffset
+                    }
+                    step="0.1"
+                    value={Number((segment.endSeconds + timeOffset).toFixed(1))}
                     onChange={(event) =>
                       updateSegment(segment.id, {
-                        endSeconds: Number(event.target.value),
+                        endSeconds: Number(event.target.value) - timeOffset,
                       })
                     }
-                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs outline-none focus:border-violet-400"
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs outline-none focus:border-cyan-400"
                   />
                 </label>
               </div>
@@ -538,7 +645,7 @@ export function VideoEditWorkspace({
                       !segment.prompt.trim() || optimizingSegmentId !== null
                     }
                     onClick={() => void optimizeSegment(segment)}
-                    className="rounded-md border border-violet-400/30 px-2 py-1 text-[10px] text-violet-200 transition hover:bg-violet-400/10 disabled:opacity-40"
+                    className="rounded-md border border-cyan-400/30 px-2 py-1 text-[10px] text-cyan-200 transition-none hover:bg-cyan-400/10 disabled:opacity-40"
                   >
                     {optimizingSegmentId === segment.id
                       ? "AI 优化中…"
@@ -553,11 +660,11 @@ export function VideoEditWorkspace({
                   onChange={(event) =>
                     updateSegment(segment.id, { prompt: event.target.value })
                   }
-                  className="mt-1.5 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs leading-5 transition outline-none focus:border-violet-400"
+                  className="mt-1.5 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs leading-5 transition-none outline-none focus:border-cyan-400"
                 />
               </div>
               <div className="mt-3">
-                <label className="block cursor-pointer rounded-lg border border-dashed border-slate-700 px-3 py-2.5 text-center text-[11px] text-slate-400 transition hover:border-violet-400/50 hover:text-violet-200">
+                <label className="block cursor-pointer rounded-lg border border-dashed border-slate-700 px-3 py-2.5 text-center text-[11px] text-slate-400 transition-none hover:border-cyan-400/50 hover:text-cyan-200">
                   {preparingSegmentId === segment.id
                     ? "正在压缩图片…"
                     : `添加该片段参考图（${segment.referenceImages.length}/4）`}
@@ -631,14 +738,16 @@ export function VideoEditWorkspace({
           ))}
         </div>
 
-        <button
-          type="button"
-          disabled={segments.length >= 4}
-          onClick={addSegment}
-          className="w-full rounded-lg border border-dashed border-violet-300/30 px-3 py-2.5 text-xs text-violet-200 transition hover:bg-violet-300/5 disabled:opacity-40"
-        >
-          ＋ 添加另一个时间片段
-        </button>
+        {!timelineSelection && (
+          <button
+            type="button"
+            disabled={segments.length >= 4}
+            onClick={addSegment}
+            className="w-full rounded-lg border border-dashed border-cyan-300/30 px-3 py-2.5 text-xs text-cyan-200 transition-none hover:bg-cyan-300/5 disabled:opacity-40"
+          >
+            ＋ 添加另一个时间片段
+          </button>
+        )}
 
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="text-xs text-slate-400">
@@ -679,18 +788,25 @@ export function VideoEditWorkspace({
                 提交后进入总生成队列
               </p>
               <p className="mt-1 text-[11px] text-slate-500">
-                Ref2VA 与普通生成共享单 GPU 队列，任务会按顺序执行。
+                {timelineSelection
+                  ? "在片段版本中查看进度，完成后可选用修改版并重新合片。"
+                  : "在视频任务列表查看进度和修改结果。"}
               </p>
             </div>
             <button
               type="button"
               disabled={
-                createEditMutation.isPending || preparingSegmentId !== null
+                busy ||
+                submitting ||
+                createEditMutation.isPending ||
+                preparingSegmentId !== null
               }
               onClick={() => void submitEdit()}
-              className="rounded-lg bg-violet-300 px-5 py-2.5 text-xs font-semibold text-slate-950 transition hover:bg-violet-200 disabled:cursor-not-allowed disabled:opacity-45"
+              className="rounded-lg bg-cyan-300 px-5 py-2.5 text-xs font-semibold text-slate-950 transition-none hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-45"
             >
-              {createEditMutation.isPending ? "正在创建…" : "提交修改任务"}
+              {submitting || createEditMutation.isPending
+                ? "正在创建…"
+                : "提交修改任务"}
             </button>
           </div>
           {message && (
@@ -702,7 +818,7 @@ export function VideoEditWorkspace({
             </p>
           )}
         </div>
-      </div>
+      </fieldset>
     </section>
   );
 }

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 
 import {
@@ -141,6 +142,415 @@ function AuthenticatedVideoScriptStudio({
     deleteScript,
     bridgeLastFrame,
   } = useVideoScriptStudio(initialScriptId, imageAssetIds);
+  const [focusedShotId, setFocusedShotId] = useState<string | null>(null);
+  const focusedShot =
+    shots.find((shot) => shot.id === focusedShotId) ?? shots[0];
+  const shotSettings = (
+    <div className="divide-y divide-slate-800">
+      {shots.flatMap((shot, index) => {
+        if (shot.id !== focusedShot?.id) return [];
+        const latestJob = jobsByShot.get(shot.id)?.[0];
+        const frameJobs =
+          scriptQuery.data?.shotFrameCandidates.jobs.filter(
+            (job) => job.scriptShotId === shot.id,
+          ) ?? [];
+        const frameJobIds = new Set(frameJobs.map((job) => job.id));
+        const frameAssets =
+          scriptQuery.data?.shotFrameCandidates.assets.filter(
+            (asset) => asset.jobId && frameJobIds.has(asset.jobId),
+          ) ?? [];
+        const activeFrameJob = frameJobs.find((job) =>
+          ["queued", "running"].includes(job.status),
+        );
+        const failedFrameJob = frameJobs.find((job) => job.status === "failed");
+        const shotIssues = scriptIssues.filter(
+          (issue) => issue.shotId === shot.id,
+        );
+        return (
+          <article
+            id={`shot-${shot.id}`}
+            key={shot.id}
+            className="scroll-mt-5 p-5 sm:p-6"
+          >
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                type="checkbox"
+                checked={selectedShotIds.includes(shot.id)}
+                onChange={(event) =>
+                  setSelectedShotIds((current) =>
+                    event.target.checked
+                      ? [...current, shot.id]
+                      : current.filter((id) => id !== shot.id),
+                  )
+                }
+                aria-label={`选择镜头 ${index + 1}`}
+                className="size-4 accent-amber-300"
+              />
+              <span className="font-mono text-xs text-amber-300">
+                {String(index + 1).padStart(2, "0")}
+              </span>
+              <input
+                value={shot.title}
+                onChange={(event) =>
+                  updateShot(shot.id, {
+                    title: event.target.value,
+                  })
+                }
+                className="min-w-44 flex-1 bg-transparent font-medium outline-none"
+                aria-label={`镜头 ${index + 1} 标题`}
+              />
+              <label className="flex items-center gap-2 text-xs text-slate-500">
+                时长
+                <input
+                  type="number"
+                  min={5}
+                  max={Math.min(
+                    MEDIA_H3_SCRIPT_SHOT_SECONDS,
+                    60 - (totalDuration - shot.durationSeconds),
+                  )}
+                  step={1}
+                  value={shot.durationSeconds}
+                  onChange={(event) =>
+                    updateShot(shot.id, {
+                      durationSeconds: Math.min(
+                        Number(event.target.value),
+                        MEDIA_H3_SCRIPT_SHOT_SECONDS,
+                        60 - (totalDuration - shot.durationSeconds),
+                      ),
+                    })
+                  }
+                  className="w-16 border border-slate-800 bg-slate-900 px-2 py-1 text-right font-mono text-xs text-slate-300 outline-none focus:border-amber-300"
+                  aria-label={`镜头 ${index + 1} 时长`}
+                />
+                秒
+              </label>
+              {latestJob && (
+                <span
+                  className={`border px-2 py-1 text-[10px] ${latestJob.status === "succeeded" ? "border-emerald-400/30 text-emerald-300" : latestJob.status === "failed" ? "border-rose-400/30 text-rose-300" : "border-cyan-400/30 text-cyan-300"}`}
+                >
+                  {latestJob.kind === "edit" ? "修改" : "生成"} ·{" "}
+                  {latestJob.status}
+                </span>
+              )}
+              {(shot.selectedGenerationJobId ??
+                latestJob?.status === "succeeded") &&
+                index < shots.length - 1 && (
+                  <button
+                    type="button"
+                    onClick={() => void bridgeLastFrame(shot.id)}
+                    disabled={bridgeMutation.isPending}
+                    className="border border-amber-300/30 px-2 py-1 text-[10px] text-amber-200 disabled:opacity-40"
+                  >
+                    末帧 → 下一镜
+                  </button>
+                )}
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  onClick={() => moveShot(index, -1)}
+                  disabled={index === 0}
+                  className="px-2 py-1 text-xs text-slate-500 disabled:opacity-20"
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  onClick={() => moveShot(index, 1)}
+                  disabled={index === shots.length - 1}
+                  className="px-2 py-1 text-xs text-slate-500 disabled:opacity-20"
+                >
+                  ↓
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeShot(shot.id)}
+                  className="px-2 py-1 text-xs text-rose-300"
+                >
+                  删除
+                </button>
+              </div>
+            </div>
+
+            <section className="mt-5 border-y border-slate-800 bg-slate-900/30 py-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 px-1">
+                <div>
+                  <p className="text-xs font-medium text-slate-300">首帧候选</p>
+                  <p className="mt-1 text-[11px] text-slate-600">
+                    HiDream 按当前镜头与连续性设定生成 4 个开场构图
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void createFrameCandidates(shot.id)}
+                  disabled={
+                    copyStatus !== "approved" ||
+                    Boolean(activeFrameJob) ||
+                    generating
+                  }
+                  className="border border-cyan-300/30 px-3 py-2 text-xs text-cyan-200 hover:bg-cyan-300/10 disabled:opacity-30"
+                >
+                  {activeFrameJob
+                    ? `生成中 · ${activeFrameJob.status}`
+                    : frameAssets.length > 0
+                      ? "再生成 4 张"
+                      : "生成 4 张首帧"}
+                </button>
+              </div>
+              {copyStatus !== "approved" && (
+                <p className="mt-3 px-1 text-xs text-amber-200/70">
+                  先确认上方文案，才能生成首帧候选。
+                </p>
+              )}
+              {failedFrameJob?.errorMessage && !activeFrameJob && (
+                <p className="mt-3 px-1 text-xs text-rose-300">
+                  上次生成失败：{failedFrameJob.errorMessage}
+                </p>
+              )}
+              {frameAssets.length > 0 && (
+                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {frameAssets.map((asset) => {
+                    const selected = shot.firstFrameAssetId === asset.id;
+                    return (
+                      <button
+                        key={asset.id}
+                        type="button"
+                        onClick={() =>
+                          void selectFrameCandidate(shot.id, asset.id)
+                        }
+                        className={`group relative aspect-video overflow-hidden border text-left ${selected ? "border-amber-300 ring-1 ring-amber-300" : "border-slate-700 hover:border-cyan-300"}`}
+                        aria-label={`选择 ${shot.title} 的首帧 ${asset.filename}`}
+                      >
+                        <img
+                          src={asset.url}
+                          alt={asset.filename}
+                          className="size-full object-cover transition duration-200 group-hover:scale-[1.02]"
+                        />
+                        <span
+                          className={`absolute right-1 bottom-1 px-2 py-1 text-[10px] ${selected ? "bg-amber-300 text-slate-950" : "bg-slate-950/80 text-slate-300"}`}
+                        >
+                          {selected ? "已选首帧" : "选用"}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
+            <div className="mt-5 grid gap-4 lg:grid-cols-2">
+              <label className="block text-xs text-slate-500 lg:col-span-2">
+                画面与动作
+                <textarea
+                  value={shot.visualDescription}
+                  onChange={(event) =>
+                    updateShot(shot.id, {
+                      visualDescription: event.target.value,
+                    })
+                  }
+                  rows={4}
+                  className="mt-2 w-full resize-y border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm leading-6 text-slate-200 outline-none focus:border-amber-300"
+                />
+              </label>
+              <label className="block text-xs text-slate-500">
+                摄影指令
+                <textarea
+                  value={shot.cameraDirection}
+                  onChange={(event) =>
+                    updateShot(shot.id, {
+                      cameraDirection: event.target.value,
+                    })
+                  }
+                  rows={3}
+                  className="mt-2 w-full resize-y border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm leading-6 outline-none focus:border-amber-300"
+                />
+              </label>
+              <label className="block text-xs text-slate-500">
+                连续性 / 结束构图
+                <textarea
+                  value={shot.continuity}
+                  onChange={(event) =>
+                    updateShot(shot.id, {
+                      continuity: event.target.value,
+                    })
+                  }
+                  rows={3}
+                  className="mt-2 w-full resize-y border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm leading-6 outline-none focus:border-amber-300"
+                />
+              </label>
+              <label className="block text-xs text-slate-500">
+                环境声
+                <input
+                  value={shot.soundscape}
+                  onChange={(event) =>
+                    updateShot(shot.id, {
+                      soundscape: event.target.value,
+                    })
+                  }
+                  className="mt-2 w-full border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm outline-none focus:border-amber-300"
+                />
+              </label>
+              <label className="block text-xs text-slate-500">
+                配乐
+                <input
+                  value={shot.music}
+                  onChange={(event) =>
+                    updateShot(shot.id, {
+                      music: event.target.value,
+                    })
+                  }
+                  className="mt-2 w-full border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm outline-none focus:border-amber-300"
+                />
+              </label>
+            </div>
+
+            <div className="mt-4 border-l border-slate-700 pl-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500">H3 原始人声台词</span>
+                <button
+                  type="button"
+                  onClick={() => addDialogue(shot)}
+                  className="text-xs text-cyan-300"
+                >
+                  + 台词
+                </button>
+              </div>
+              <div className="mt-2 grid gap-2">
+                {shot.dialogues.map((dialogue) => (
+                  <div
+                    key={dialogue.id}
+                    className="grid gap-2 sm:grid-cols-[70px_72px_minmax(0,1fr)_auto]"
+                  >
+                    <select
+                      value={dialogue.speakerId}
+                      onChange={(event) =>
+                        updateShot(shot.id, {
+                          dialogues: shot.dialogues.map((line) =>
+                            line.id === dialogue.id
+                              ? {
+                                  ...line,
+                                  speakerId: event.target
+                                    .value as typeof line.speakerId,
+                                }
+                              : line,
+                          ),
+                        })
+                      }
+                      className="border border-slate-800 bg-slate-900 px-2 py-2 text-xs"
+                    >
+                      <option>S1</option>
+                      <option>S2</option>
+                      <option>S3</option>
+                      <option>S4</option>
+                    </select>
+                    <input
+                      type="number"
+                      min={0}
+                      max={Math.max(0, shot.durationSeconds - 0.1)}
+                      step={0.1}
+                      value={dialogue.atSeconds}
+                      onChange={(event) =>
+                        updateShot(shot.id, {
+                          dialogues: shot.dialogues.map((line) =>
+                            line.id === dialogue.id
+                              ? {
+                                  ...line,
+                                  atSeconds: Number(event.target.value),
+                                }
+                              : line,
+                          ),
+                        })
+                      }
+                      className="border border-slate-800 bg-slate-900 px-2 py-2 text-xs"
+                      aria-label="台词时间"
+                    />
+                    <input
+                      value={dialogue.text}
+                      onChange={(event) =>
+                        updateShot(shot.id, {
+                          dialogues: shot.dialogues.map((line) =>
+                            line.id === dialogue.id
+                              ? {
+                                  ...line,
+                                  text: event.target.value,
+                                }
+                              : line,
+                          ),
+                        })
+                      }
+                      placeholder="逐字台词"
+                      className="border border-slate-800 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-300"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateShot(shot.id, {
+                          dialogues: shot.dialogues.filter(
+                            (line) => line.id !== dialogue.id,
+                          ),
+                        })
+                      }
+                      className="px-2 text-xs text-rose-300"
+                    >
+                      ×
+                    </button>
+                    <select
+                      aria-label="台词呈现方式"
+                      value={dialogue.delivery ?? "on_screen"}
+                      onChange={(event) =>
+                        updateShot(shot.id, {
+                          dialogues: shot.dialogues.map((line) =>
+                            line.id === dialogue.id
+                              ? {
+                                  ...line,
+                                  delivery: event.target.value as
+                                    | "on_screen"
+                                    | "off_screen_voiceover",
+                                }
+                              : line,
+                          ),
+                        })
+                      }
+                      className="border border-slate-800 bg-slate-900 px-2 py-2 text-xs sm:col-span-2"
+                    >
+                      <option value="on_screen">人物对白</option>
+                      <option value="off_screen_voiceover">画外旁白</option>
+                    </select>
+                    <input
+                      aria-label="音色描述"
+                      value={dialogue.voice ?? ""}
+                      onChange={(event) =>
+                        updateShot(shot.id, {
+                          dialogues: shot.dialogues.map((line) =>
+                            line.id === dialogue.id
+                              ? {
+                                  ...line,
+                                  voice: event.target.value || undefined,
+                                }
+                              : line,
+                          ),
+                        })
+                      }
+                      placeholder="音色与语气，同一说话人保持相同描述"
+                      className="border border-slate-800 bg-slate-900 px-3 py-2 text-xs sm:col-span-2"
+                    />
+                  </div>
+                ))}
+              </div>
+              {shotIssues.length > 0 && (
+                <div className="mt-3 border-l-2 border-amber-300/50 bg-amber-300/5 px-3 py-2 text-xs leading-5 text-amber-100">
+                  {shotIssues.map((issue) => (
+                    <p key={`${issue.code}-${issue.dialogueId ?? shot.id}`}>
+                      {issue.message}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
   return (
     <main className="min-h-dvh bg-slate-950 p-4 text-slate-100 sm:p-6">
       <div className="mx-auto max-w-[1720px]">
@@ -153,7 +563,7 @@ function AuthenticatedVideoScriptStudio({
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
               默认按 15 秒拆成独立 H3
               生成单元，仅最后一个尾镜头可按剩余时长缩短。
-              确认画面、台词和连续性后，逐镜生成、预览、修改并选定成片版本。
+              在整片时间轴上配置画面、台词与连续性，选定片段版本后连续预览并合片。
             </p>
           </div>
           <nav className="flex flex-wrap gap-2" aria-label="创作工具">
@@ -365,6 +775,45 @@ function AuthenticatedVideoScriptStudio({
 
                   <DirectorStage
                     shots={shots}
+                    shotSettings={shotSettings}
+                    timelineActions={
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShots((current) => [
+                            ...current,
+                            {
+                              ...emptyShot(current.length + 1),
+                              durationSeconds: Math.min(
+                                MEDIA_H3_SCRIPT_SHOT_SECONDS,
+                                60 -
+                                  current.reduce(
+                                    (sum, item) => sum + item.durationSeconds,
+                                    0,
+                                  ),
+                              ),
+                            },
+                          ]);
+                          markDirty();
+                        }}
+                        disabled={shots.length >= 12 || totalDuration > 55}
+                        className="rounded-md bg-slate-800 px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 disabled:opacity-30"
+                      >
+                        + 添加镜头
+                      </button>
+                    }
+                    selectedShotId={focusedShot?.id ?? null}
+                    onSelectShot={setFocusedShotId}
+                    onReorder={(from, to) => {
+                      if (from === to) return;
+                      setShots((current) => {
+                        const next = [...current];
+                        const [item] = next.splice(from, 1);
+                        if (item) next.splice(to, 0, item);
+                        return next;
+                      });
+                      markDirty();
+                    }}
                     jobsByShot={jobsByShot}
                     assembledJob={
                       scriptQuery.data?.assembledJob
@@ -397,463 +846,6 @@ function AuthenticatedVideoScriptStudio({
                       );
                     }}
                   />
-
-                  <div className="divide-y divide-slate-800">
-                    {shots.map((shot, index) => {
-                      const latestJob = jobsByShot.get(shot.id)?.[0];
-                      const frameJobs =
-                        scriptQuery.data?.shotFrameCandidates.jobs.filter(
-                          (job) => job.scriptShotId === shot.id,
-                        ) ?? [];
-                      const frameJobIds = new Set(
-                        frameJobs.map((job) => job.id),
-                      );
-                      const frameAssets =
-                        scriptQuery.data?.shotFrameCandidates.assets.filter(
-                          (asset) =>
-                            asset.jobId && frameJobIds.has(asset.jobId),
-                        ) ?? [];
-                      const activeFrameJob = frameJobs.find((job) =>
-                        ["queued", "running"].includes(job.status),
-                      );
-                      const failedFrameJob = frameJobs.find(
-                        (job) => job.status === "failed",
-                      );
-                      const shotIssues = scriptIssues.filter(
-                        (issue) => issue.shotId === shot.id,
-                      );
-                      return (
-                        <article
-                          id={`shot-${shot.id}`}
-                          key={shot.id}
-                          className="scroll-mt-5 p-5 sm:p-6"
-                        >
-                          <div className="flex flex-wrap items-center gap-3">
-                            <input
-                              type="checkbox"
-                              checked={selectedShotIds.includes(shot.id)}
-                              onChange={(event) =>
-                                setSelectedShotIds((current) =>
-                                  event.target.checked
-                                    ? [...current, shot.id]
-                                    : current.filter((id) => id !== shot.id),
-                                )
-                              }
-                              aria-label={`选择镜头 ${index + 1}`}
-                              className="size-4 accent-amber-300"
-                            />
-                            <span className="font-mono text-xs text-amber-300">
-                              {String(index + 1).padStart(2, "0")}
-                            </span>
-                            <input
-                              value={shot.title}
-                              onChange={(event) =>
-                                updateShot(shot.id, {
-                                  title: event.target.value,
-                                })
-                              }
-                              className="min-w-44 flex-1 bg-transparent font-medium outline-none"
-                              aria-label={`镜头 ${index + 1} 标题`}
-                            />
-                            <label className="flex items-center gap-2 text-xs text-slate-500">
-                              时长
-                              <input
-                                type="number"
-                                min={5}
-                                max={Math.min(
-                                  MEDIA_H3_SCRIPT_SHOT_SECONDS,
-                                  60 - (totalDuration - shot.durationSeconds),
-                                )}
-                                step={1}
-                                value={shot.durationSeconds}
-                                onChange={(event) =>
-                                  updateShot(shot.id, {
-                                    durationSeconds: Math.min(
-                                      Number(event.target.value),
-                                      MEDIA_H3_SCRIPT_SHOT_SECONDS,
-                                      60 -
-                                        (totalDuration - shot.durationSeconds),
-                                    ),
-                                  })
-                                }
-                                className="w-16 border border-slate-800 bg-slate-900 px-2 py-1 text-right font-mono text-xs text-slate-300 outline-none focus:border-amber-300"
-                                aria-label={`镜头 ${index + 1} 时长`}
-                              />
-                              秒
-                            </label>
-                            {latestJob && (
-                              <span
-                                className={`border px-2 py-1 text-[10px] ${latestJob.status === "succeeded" ? "border-emerald-400/30 text-emerald-300" : latestJob.status === "failed" ? "border-rose-400/30 text-rose-300" : "border-cyan-400/30 text-cyan-300"}`}
-                              >
-                                {latestJob.kind === "edit" ? "修改" : "生成"} ·{" "}
-                                {latestJob.status}
-                              </span>
-                            )}
-                            {(shot.selectedGenerationJobId ??
-                              latestJob?.status === "succeeded") &&
-                              index < shots.length - 1 && (
-                                <button
-                                  type="button"
-                                  onClick={() => void bridgeLastFrame(shot.id)}
-                                  disabled={bridgeMutation.isPending}
-                                  className="border border-amber-300/30 px-2 py-1 text-[10px] text-amber-200 disabled:opacity-40"
-                                >
-                                  末帧 → 下一镜
-                                </button>
-                              )}
-                            <div className="flex gap-1">
-                              <button
-                                type="button"
-                                onClick={() => moveShot(index, -1)}
-                                disabled={index === 0}
-                                className="px-2 py-1 text-xs text-slate-500 disabled:opacity-20"
-                              >
-                                ↑
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => moveShot(index, 1)}
-                                disabled={index === shots.length - 1}
-                                className="px-2 py-1 text-xs text-slate-500 disabled:opacity-20"
-                              >
-                                ↓
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => removeShot(shot.id)}
-                                className="px-2 py-1 text-xs text-rose-300"
-                              >
-                                删除
-                              </button>
-                            </div>
-                          </div>
-
-                          <section className="mt-5 border-y border-slate-800 bg-slate-900/30 py-4">
-                            <div className="flex flex-wrap items-center justify-between gap-3 px-1">
-                              <div>
-                                <p className="text-xs font-medium text-slate-300">
-                                  首帧候选
-                                </p>
-                                <p className="mt-1 text-[11px] text-slate-600">
-                                  HiDream 按当前镜头与连续性设定生成 4
-                                  个开场构图
-                                </p>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void createFrameCandidates(shot.id)
-                                }
-                                disabled={
-                                  copyStatus !== "approved" ||
-                                  Boolean(activeFrameJob) ||
-                                  generating
-                                }
-                                className="border border-cyan-300/30 px-3 py-2 text-xs text-cyan-200 hover:bg-cyan-300/10 disabled:opacity-30"
-                              >
-                                {activeFrameJob
-                                  ? `生成中 · ${activeFrameJob.status}`
-                                  : frameAssets.length > 0
-                                    ? "再生成 4 张"
-                                    : "生成 4 张首帧"}
-                              </button>
-                            </div>
-                            {copyStatus !== "approved" && (
-                              <p className="mt-3 px-1 text-xs text-amber-200/70">
-                                先确认上方文案，才能生成首帧候选。
-                              </p>
-                            )}
-                            {failedFrameJob?.errorMessage &&
-                              !activeFrameJob && (
-                                <p className="mt-3 px-1 text-xs text-rose-300">
-                                  上次生成失败：{failedFrameJob.errorMessage}
-                                </p>
-                              )}
-                            {frameAssets.length > 0 && (
-                              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                                {frameAssets.map((asset) => {
-                                  const selected =
-                                    shot.firstFrameAssetId === asset.id;
-                                  return (
-                                    <button
-                                      key={asset.id}
-                                      type="button"
-                                      onClick={() =>
-                                        void selectFrameCandidate(
-                                          shot.id,
-                                          asset.id,
-                                        )
-                                      }
-                                      className={`group relative aspect-video overflow-hidden border text-left ${selected ? "border-amber-300 ring-1 ring-amber-300" : "border-slate-700 hover:border-cyan-300"}`}
-                                      aria-label={`选择 ${shot.title} 的首帧 ${asset.filename}`}
-                                    >
-                                      <img
-                                        src={asset.url}
-                                        alt={asset.filename}
-                                        className="size-full object-cover transition duration-200 group-hover:scale-[1.02]"
-                                      />
-                                      <span
-                                        className={`absolute right-1 bottom-1 px-2 py-1 text-[10px] ${selected ? "bg-amber-300 text-slate-950" : "bg-slate-950/80 text-slate-300"}`}
-                                      >
-                                        {selected ? "已选首帧" : "选用"}
-                                      </span>
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </section>
-
-                          <div className="mt-5 grid gap-4 lg:grid-cols-2">
-                            <label className="block text-xs text-slate-500 lg:col-span-2">
-                              画面与动作
-                              <textarea
-                                value={shot.visualDescription}
-                                onChange={(event) =>
-                                  updateShot(shot.id, {
-                                    visualDescription: event.target.value,
-                                  })
-                                }
-                                rows={4}
-                                className="mt-2 w-full resize-y border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm leading-6 text-slate-200 outline-none focus:border-amber-300"
-                              />
-                            </label>
-                            <label className="block text-xs text-slate-500">
-                              摄影指令
-                              <textarea
-                                value={shot.cameraDirection}
-                                onChange={(event) =>
-                                  updateShot(shot.id, {
-                                    cameraDirection: event.target.value,
-                                  })
-                                }
-                                rows={3}
-                                className="mt-2 w-full resize-y border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm leading-6 outline-none focus:border-amber-300"
-                              />
-                            </label>
-                            <label className="block text-xs text-slate-500">
-                              连续性 / 结束构图
-                              <textarea
-                                value={shot.continuity}
-                                onChange={(event) =>
-                                  updateShot(shot.id, {
-                                    continuity: event.target.value,
-                                  })
-                                }
-                                rows={3}
-                                className="mt-2 w-full resize-y border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm leading-6 outline-none focus:border-amber-300"
-                              />
-                            </label>
-                            <label className="block text-xs text-slate-500">
-                              环境声
-                              <input
-                                value={shot.soundscape}
-                                onChange={(event) =>
-                                  updateShot(shot.id, {
-                                    soundscape: event.target.value,
-                                  })
-                                }
-                                className="mt-2 w-full border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm outline-none focus:border-amber-300"
-                              />
-                            </label>
-                            <label className="block text-xs text-slate-500">
-                              配乐
-                              <input
-                                value={shot.music}
-                                onChange={(event) =>
-                                  updateShot(shot.id, {
-                                    music: event.target.value,
-                                  })
-                                }
-                                className="mt-2 w-full border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm outline-none focus:border-amber-300"
-                              />
-                            </label>
-                          </div>
-
-                          <div className="mt-4 border-l border-slate-700 pl-4">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs text-slate-500">
-                                H3 原始人声台词
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => addDialogue(shot)}
-                                className="text-xs text-cyan-300"
-                              >
-                                + 台词
-                              </button>
-                            </div>
-                            <div className="mt-2 grid gap-2">
-                              {shot.dialogues.map((dialogue) => (
-                                <div
-                                  key={dialogue.id}
-                                  className="grid gap-2 sm:grid-cols-[70px_72px_minmax(0,1fr)_auto]"
-                                >
-                                  <select
-                                    value={dialogue.speakerId}
-                                    onChange={(event) =>
-                                      updateShot(shot.id, {
-                                        dialogues: shot.dialogues.map((line) =>
-                                          line.id === dialogue.id
-                                            ? {
-                                                ...line,
-                                                speakerId: event.target
-                                                  .value as typeof line.speakerId,
-                                              }
-                                            : line,
-                                        ),
-                                      })
-                                    }
-                                    className="border border-slate-800 bg-slate-900 px-2 py-2 text-xs"
-                                  >
-                                    <option>S1</option>
-                                    <option>S2</option>
-                                    <option>S3</option>
-                                    <option>S4</option>
-                                  </select>
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    max={Math.max(
-                                      0,
-                                      shot.durationSeconds - 0.1,
-                                    )}
-                                    step={0.1}
-                                    value={dialogue.atSeconds}
-                                    onChange={(event) =>
-                                      updateShot(shot.id, {
-                                        dialogues: shot.dialogues.map((line) =>
-                                          line.id === dialogue.id
-                                            ? {
-                                                ...line,
-                                                atSeconds: Number(
-                                                  event.target.value,
-                                                ),
-                                              }
-                                            : line,
-                                        ),
-                                      })
-                                    }
-                                    className="border border-slate-800 bg-slate-900 px-2 py-2 text-xs"
-                                    aria-label="台词时间"
-                                  />
-                                  <input
-                                    value={dialogue.text}
-                                    onChange={(event) =>
-                                      updateShot(shot.id, {
-                                        dialogues: shot.dialogues.map((line) =>
-                                          line.id === dialogue.id
-                                            ? {
-                                                ...line,
-                                                text: event.target.value,
-                                              }
-                                            : line,
-                                        ),
-                                      })
-                                    }
-                                    placeholder="逐字台词"
-                                    className="border border-slate-800 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-300"
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      updateShot(shot.id, {
-                                        dialogues: shot.dialogues.filter(
-                                          (line) => line.id !== dialogue.id,
-                                        ),
-                                      })
-                                    }
-                                    className="px-2 text-xs text-rose-300"
-                                  >
-                                    ×
-                                  </button>
-                                  <select
-                                    aria-label="台词呈现方式"
-                                    value={dialogue.delivery ?? "on_screen"}
-                                    onChange={(event) =>
-                                      updateShot(shot.id, {
-                                        dialogues: shot.dialogues.map((line) =>
-                                          line.id === dialogue.id
-                                            ? {
-                                                ...line,
-                                                delivery: event.target.value as
-                                                  | "on_screen"
-                                                  | "off_screen_voiceover",
-                                              }
-                                            : line,
-                                        ),
-                                      })
-                                    }
-                                    className="border border-slate-800 bg-slate-900 px-2 py-2 text-xs sm:col-span-2"
-                                  >
-                                    <option value="on_screen">人物对白</option>
-                                    <option value="off_screen_voiceover">
-                                      画外旁白
-                                    </option>
-                                  </select>
-                                  <input
-                                    aria-label="音色描述"
-                                    value={dialogue.voice ?? ""}
-                                    onChange={(event) =>
-                                      updateShot(shot.id, {
-                                        dialogues: shot.dialogues.map((line) =>
-                                          line.id === dialogue.id
-                                            ? {
-                                                ...line,
-                                                voice:
-                                                  event.target.value ||
-                                                  undefined,
-                                              }
-                                            : line,
-                                        ),
-                                      })
-                                    }
-                                    placeholder="音色与语气，同一说话人保持相同描述"
-                                    className="border border-slate-800 bg-slate-900 px-3 py-2 text-xs sm:col-span-2"
-                                  />
-                                </div>
-                              ))}
-                            </div>
-                            {shotIssues.length > 0 && (
-                              <div className="mt-3 border-l-2 border-amber-300/50 bg-amber-300/5 px-3 py-2 text-xs leading-5 text-amber-100">
-                                {shotIssues.map((issue) => (
-                                  <p
-                                    key={`${issue.code}-${issue.dialogueId ?? shot.id}`}
-                                  >
-                                    {issue.message}
-                                  </p>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </article>
-                      );
-                    })}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShots((current) => [
-                          ...current,
-                          {
-                            ...emptyShot(current.length + 1),
-                            durationSeconds: Math.min(
-                              MEDIA_H3_SCRIPT_SHOT_SECONDS,
-                              60 -
-                                current.reduce(
-                                  (sum, item) => sum + item.durationSeconds,
-                                  0,
-                                ),
-                            ),
-                          },
-                        ]);
-                        markDirty();
-                      }}
-                      disabled={shots.length >= 12 || totalDuration > 55}
-                      className="w-full px-6 py-5 text-left text-sm text-slate-500 hover:bg-slate-900 hover:text-amber-200 disabled:opacity-30"
-                    >
-                      + 添加镜头
-                    </button>
-                  </div>
                 </fieldset>
               </form>
             )}
