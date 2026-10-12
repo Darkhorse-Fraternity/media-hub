@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import importlib.util
 import base64
+import json
 import sys
 import threading
 import types
 import unittest
+from tempfile import TemporaryDirectory
 from pathlib import Path
 
 
@@ -266,6 +268,22 @@ class Ref2VAWorkflowTests(unittest.TestCase):
 
 
 class HiDreamImageWorkflowTests(unittest.TestCase):
+    def test_active_image_jobs_block_shared_backend_unload(self) -> None:
+        profile = hidream_profile()
+        service = object.__new__(provider.ProviderService)
+        with TemporaryDirectory() as root:
+            service.config = types.SimpleNamespace(
+                profiles={profile.name: profile}, state_root=Path(root),
+            )
+            path = Path(root) / "gmjob_image"
+            path.mkdir()
+            for status in ("queued", "running", "canceling", "succeeded"):
+                with self.subTest(status=status):
+                    job = {"status": status, "request": {"generation_spec": {"profile": profile.name}}}
+                    (path / "job.json").write_text(json.dumps(job))
+                    self.assertEqual(service._has_active_h3_jobs_locked(), status != "succeeded")
+            self.assertTrue(service._has_h3_profiles())
+
     def test_profile_uses_checkpoint_loader(self) -> None:
         profile = hidream_profile()
         self.assertEqual(
