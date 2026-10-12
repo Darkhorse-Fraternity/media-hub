@@ -307,10 +307,24 @@ class HiDreamImageWorkflowTests(unittest.TestCase):
         self.assertEqual(workflow["21"]["inputs"]["image"], "job/one.png")
         self.assertEqual(workflow["22"]["inputs"]["image"], "job/two.png")
         self.assertEqual(
-            workflow["19"]["inputs"]["images"],
-            {"image_1": ["21", 0], "image_2": ["22", 0]},
+            workflow["19"]["inputs"],
+            {"positive": ["2", 0], "negative": ["3", 0],
+             "images.image_1": ["21", 0], "images.image_2": ["22", 0]},
         )
         self.assertEqual(workflow["9"]["inputs"]["positive"], ["19", 0])
+
+    def test_single_reference_supplies_v3_autogrow_required_input(self) -> None:
+        workflow = provider._build_comfyui_hidream_o1_image_prompt(
+            hidream_profile(), reference_image_refs=["job/one.png"],
+            positive="Remove the train", negative="text", width=1344, height=768,
+            seed=8, filename_prefix="test/hidream-edit", steps=20, cfg=5,
+        )
+        inputs = workflow["19"]["inputs"]
+        # V3 expands the required Autogrow image_1 to this API-level path;
+        # sending a nested images dict fails validation before GPU execution.
+        self.assertEqual(inputs["images.image_1"], ["21", 0])
+        self.assertNotIn("images", inputs)
+        self.assertNotIn("images.image_2", inputs)
 
     def test_request_allows_text_to_image_without_source_artifacts(self) -> None:
         profile = hidream_profile()

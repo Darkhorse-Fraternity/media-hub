@@ -1476,13 +1476,15 @@ def _build_comfyui_hidream_o1_image_prompt(
                 "class_type": "LoadImage",
                 "inputs": {"image": image_ref},
             }
-            image_inputs[f"image_{index}"] = [node_id, 0]
+            # ComfyUI V3 Autogrow inputs use flattened API keys. The runtime
+            # reconstructs the nested `images` dictionary before node.execute.
+            image_inputs[f"images.image_{index}"] = [node_id, 0]
         nodes["19"] = {
             "class_type": "HiDreamO1ReferenceImages",
             "inputs": {
                 "positive": ["2", 0],
                 "negative": ["3", 0],
-                "images": image_inputs,
+                **image_inputs,
             },
         }
         positive_ref = ["19", 0]
