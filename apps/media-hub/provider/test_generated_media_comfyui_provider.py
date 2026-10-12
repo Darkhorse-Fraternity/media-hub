@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import base64
+from dataclasses import replace
 import json
 import sys
 import threading
@@ -283,6 +284,17 @@ class HiDreamImageWorkflowTests(unittest.TestCase):
                     (path / "job.json").write_text(json.dumps(job))
                     self.assertEqual(service._has_active_h3_jobs_locked(), status != "succeeded")
             self.assertTrue(service._has_h3_profiles())
+
+    def test_turbo_video_can_bind_an_image_first_frame(self) -> None:
+        profile = replace(official_i2v_profile(), adapter=provider.COMFYUI_H3_ADAPTER_KIND)
+        workflow = provider._build_comfyui_h3_prompt(
+            profile, first_frame_ref="job/first.png", reference_image_refs=[],
+            reference_roles=[], positive="Move forward along the railway",
+            width=1344, height=768, length=194, seed=7,
+            filename_prefix="test/turbo-first-frame", steps=6, fps=24,
+        )
+        self.assertEqual(workflow["20"]["inputs"]["image"], "job/first.png")
+        self.assertEqual(workflow["30"]["inputs"]["first_frame"], ["20", 0])
 
     def test_profile_uses_checkpoint_loader(self) -> None:
         profile = hidream_profile()
