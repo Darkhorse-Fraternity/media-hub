@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import importlib.util
 import base64
+from dataclasses import replace
+import json
 import sys
 import threading
 import types
 import unittest
+from tempfile import TemporaryDirectory
 from pathlib import Path
 
 
@@ -338,6 +341,33 @@ class Ref2VAWorkflowTests(unittest.TestCase):
 
 
 class HiDreamImageWorkflowTests(unittest.TestCase):
+    def test_active_image_jobs_block_shared_backend_unload(self) -> None:
+        profile = hidream_profile()
+        service = object.__new__(provider.ProviderService)
+        with TemporaryDirectory() as root:
+            service.config = types.SimpleNamespace(
+                profiles={profile.name: profile}, state_root=Path(root),
+            )
+            path = Path(root) / "gmjob_image"
+            path.mkdir()
+            for status in ("queued", "running", "canceling", "succeeded"):
+                with self.subTest(status=status):
+                    job = {"status": status, "request": {"generation_spec": {"profile": profile.name}}}
+                    (path / "job.json").write_text(json.dumps(job))
+                    self.assertEqual(service._has_active_h3_jobs_locked(), status != "succeeded")
+            self.assertTrue(service._has_h3_profiles())
+
+    def test_turbo_video_can_bind_an_image_first_frame(self) -> None:
+        profile = replace(official_i2v_profile(), adapter=provider.COMFYUI_H3_ADAPTER_KIND)
+        workflow = provider._build_comfyui_h3_prompt(
+            profile, first_frame_ref="job/first.png", reference_image_refs=[],
+            reference_roles=[], positive="Move forward along the railway",
+            width=1344, height=768, length=194, seed=7,
+            filename_prefix="test/turbo-first-frame", steps=6, fps=24,
+        )
+        self.assertEqual(workflow["20"]["inputs"]["image"], "job/first.png")
+        self.assertEqual(workflow["30"]["inputs"]["first_frame"], ["20", 0])
+
     def test_profile_uses_checkpoint_loader(self) -> None:
         profile = hidream_profile()
         self.assertEqual(
@@ -379,10 +409,24 @@ class HiDreamImageWorkflowTests(unittest.TestCase):
         self.assertEqual(workflow["21"]["inputs"]["image"], "job/one.png")
         self.assertEqual(workflow["22"]["inputs"]["image"], "job/two.png")
         self.assertEqual(
-            workflow["19"]["inputs"]["images"],
-            {"image_1": ["21", 0], "image_2": ["22", 0]},
+            workflow["19"]["inputs"],
+            {"positive": ["2", 0], "negative": ["3", 0],
+             "images.image_1": ["21", 0], "images.image_2": ["22", 0]},
         )
         self.assertEqual(workflow["9"]["inputs"]["positive"], ["19", 0])
+
+    def test_single_reference_supplies_v3_autogrow_required_input(self) -> None:
+        workflow = provider._build_comfyui_hidream_o1_image_prompt(
+            hidream_profile(), reference_image_refs=["job/one.png"],
+            positive="Remove the train", negative="text", width=1344, height=768,
+            seed=8, filename_prefix="test/hidream-edit", steps=20, cfg=5,
+        )
+        inputs = workflow["19"]["inputs"]
+        # V3 expands the required Autogrow image_1 to this API-level path;
+        # sending a nested images dict fails validation before GPU execution.
+        self.assertEqual(inputs["images.image_1"], ["21", 0])
+        self.assertNotIn("images", inputs)
+        self.assertNotIn("images.image_2", inputs)
 
     def test_request_allows_text_to_image_without_source_artifacts(self) -> None:
         profile = hidream_profile()
