@@ -1476,13 +1476,15 @@ def _build_comfyui_hidream_o1_image_prompt(
                 "class_type": "LoadImage",
                 "inputs": {"image": image_ref},
             }
-            image_inputs[f"image_{index}"] = [node_id, 0]
+            # ComfyUI V3 Autogrow inputs use flattened API keys. The runtime
+            # reconstructs the nested `images` dictionary before node.execute.
+            image_inputs[f"images.image_{index}"] = [node_id, 0]
         nodes["19"] = {
             "class_type": "HiDreamO1ReferenceImages",
             "inputs": {
                 "positive": ["2", 0],
                 "negative": ["3", 0],
-                "images": image_inputs,
+                **image_inputs,
             },
         }
         positive_ref = ["19", 0]
@@ -1703,7 +1705,9 @@ class ProviderService:
         request_checksum = _checksum(_canonical_json(request))
         profile_name = str(request.get("generation_spec", {}).get("profile") or "")
         profile = self.config.profiles.get(profile_name)
-        is_h3 = profile is not None and profile.adapter in H3_ADAPTER_KINDS
+        is_h3 = profile is not None and profile.adapter in {
+            *H3_ADAPTER_KINDS, COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+        }
         with self._lock:
             current = self._read_job(job_id)
             if current is not None:
@@ -2073,7 +2077,11 @@ class ProviderService:
             else {}
         )
         profile = self.config.profiles.get(str(spec.get("profile") or ""))
-        return profile is not None and profile.adapter in H3_ADAPTER_KINDS
+        # Legacy lifecycle name: HiDream uses the same ComfyUI process as H3.
+        # Restarting that process during an image job also destroys its queue.
+        return profile is not None and profile.adapter in {
+            *H3_ADAPTER_KINDS, COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+        }
 
     def _has_active_h3_jobs_locked(self) -> bool:
         for path in sorted(self.config.state_root.glob("gmjob_*/job.json")):
@@ -2098,7 +2106,7 @@ class ProviderService:
 
     def _has_h3_profiles(self) -> bool:
         return any(
-            profile.adapter in H3_ADAPTER_KINDS
+            profile.adapter in {*H3_ADAPTER_KINDS, COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND}
             for profile in self.config.profiles.values()
         )
 
