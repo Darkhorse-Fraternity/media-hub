@@ -16,6 +16,7 @@ import {
   GenerationOutputValidationError,
   validateGeneratedVideoOutput,
 } from "./generation-output-validation";
+import { prepareGenerationRetry } from "./generation-retry";
 import {
   GenerationSpeechValidationError,
   isSpeechValidationInfrastructureError,
@@ -40,6 +41,10 @@ import {
   checksumProviderValue,
   providerOrchestrationRunId,
 } from "./provider-contract";
+import {
+  ProviderJobWaitTimeoutError,
+  waitForGenerationProviderJob,
+} from "./provider-job-wait";
 import {
   ProviderRequestError,
   requestGenerationProvider,
@@ -149,6 +154,8 @@ interface ProviderSample {
 interface ProviderJob {
   job_id: string;
   status: string;
+  created_at?: string;
+  started_at?: string;
   error_message?: string;
   error_code?: string;
   failure_stage?: string;
@@ -179,6 +186,7 @@ function structuredGenerationFailure(error: unknown): {
 } {
   if (
     error instanceof GenerationProviderJobError ||
+    error instanceof ProviderJobWaitTimeoutError ||
     error instanceof GenerationOutputValidationError ||
     error instanceof GenerationSpeechValidationError
   ) {
@@ -238,6 +246,16 @@ async function providerRequest<T>(
       });
     },
   });
+}
+
+export function prepareMediaGenerationRetry(
+  job: typeof mediaGenerationJob.$inferSelect,
+) {
+  return prepareGenerationRetry(job, (id) =>
+    providerRequest<ProviderJob>(
+      `/v1/generated-media/jobs/${encodeURIComponent(id)}`,
+    ),
+  );
 }
 
 export async function getMediaGenerationProviderHealth(
@@ -476,7 +494,10 @@ async function createEditProviderJob(
   ];
   const payload = {
     schema_version: PROVIDER_CONTRACT,
-    orchestration_run_id: `${job.id}:${segment.id}`,
+    orchestration_run_id: `${providerOrchestrationRunId(
+      job.id,
+      job.startedAt ?? job.createdAt,
+    )}:${segment.id}`,
     project_id: "pumpkii-media-hub",
     attempt: 1,
     deficits: { main: 1 },
@@ -496,47 +517,51 @@ async function waitForProviderJob(
   providerJobId: string,
   mediaJobId: string,
 ): Promise<ProviderJob> {
-  const deadline = Date.now() + 60 * 60 * 1000;
-  while (Date.now() < deadline) {
-    const current = await providerRequest<ProviderJob>(
-      `/v1/generated-media/jobs/${encodeURIComponent(providerJobId)}`,
-    );
-    const localStatus = await db.query.mediaGenerationJob.findFirst({
-      where: eq(mediaGenerationJob.id, mediaJobId),
-      columns: { status: true },
-    });
-    if (
-      !localStatus ||
-      !["running", "waiting_for_gpu"].includes(localStatus.status)
-    ) {
-      throw new Error(`生成任务已停止（${localStatus?.status ?? "missing"}）`);
-    }
-    // The Provider owns the only GPU Broker lease. Mirror its queue phase so
-    // Media Hub does not claim the GPU itself or label queue time as inference.
-    const nextStatus =
-      current.status === "queued" ? "waiting_for_gpu" : "running";
-    if (localStatus.status !== nextStatus) {
-      const [updated] = await db
-        .update(mediaGenerationJob)
-        .set({ status: nextStatus, updatedAt: new Date() })
-        .where(
-          and(
-            eq(mediaGenerationJob.id, mediaJobId),
-            inArray(mediaGenerationJob.status, ["running", "waiting_for_gpu"]),
-          ),
-        )
-        .returning({ id: mediaGenerationJob.id });
-      if (!updated) throw new Error("生成任务已停止");
-    }
-    if (["succeeded", "failed", "canceled"].includes(current.status)) {
-      if (current.status !== "succeeded") {
-        throw new GenerationProviderJobError(current);
+  const completed = await waitForGenerationProviderJob({
+    isRetryableError: (error) =>
+      error instanceof ProviderRequestError && error.retryable,
+    fetchJob: () =>
+      providerRequest<ProviderJob>(
+        `/v1/generated-media/jobs/${encodeURIComponent(providerJobId)}`,
+      ),
+    onPoll: async (current) => {
+      const localStatus = await db.query.mediaGenerationJob.findFirst({
+        where: eq(mediaGenerationJob.id, mediaJobId),
+        columns: { status: true },
+      });
+      if (
+        !localStatus ||
+        !["running", "waiting_for_gpu"].includes(localStatus.status)
+      ) {
+        throw new Error(
+          `生成任务已停止（${localStatus?.status ?? "missing"}）`,
+        );
       }
-      return current;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
+      // The Provider owns GPU admission; polling only mirrors its queue phase.
+      const nextStatus =
+        current.status === "queued" ? "waiting_for_gpu" : "running";
+      if (localStatus.status !== nextStatus) {
+        const [updated] = await db
+          .update(mediaGenerationJob)
+          .set({ status: nextStatus, updatedAt: new Date() })
+          .where(
+            and(
+              eq(mediaGenerationJob.id, mediaJobId),
+              inArray(mediaGenerationJob.status, [
+                "running",
+                "waiting_for_gpu",
+              ]),
+            ),
+          )
+          .returning({ id: mediaGenerationJob.id });
+        if (!updated) throw new Error("生成任务已停止");
+      }
+    },
+  });
+  if (completed.status !== "succeeded") {
+    throw new GenerationProviderJobError(completed);
   }
-  throw new Error("MiniMax H3 生成超时（超过 1 小时）");
+  return completed;
 }
 
 async function joinVideoSamples(samples: ProviderSample[]): Promise<Buffer> {
@@ -630,19 +655,29 @@ async function runVideoGenerationPipeline(
     if (!current || !["running", "waiting_for_gpu"].includes(current.status)) {
       throw new Error(`生成任务已停止（${current?.status ?? "missing"}）`);
     }
-    const submitted = await createProviderJob(
-      job,
-      segmentPrompt,
-      segmentIndex,
-      continuationFrame,
-      continuationVideo,
-    );
+    const existingProviderJobId =
+      job.providerJobIds[segmentIndex] ??
+      (segmentIndex === 0 && !job.providerJobIds.length
+        ? job.providerJobId
+        : null);
+    const submitted = existingProviderJobId
+      ? { job_id: existingProviderJobId }
+      : await createProviderJob(
+          job,
+          segmentPrompt,
+          segmentIndex,
+          continuationFrame,
+          continuationVideo,
+        );
     providerJobIds.push(submitted.job_id);
     const [runningUpdate] = await db
       .update(mediaGenerationJob)
       .set({
         providerJobId: submitted.job_id,
-        providerJobIds: [...providerJobIds],
+        providerJobIds: [
+          ...providerJobIds,
+          ...job.providerJobIds.slice(segmentIndex + 1),
+        ],
         updatedAt: new Date(),
       })
       .where(
@@ -849,17 +884,21 @@ async function runVideoEditPipeline(
         job.width,
         job.height,
       );
-      const submitted = await createEditProviderJob(
-        job,
-        segment,
-        await readFile(clipPath),
-      );
+      const existingProviderJobId =
+        job.providerJobIds[index] ??
+        (index === 0 && !job.providerJobIds.length ? job.providerJobId : null);
+      const submitted = existingProviderJobId
+        ? { job_id: existingProviderJobId }
+        : await createEditProviderJob(job, segment, await readFile(clipPath));
       providerJobIds.push(submitted.job_id);
       await db
         .update(mediaGenerationJob)
         .set({
           providerJobId: submitted.job_id,
-          providerJobIds: [...providerJobIds],
+          providerJobIds: [
+            ...providerJobIds,
+            ...job.providerJobIds.slice(index + 1),
+          ],
           updatedAt: new Date(),
         })
         .where(eq(mediaGenerationJob.id, job.id));
@@ -935,7 +974,7 @@ function eightyChars(value: string): number {
   return Math.min(value.length, 80);
 }
 
-async function runGenerationJob(jobId: string): Promise<void> {
+async function runGenerationJob(jobId: string, resume = false): Promise<void> {
   const pending = await db.query.mediaGenerationJob.findFirst({
     where: eq(mediaGenerationJob.id, jobId),
   });
@@ -969,7 +1008,11 @@ async function runGenerationJob(jobId: string): Promise<void> {
     .update(mediaGenerationJob)
     .set({
       status: "running",
-      startedAt: claimedAt,
+      ...(resume
+        ? {}
+        : {
+            startedAt: pending?.startedAt ?? claimedAt,
+          }),
       gpuBrokerRequestId: null,
       gpuBrokerLeaseId: null,
       updatedAt: claimedAt,
@@ -977,7 +1020,10 @@ async function runGenerationJob(jobId: string): Promise<void> {
     .where(
       and(
         eq(mediaGenerationJob.id, jobId),
-        inArray(mediaGenerationJob.status, ["scheduled", "queued"]),
+        inArray(
+          mediaGenerationJob.status,
+          resume ? ["waiting_for_gpu", "running"] : ["scheduled", "queued"],
+        ),
       ),
     )
     .returning();
@@ -1255,16 +1301,8 @@ export function startMediaGenerationScheduler(): void {
     .then(async (jobs) => {
       for (const job of jobs) {
         if (["waiting_for_gpu", "running"].includes(job.status)) {
-          if (job.providerJobId) {
-            try {
-              await providerRequest(
-                `/v1/generated-media/jobs/${encodeURIComponent(job.providerJobId)}:cancel`,
-                { method: "POST", body: "{}" },
-              );
-            } catch {
-              // Recovery must continue if an old Provider job is already gone.
-            }
-          }
+          // Reattach to the persisted Provider jobs. A UI/worker deployment must
+          // not cancel GPU work or discard samples from completed segments.
           if (job.gpuBrokerRequestId) {
             try {
               await cancelGenerationGpuRequest(job.gpuBrokerRequestId);
@@ -1272,16 +1310,8 @@ export function startMediaGenerationScheduler(): void {
               // Legacy outer leases expire when the old worker stops heartbeating.
             }
           }
-          await db
-            .update(mediaGenerationJob)
-            .set({
-              status: "queued",
-              providerJobId: null,
-              gpuBrokerRequestId: null,
-              gpuBrokerLeaseId: null,
-              updatedAt: new Date(),
-            })
-            .where(eq(mediaGenerationJob.id, job.id));
+          void runGenerationJob(job.id, true);
+          continue;
         }
         scheduleMediaGenerationJob(
           job.id,

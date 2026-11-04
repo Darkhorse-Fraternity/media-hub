@@ -6,7 +6,10 @@ import {
   handleAgentApiError,
 } from "~/lib/agent-api";
 
-async function handlePost(request: Request, jobId: string): Promise<Response> {
+export async function handlePost(
+  request: Request,
+  jobId: string,
+): Promise<Response> {
   try {
     const { caller } = await createAgentApiCaller(request);
     return agentJson(

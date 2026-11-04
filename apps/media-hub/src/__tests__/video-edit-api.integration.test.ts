@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import type { Server } from "node:http";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { db as applicationDb } from "@acme/db/client";
 import { and, count, eq } from "@acme/db";
@@ -17,6 +17,32 @@ import {
 } from "@acme/db/schema";
 
 import { closeTestServer, configureTestDockerHost } from "./helpers/postgres";
+
+const storage = vi.hoisted(() => ({
+  get: vi.fn(),
+  put: vi.fn(),
+}));
+vi.mock(
+  "../../../../packages/api/src/router/media-hub/generation-output-validation",
+  async (original) => ({
+    ...(await original<
+      typeof import("../../../../packages/api/src/router/media-hub/generation-output-validation")
+    >()),
+    validateGeneratedVideoOutput: vi.fn(),
+  }),
+);
+vi.mock(
+  "../../../../packages/api/src/router/media-hub/generation-notification",
+  () => ({
+    deliverGenerationResultNotification: vi.fn().mockResolvedValue(undefined),
+    startMediaGenerationNotificationScheduler: vi.fn(),
+  }),
+);
+vi.mock("@acme/storage", async (original) => ({
+  ...(await original<typeof import("@acme/storage")>()),
+  getMediaHubObject: storage.get,
+  putMediaHubObject: storage.put,
+}));
 
 const migrationsFolder = fileURLToPath(
   new URL("../../../../packages/db/drizzle", import.meta.url),
@@ -44,6 +70,9 @@ let handleTake: HandleShotRequest;
 let handleCaptions: HandleShotRequest;
 let providerServer: Server;
 let createdEditJobId: string | null = null;
+let handleRetry: (request: Request, jobId: string) => Promise<Response>;
+const recoveryRequests: string[] = [];
+let recoveryPolls = 0;
 
 function createEditRequest(
   body: Record<string, unknown>,
@@ -114,11 +143,35 @@ describe("Agent video edit and director REST API", () => {
 
     process.env.POSTGRES_URL = container.getConnectionUri();
     process.env.NODE_ENV = "development";
+    process.env.MEDIA_HUB_GENERATION_WORKER_ENABLED = "false";
     process.env.APP_URL = "http://media-hub.test";
     process.env.AUTH_SECRET = "media-hub-integration-test-secret";
     process.env.AUTH_USE_SECURE_COOKIES = "false";
     process.env.MEDIA_HUB_CRYPTO_KEY = Buffer.alloc(32, 7).toString("base64");
     providerServer = createServer((request, response) => {
+      recoveryRequests.push(`${request.method} ${request.url}`);
+      if (
+        request.url === "/v1/generated-media/jobs/existing-recovery-job" &&
+        request.method === "GET"
+      ) {
+        recoveryPolls += 1;
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            job_id: "existing-recovery-job",
+            status: recoveryPolls === 1 ? "running" : "succeeded",
+            started_at: new Date(Date.now() - 60_000).toISOString(),
+            samples: [
+              {
+                content_base64: Buffer.from("existing GPU output").toString(
+                  "base64",
+                ),
+              },
+            ],
+          }),
+        );
+        return;
+      }
       if (request.url !== "/healthz") {
         response.writeHead(404).end();
         return;
@@ -128,8 +181,9 @@ describe("Agent video edit and director REST API", () => {
         JSON.stringify({
           status: "healthy",
           contract: "ydc_generated_media_provider_request.v1",
-          profiles: ["platform-h3-ref2va-edit-v1"],
+          profiles: ["platform-h3-ref2va-edit-v1", "recovery-i2v"],
           profile_details: [
+            { id: "recovery-i2v", kind: "generate", minimum_steps: 20 },
             {
               id: "platform-h3-ref2va-edit-v1",
               kind: "edit",
@@ -159,6 +213,8 @@ describe("Agent video edit and director REST API", () => {
     const routeModule =
       await import("../routes/api/v1/generations/$jobId/edits");
     handlePost = routeModule.handlePost;
+    handleRetry = (await import("../routes/api/v1/generations/$jobId/retry"))
+      .handlePost;
     handleEditPlan = (
       await import("../routes/api/v1/scripts/$scriptId/shots/$shotId/edit-plan")
     ).handlePatch;
@@ -442,4 +498,98 @@ describe("Agent video edit and director REST API", () => {
       selectedGenerationJobId: sourceJobId,
     });
   });
+
+  it("reattaches after worker restart without canceling or resubmitting GPU work", async () => {
+    // Keep the earlier API-only test jobs scheduled while recovery starts.
+    await database
+      .update(mediaGenerationJob)
+      .set({
+        status: "succeeded",
+      })
+      .where(eq(mediaGenerationJob.status, "scheduled"));
+    const id = "integration-resumed-generation";
+    const enqueuedAt = new Date(Date.now() - 2 * 60 * 60_000);
+    await database.insert(mediaGenerationJob).values({
+      id,
+      prompt: "A quiet landscape. No dialogue.",
+      title: "Resumed shot",
+      durationSeconds: 5,
+      width: 96,
+      height: 64,
+      steps: 20,
+      profile: "recovery-i2v",
+      status: "running",
+      startedAt: enqueuedAt,
+      providerJobId: "existing-recovery-job",
+      providerJobIds: ["existing-recovery-job"],
+      createdBy: ownerId,
+    });
+    recoveryRequests.length = 0;
+    const { startMediaGenerationScheduler } =
+      await import("../../../../packages/api/src/router/media-hub/generation");
+    process.env.MEDIA_HUB_GENERATION_WORKER_ENABLED = "true";
+    startMediaGenerationScheduler();
+    await vi.waitFor(
+      async () => {
+        const job = await database.query.mediaGenerationJob.findFirst({
+          where: eq(mediaGenerationJob.id, id),
+        });
+        expect(job?.errorMessage).toBeNull();
+        expect(job?.status).toBe("succeeded");
+        expect(job?.providerJobIds).toEqual(["existing-recovery-job"]);
+        expect(job?.startedAt).toEqual(enqueuedAt);
+      },
+      { timeout: 10_000 },
+    );
+    expect(
+      recoveryRequests.filter((request) => request.startsWith("POST")),
+    ).toEqual([]);
+    expect(recoveryPolls).toBeGreaterThanOrEqual(2);
+  }, 20_000);
+
+  it("receives the original completed GPU result after a transport failure and manual retry", async () => {
+    const id = "integration-retry-completed-generation";
+    const startedAt = new Date(Date.now() - 2 * 60 * 60_000);
+    await database.insert(mediaGenerationJob).values({
+      id,
+      prompt: "A quiet landscape. No dialogue.",
+      durationSeconds: 5,
+      width: 96,
+      height: 64,
+      steps: 20,
+      profile: "recovery-i2v",
+      status: "failed",
+      failureStage: "provider_transport",
+      errorCode: "provider_transport_failed",
+      startedAt,
+      providerJobId: "existing-recovery-job",
+      providerJobIds: ["existing-recovery-job"],
+      createdBy: ownerId,
+    });
+    recoveryRequests.length = 0;
+    const response = await handleRetry(
+      new Request(`http://media-hub.test/api/v1/generations/${id}/retry`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${agentToken}` },
+      }),
+      id,
+    );
+    expect(response.status).toBe(202);
+    await vi.waitFor(
+      async () => {
+        const saved = await database.query.mediaGenerationJob.findFirst({
+          where: eq(mediaGenerationJob.id, id),
+        });
+        expect(saved?.errorMessage).toBeNull();
+        expect(saved?.status).toBe("succeeded");
+        expect(saved?.providerJobIds).toEqual(["existing-recovery-job"]);
+        expect(saved?.startedAt).toEqual(startedAt);
+        expect(saved?.outputStorageKey).toBeTruthy();
+      },
+      { timeout: 10_000 },
+    );
+    expect(
+      recoveryRequests.filter((request) => request.startsWith("POST")),
+    ).toEqual([]);
+  }, 20_000);
 });

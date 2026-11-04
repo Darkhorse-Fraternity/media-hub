@@ -34,6 +34,7 @@ import { sendGenerationCancellationAlert } from "./feishu-notify";
 import {
   cancelMediaGenerationJob,
   getMediaGenerationProviderHealth,
+  prepareMediaGenerationRetry,
   rescheduleMediaGenerationJob,
   scheduleMediaGenerationJob,
   startMediaGenerationScheduler,
@@ -1136,7 +1137,7 @@ export const mediaGenerationRouter = {
       };
     }),
 
-  /** 失败任务保留原参数并立即重新加入生成队列。 */
+  /** 先接续仍可用的 Provider 任务，仅重建已确认失败的分段。 */
   retry: protectedProcedure
     .input(mediaGenerationIdSchema)
     .mutation(async ({ ctx, input }) => {
@@ -1181,14 +1182,23 @@ export const mediaGenerationRouter = {
           message: `H3 生成链路异常，暂时不能重试：${providerHealth.message}`,
         });
       }
+      let retryState: Awaited<ReturnType<typeof prepareMediaGenerationRetry>>;
+      try {
+        retryState = await prepareMediaGenerationRetry(job);
+      } catch (error) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "无法确认原 Provider 任务状态，暂时不能重试，请稍后再试",
+          cause: error,
+        });
+      }
       const now = new Date();
       const [updated] = await ctx.db
         .update(mediaGenerationJob)
         .set({
           status: "queued",
           scheduledAt: null,
-          providerJobId: null,
-          providerJobIds: [],
+          ...retryState,
           outputStorageKey: null,
           mediaTaskId: null,
           errorMessage: null,
@@ -1203,7 +1213,6 @@ export const mediaGenerationRouter = {
           audioValidationError: null,
           workflowVersion: null,
           modelVersion: null,
-          startedAt: null,
           finishedAt: null,
           updatedAt: now,
         })
@@ -1211,6 +1220,9 @@ export const mediaGenerationRouter = {
           and(
             eq(mediaGenerationJob.id, job.id),
             eq(mediaGenerationJob.status, "failed"),
+            job.finishedAt
+              ? eq(mediaGenerationJob.finishedAt, job.finishedAt)
+              : isNull(mediaGenerationJob.finishedAt),
           ),
         )
         .returning({ id: mediaGenerationJob.id });
