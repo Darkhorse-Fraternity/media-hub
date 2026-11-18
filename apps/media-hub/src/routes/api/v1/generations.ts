@@ -8,6 +8,7 @@ import {
   MEDIA_H3_DEFAULT_WIDTH,
   MEDIA_H3_PROMPT_MAX_LENGTH,
   mediaH3DimensionSchema,
+  mediaH3ReferenceVideoSchema,
 } from "@acme/validators";
 
 import {
@@ -20,6 +21,15 @@ import {
 const createGenerationBody = z.object({
   prompt: z.string().trim().min(1).max(MEDIA_H3_PROMPT_MAX_LENGTH),
   language: z.enum(["zh", "en"]).default("en"),
+  generation_mode: z.enum(["base", "reference"]).default("base"),
+  reference_artifact_id: z.string().uuid().optional(),
+  reference_video: z
+    .object({
+      storage_key: z.string().min(1),
+      name: z.string().min(1).max(255),
+      content_type: z.literal("video/mp4"),
+    })
+    .optional(),
   title: z.string().trim().max(200).optional(),
   duration_seconds: z
     .number()
@@ -120,13 +130,22 @@ async function handleGet(request: Request): Promise<Response> {
   }
 }
 
-async function handlePost(request: Request): Promise<Response> {
+export async function handlePost(request: Request): Promise<Response> {
   try {
     const { caller } = await createAgentApiCaller(request);
     const input = createGenerationBody.parse(await readAgentJson(request));
     const result = await caller.mediaHub.generation.create({
       prompt: input.prompt,
       language: input.language,
+      generationMode: input.generation_mode,
+      referenceArtifactId: input.reference_artifact_id,
+      referenceVideo: input.reference_video
+        ? mediaH3ReferenceVideoSchema.parse({
+            storageKey: input.reference_video.storage_key,
+            name: input.reference_video.name,
+            contentType: input.reference_video.content_type,
+          })
+        : undefined,
       title: input.title,
       durationSeconds: input.duration_seconds,
       qualityPreset: input.quality_preset,

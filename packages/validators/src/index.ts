@@ -1,5 +1,7 @@
 import { z } from "zod/v4";
 
+export * from "./previs";
+
 // Auth schemas
 export const signInByEmailSchema = z.object({
   email: z.email("Please enter a valid email address"),
@@ -338,6 +340,13 @@ export const mediaH3DialogueSchema = z.object({
 
 export type MediaH3Dialogue = z.infer<typeof mediaH3DialogueSchema>;
 
+export const MEDIA_H3_REFERENCE_VIDEO_MAX_BYTES = 50_000_000;
+export const mediaH3ReferenceVideoSchema = z.object({
+  storageKey: z.string().min(1),
+  name: z.string().min(1).max(255),
+  contentType: z.literal("video/mp4"),
+});
+
 /** 创建一个 MiniMax H3 图片/文字视频生成任务。 */
 export const createMediaGenerationSchema = z
   .object({
@@ -347,6 +356,9 @@ export const createMediaGenerationSchema = z
       .min(1, "请输入视频描述")
       .max(MEDIA_H3_PROMPT_MAX_LENGTH),
     language: mediaContentLanguageEnum.default("en"),
+    generationMode: z.enum(["base", "reference"]).default("base"),
+    referenceVideo: mediaH3ReferenceVideoSchema.optional(),
+    referenceArtifactId: z.string().uuid().optional(),
     sourceImageStorageKey: z.string().min(1).optional(),
     sourceImageName: z.string().max(255).optional(),
     sourceImageContentType: z
@@ -410,6 +422,42 @@ export const createMediaGenerationSchema = z
     height: mediaH3DimensionSchema.default(MEDIA_H3_DEFAULT_HEIGHT),
   })
   .superRefine((input, ctx) => {
+    if (input.generationMode === "reference") {
+      if (!input.referenceVideo && !input.referenceArtifactId) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["referenceVideo"],
+          message: "参考生成必须提供完整参考视频",
+        });
+      }
+      if (input.durationSeconds > 15) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["durationSeconds"],
+          message: "参考生成单镜最多 15 秒；多镜分别提交后合成",
+        });
+      }
+      if (input.sourceImageStorageKey || input.sourceImageAssetId) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["sourceImageStorageKey"],
+          message: "参考生成请用 referenceImages 指定外观，不支持 first_frame",
+        });
+      }
+    } else if (input.referenceVideo || input.referenceArtifactId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["generationMode"],
+        message: "使用参考视频时必须指定 reference 模式",
+      });
+    }
+    if (input.referenceVideo && input.referenceArtifactId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["referenceArtifactId"],
+        message: "referenceVideo 与 referenceArtifactId 必须二选一",
+      });
+    }
     const segmentCount = Math.max(1, Math.ceil(input.durationSeconds / 15));
     const estimatedSecondsBySegment = new Map<number, number>();
     input.dialogues.forEach((dialogue, index) => {
@@ -491,6 +539,7 @@ const mediaVideoScriptShotFields = {
   music: z.string().trim().max(1000).default("N/A"),
   dialogues: z.array(mediaVideoScriptDialogueSchema).max(6).default([]),
   firstFrameAssetId: z.string().trim().min(1).optional(),
+  referenceArtifactId: z.string().uuid().optional(),
   selectedGenerationJobId: z.string().trim().min(1).optional(),
   trimStartSeconds: z.number().min(0).max(15).optional(),
   trimEndSeconds: z.number().min(0).max(15).optional(),
@@ -504,9 +553,17 @@ function validateScriptShotDialogueTiming(
     trimStartSeconds?: number;
     trimEndSeconds?: number;
     captions?: { startSeconds: number; endSeconds: number }[];
+    firstFrameAssetId?: string;
+    referenceArtifactId?: string;
   },
   context: z.RefinementCtx,
 ) {
+  if (value.firstFrameAssetId && value.referenceArtifactId)
+    context.addIssue({
+      code: "custom",
+      path: ["referenceArtifactId"],
+      message: "镜头首帧与白模视频参考必须二选一",
+    });
   value.dialogues.forEach((dialogue, index) => {
     if (dialogue.atSeconds >= value.durationSeconds) {
       context.addIssue({
@@ -634,7 +691,7 @@ export const generateMediaVideoScriptSchema = z.object({
     MEDIA_H3_DEFAULT_QUALITY_PRESET,
   ),
   h3Profile: z.string().trim().min(1).max(200).optional(),
-  continuityMode: z.enum(["independent", "native_av"]).default("native_av"),
+  continuityMode: z.enum(["independent", "native_av"]).optional(),
 });
 
 export const bridgeMediaVideoScriptFrameSchema = z.object({

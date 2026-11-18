@@ -46,9 +46,12 @@ import {
 import {
   h3StepsForPreset,
   validateH3GenerationPrompt,
+  validateH3ReferencePrompt,
 } from "./h3-generation-config";
 import { requireH3Profile } from "./h3-profile";
 import { queueMediaImageJob } from "./image-job-service";
+import { ownedPrevisArtifact } from "./previs-render-service";
+import { inspectPrevisReferenceVideo } from "./previs-video-reference";
 import { resolveMediaSystemSetting } from "./system-settings";
 import { extractMediaGenerationLastFrame } from "./video-frame";
 import { createScriptAnimatic } from "./video-script-animatic";
@@ -130,6 +133,23 @@ async function requireOwnedFirstFrameAssets(
   userId: string,
   shots: MediaVideoScriptShot[],
 ) {
+  for (const shot of shots) {
+    if (shot.referenceArtifactId) {
+      const { artifact, item } = await ownedPrevisArtifact(
+        database,
+        userId,
+        shot.referenceArtifactId,
+      );
+      if (
+        artifact.contentType !== "video/mp4" ||
+        item.spec.profile !== "h3_reference"
+      )
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "镜头需要 H3 参考视频产物",
+        });
+    }
+  }
   const ids = [
     ...new Set(
       shots
@@ -558,7 +578,11 @@ export const mediaVideoScriptRouter = {
       }
       const nextShots = script.shots.map((shot) =>
         shot.id === input.shotId
-          ? { ...shot, firstFrameAssetId: input.assetId ?? undefined }
+          ? {
+              ...shot,
+              firstFrameAssetId: input.assetId ?? undefined,
+              ...(input.assetId ? { referenceArtifactId: undefined } : {}),
+            }
           : shot,
       );
       const [updated] = await ctx.db
@@ -667,7 +691,11 @@ export const mediaVideoScriptRouter = {
       const now = new Date();
       const nextShots = script.shots.map((shot) =>
         shot.id === targetShot.id
-          ? { ...shot, firstFrameAssetId: assetId }
+          ? {
+              ...shot,
+              firstFrameAssetId: assetId,
+              referenceArtifactId: undefined,
+            }
           : shot,
       );
       await putMediaHubObject(storageKey, finalFrame, "image/png");
@@ -759,12 +787,27 @@ export const mediaVideoScriptRouter = {
         });
       }
       const settings = await resolveMediaSystemSetting();
+      const hasReferences = shots.some((shot) => shot.referenceArtifactId);
+      const onlyReferences = shots.every((shot) => shot.referenceArtifactId);
+      if (hasReferences && input.continuityMode === "native_av")
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "白模参考镜头请使用独立模式，生成后再合成",
+        });
       const profileId =
         input.h3Profile ??
-        script.defaultProfile ??
-        settings.h3GenerationProfile;
-      const profile = await requireH3Profile(profileId, "generate");
-      const nativeAV = input.continuityMode === "native_av";
+        (onlyReferences
+          ? settings.h3EditProfile
+          : (script.defaultProfile ?? settings.h3GenerationProfile));
+      const profile = await requireH3Profile(
+        profileId,
+        onlyReferences ? "reference" : "generate",
+      );
+      const nativeAV =
+        !hasReferences &&
+        (input.continuityMode === "native_av" ||
+          (input.continuityMode === undefined &&
+            profile.supportsNativeAVContinuation));
       if (nativeAV && !profile.supportsNativeAVContinuation) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
@@ -791,85 +834,107 @@ export const mediaVideoScriptRouter = {
         shots,
       );
       const now = new Date();
-      const rows = shots.map((shot) => {
-        const prompt = compileVideoScriptShotPrompt(
-          shot,
-          script.continuityBible,
-        );
-        const issues = validateH3GenerationPrompt(prompt, shot.durationSeconds);
-        if (issues.length > 0) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: `镜头“${shot.title}”预检失败：${issues.join("；")}`,
-          });
-        }
-        const sourceAsset = shot.firstFrameAssetId
-          ? assetById.get(shot.firstFrameAssetId)
-          : undefined;
-        const shotIndex = script.shots.findIndex(
-          (candidate) => candidate.id === shot.id,
-        );
-        let previousJobId: string | undefined;
-        if (nativeAV) {
-          try {
-            previousJobId = scriptContinuationSource(
-              script.shots,
-              shot,
-              jobIdByShotId,
-              previousJobs,
-            );
-          } catch (error) {
+      const rows = await Promise.all(
+        shots.map(async (shot) => {
+          const prompt = compileVideoScriptShotPrompt(
+            shot,
+            script.continuityBible,
+          );
+          const issues = shot.referenceArtifactId
+            ? validateH3ReferencePrompt(prompt, 0)
+            : validateH3GenerationPrompt(prompt, shot.durationSeconds);
+          if (issues.length > 0) {
             throw new TRPCError({
-              code: "PRECONDITION_FAILED",
-              message:
-                error instanceof Error ? error.message : "原生衔接预检失败",
+              code: "BAD_REQUEST",
+              message: `镜头“${shot.title}”预检失败：${issues.join("；")}`,
             });
           }
-        }
-        const jobId = jobIdByShotId.get(shot.id);
-        if (!jobId) throw new Error("镜头任务 ID 缺失");
-        return {
-          id: jobId,
-          sourceGenerationJobId: previousJobId,
-          scriptId: script.id,
-          scriptShotId: shot.id,
-          prompt,
-          dialogues: shot.dialogues.map((dialogue) => ({
-            segment: 1,
-            speakerId: dialogue.speakerId,
-            language: dialogue.language,
-            text: dialogue.text,
-            voice: dialogue.voice,
-            delivery: dialogue.delivery ?? ("on_screen" as const),
-          })),
-          title:
-            `${script.title} / ${String(shotIndex + 1).padStart(2, "0")} ${shot.title}`.slice(
-              0,
-              200,
+          const sourceAsset = shot.firstFrameAssetId
+            ? assetById.get(shot.firstFrameAssetId)
+            : undefined;
+          const referenceVideo = shot.referenceArtifactId
+            ? await inspectPrevisReferenceVideo(
+                ctx.db,
+                ctx.session.user.id,
+                shot.referenceArtifactId,
+                { ...script, durationSeconds: shot.durationSeconds },
+              )
+            : null;
+          const shotProfileId =
+            shot.referenceArtifactId && !onlyReferences
+              ? settings.h3EditProfile
+              : profileId;
+          const shotProfile =
+            shot.referenceArtifactId && !onlyReferences
+              ? await requireH3Profile(shotProfileId, "reference")
+              : profile;
+          const shotIndex = script.shots.findIndex(
+            (candidate) => candidate.id === shot.id,
+          );
+          let previousJobId: string | undefined;
+          if (nativeAV) {
+            try {
+              previousJobId = scriptContinuationSource(
+                script.shots,
+                shot,
+                jobIdByShotId,
+                previousJobs,
+              );
+            } catch (error) {
+              throw new TRPCError({
+                code: "PRECONDITION_FAILED",
+                message:
+                  error instanceof Error ? error.message : "原生衔接预检失败",
+              });
+            }
+          }
+          const jobId = jobIdByShotId.get(shot.id);
+          if (!jobId) throw new Error("镜头任务 ID 缺失");
+          return {
+            id: jobId,
+            sourceGenerationJobId: previousJobId,
+            scriptId: script.id,
+            scriptShotId: shot.id,
+            prompt,
+            dialogues: shot.dialogues.map((dialogue) => ({
+              segment: 1,
+              speakerId: dialogue.speakerId,
+              language: dialogue.language,
+              text: dialogue.text,
+              voice: dialogue.voice,
+              delivery: dialogue.delivery ?? ("on_screen" as const),
+            })),
+            title:
+              `${script.title} / ${String(shotIndex + 1).padStart(2, "0")} ${shot.title}`.slice(
+                0,
+                200,
+              ),
+            language: script.language,
+            sourceImageStorageKey: sourceAsset?.storageKey,
+            sourceImageName: sourceAsset?.filename,
+            sourceImageContentType: sourceAsset?.contentType,
+            referenceImages: [],
+            referenceVideo,
+            preserveSourceAudio: !referenceVideo,
+            inputImageAssetIds: sourceAsset ? [sourceAsset.id] : [],
+            durationSeconds: shot.durationSeconds,
+            fps: 24,
+            width: script.width,
+            height: script.height,
+            qualityPreset: input.qualityPreset,
+            steps: Math.max(
+              h3StepsForPreset(input.qualityPreset),
+              shotProfile.minimumSteps ?? 1,
             ),
-          language: script.language,
-          sourceImageStorageKey: sourceAsset?.storageKey,
-          sourceImageName: sourceAsset?.filename,
-          sourceImageContentType: sourceAsset?.contentType,
-          referenceImages: [],
-          inputImageAssetIds: sourceAsset ? [sourceAsset.id] : [],
-          durationSeconds: shot.durationSeconds,
-          fps: 24,
-          width: script.width,
-          height: script.height,
-          qualityPreset: input.qualityPreset,
-          steps: Math.max(
-            h3StepsForPreset(input.qualityPreset),
-            profile.minimumSteps ?? 1,
-          ),
-          seed: randomInt(0, 2_147_483_643),
-          profile: profileId,
-          status: "queued",
-          createdBy: ctx.session.user.id,
-          createdAt: now,
-          updatedAt: now,
-        };
-      });
+            seed: randomInt(0, 2_147_483_643),
+            profile: shotProfileId,
+            status: "queued",
+            createdBy: ctx.session.user.id,
+            createdAt: now,
+            updatedAt: now,
+          };
+        }),
+      );
       await ctx.db.transaction(async (transaction) => {
         const [current] = await transaction
           .update(mediaVideoScript)

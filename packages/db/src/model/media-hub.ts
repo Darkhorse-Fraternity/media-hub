@@ -19,6 +19,20 @@ export interface MediaGenerationReferenceImage {
   role: "style" | "subject";
 }
 
+export interface MediaGenerationReferenceVideo {
+  artifactId?: string;
+  revisionId?: string;
+  storageKey: string;
+  name: string;
+  contentType: "video/mp4";
+  checksum: string;
+  frameCount: number;
+  fps: number;
+  width: number;
+  height: number;
+  durationSeconds: number;
+}
+
 export interface MediaGenerationDialogue {
   segment: number;
   speakerId: "S1" | "S2" | "S3" | "S4";
@@ -72,6 +86,7 @@ export interface MediaVideoScriptShot {
   music: string;
   dialogues: MediaVideoScriptDialogue[];
   firstFrameAssetId?: string;
+  referenceArtifactId?: string;
   /** 导演明确选定的成片任务；未设置时使用最新一次成功镜头。 */
   selectedGenerationJobId?: string;
   trimStartSeconds?: number;
@@ -277,6 +292,9 @@ export const mediaGenerationJob = pgTable(
       .$type<MediaGenerationReferenceImage[]>()
       .notNull()
       .default([]),
+    /** 整段白模/动作参考及提交时的不可变校验快照；空值为基础生成。 */
+    referenceVideo:
+      jsonb("reference_video").$type<MediaGenerationReferenceVideo>(),
     /** Agent API 的权威结构化对白；prompt 保存服务端编译后的 H3 文本。 */
     dialogues: jsonb("dialogues")
       .$type<MediaGenerationDialogue[]>()
@@ -335,6 +353,8 @@ export const mediaGenerationJob = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
     startedAt: timestamp("started_at"),
+    /** Provider 实际开始推理的时间；started_at 保留本次执行入队时间。 */
+    generationStartedAt: timestamp("generation_started_at"),
     finishedAt: timestamp("finished_at"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),

@@ -5,11 +5,11 @@ description: Write or revise MiniMax Hailuo 3 (H3) video prompts for Media Hub. 
 
 # H3 Prompt Writing
 
-Use the exact H3 prompt contract in [references/base-mode.md](references/base-mode.md). Keep the implementation and tests aligned with that reference.
+For text/first-frame generation, use [references/base-mode.md](references/base-mode.md). For a whole Blender/previs video, use the six-field contract in [references/reference-mode.md](references/reference-mode.md). Keep implementation and tests aligned with the selected mode.
 
 ## Workflow
 
-1. Determine whether generation is text-to-video or image-to-video. Media Hub currently uses image-to-video whenever a first-frame image is supplied.
+1. Determine whether generation uses text, a first frame, or a whole reference video. Route whole-video input to reference mode; do not reduce its temporal information to a first-frame prompt. Use the remaining workflow below for base text/image generation.
 2. Rewrite the user's intent into a concrete, chronological shot plan. Do not add unrelated subjects, dialogue, text, or plot events.
 3. Write the structural keys and descriptive prose in English. Preserve dialogue, lyrics, signs, and other visible text in the language requested by the user.
 4. Include official shot timing, camera movement, subject motion, lighting, spatial relations, sound effects, ambience, and music intent.

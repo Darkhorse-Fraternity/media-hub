@@ -3,7 +3,11 @@ import { TRPCError } from "@trpc/server";
 
 import type { db as database } from "@acme/db/client";
 import { and, desc, eq, inArray, isNull } from "@acme/db";
-import { mediaImageAsset, mediaImageJob } from "@acme/db/schema";
+import {
+  mediaImageAsset,
+  mediaImageJob,
+  mediaPrevisArtifact,
+} from "@acme/db/schema";
 import {
   createMediaImageJobSchema,
   mediaImageIdSchema,
@@ -110,11 +114,30 @@ export const mediaImageRouter = {
           limit: input.limit,
         }),
       ]);
+      const previsIds = assets
+        .filter((asset) => asset.origin === "previs")
+        .map((asset) => asset.id);
+      const sources = previsIds.length
+        ? await ctx.db
+            .select({
+              assetId: mediaPrevisArtifact.imageAssetId,
+              artifactId: mediaPrevisArtifact.id,
+              revisionId: mediaPrevisArtifact.revisionId,
+              itemId: mediaPrevisArtifact.itemId,
+              attemptId: mediaPrevisArtifact.attemptId,
+            })
+            .from(mediaPrevisArtifact)
+            .where(inArray(mediaPrevisArtifact.imageAssetId, previsIds))
+        : [];
+      const sourceByAsset = new Map(
+        sources.map((source) => [source.assetId, source]),
+      );
       return {
         jobs,
         assets: assets.map((asset) => ({
           ...asset,
           url: `/api/media-hub/images/${encodeURIComponent(asset.id)}`,
+          previsSource: sourceByAsset.get(asset.id) ?? null,
         })),
       };
     }),

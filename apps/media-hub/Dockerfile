@@ -71,3 +71,16 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", ".output/server/index.mjs"]
+
+# Optional isolated CPU render instance: build with --target previs-cpu.
+# Keep the normal web runner small; configure the validated browser explicitly.
+FROM runner AS previs-cpu
+USER root
+RUN apk add --no-cache chromium
+ENV MEDIA_HUB_PREVIS_BROWSER=/usr/bin/chromium
+ENV MEDIA_HUB_PREVIS_WORKER_ENABLED=true
+ENV MEDIA_HUB_GENERATION_WORKER_ENABLED=false
+USER nodejs
+
+FROM runner AS production
+ENV MEDIA_HUB_PREVIS_WORKER_ENABLED=false

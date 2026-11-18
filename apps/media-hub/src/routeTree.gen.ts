@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as VideosRouteImport } from './routes/videos'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ScriptsRouteImport } from './routes/scripts'
+import { Route as PrevisRouteImport } from './routes/previs'
 import { Route as PlatformsRouteImport } from './routes/platforms'
 import { Route as ImagesRouteImport } from './routes/images'
 import { Route as AgentApiRouteImport } from './routes/agent-api'
@@ -29,6 +30,8 @@ import { Route as OauthInstagramCallbackRouteImport } from './routes/oauth/insta
 import { Route as OauthDouyinCallbackRouteImport } from './routes/oauth/douyin/callback'
 import { Route as GenerationsJobIdEditRouteImport } from './routes/generations.$jobId.edit'
 import { Route as ApiV1ScriptsRouteImport } from './routes/api/v1/scripts'
+import { Route as ApiV1PrevisGroupsRouteImport } from './routes/api/v1/previs-groups'
+import { Route as ApiV1PrevisRouteImport } from './routes/api/v1/previs'
 import { Route as ApiV1PlatformAccountsRouteImport } from './routes/api/v1/platform-accounts'
 import { Route as ApiV1ImageAssetsRouteImport } from './routes/api/v1/image-assets'
 import { Route as ApiV1GenerationsRouteImport } from './routes/api/v1/generations'
@@ -40,13 +43,28 @@ import { Route as ApiV1ScriptsDraftRouteImport } from './routes/api/v1/scripts/d
 import { Route as ApiV1ScriptsAnalyzeRouteImport } from './routes/api/v1/scripts/analyze'
 import { Route as ApiV1ScriptsScriptIdRouteImport } from './routes/api/v1/scripts/$scriptId'
 import { Route as ApiV1PromptsOptimizeRouteImport } from './routes/api/v1/prompts/optimize'
+import { Route as ApiV1PrevisSceneIdRouteImport } from './routes/api/v1/previs/$sceneId'
+import { Route as ApiV1PrevisRevisionsRevisionIdRouteImport } from './routes/api/v1/previs-revisions/$revisionId'
+import { Route as ApiV1PrevisRendersRenderIdRouteImport } from './routes/api/v1/previs-renders/$renderId'
+import { Route as ApiV1PrevisGroupsGroupIdRouteImport } from './routes/api/v1/previs-groups/$groupId'
 import { Route as ApiV1GenerationsJobIdRouteImport } from './routes/api/v1/generations/$jobId'
 import { Route as ApiMediaHubUploadsReferenceImageRouteImport } from './routes/api/media-hub/uploads/reference-image'
 import { Route as ApiMediaHubUploadsImageAssetRouteImport } from './routes/api/media-hub/uploads/image-asset'
+import { Route as ApiMediaHubPrevisArtifactsArtifactIdRouteImport } from './routes/api/media-hub/previs-artifacts/$artifactId'
 import { Route as ApiMediaHubImagesAssetIdRouteImport } from './routes/api/media-hub/images/$assetId'
 import { Route as ApiV1ScriptsScriptIdGenerateRouteImport } from './routes/api/v1/scripts/$scriptId/generate'
 import { Route as ApiV1ScriptsScriptIdAssembleRouteImport } from './routes/api/v1/scripts/$scriptId/assemble'
 import { Route as ApiV1ScriptsScriptIdAnimaticRouteImport } from './routes/api/v1/scripts/$scriptId/animatic'
+import { Route as ApiV1PrevisSceneIdThumbnailRouteImport } from './routes/api/v1/previs/$sceneId/thumbnail'
+import { Route as ApiV1PrevisSceneIdRevisionsRouteImport } from './routes/api/v1/previs/$sceneId/revisions'
+import { Route as ApiV1PrevisSceneIdRendersRouteImport } from './routes/api/v1/previs/$sceneId/renders'
+import { Route as ApiV1PrevisSceneIdForkRouteImport } from './routes/api/v1/previs/$sceneId/fork'
+import { Route as ApiV1PrevisRevisionsRevisionIdSourceRouteImport } from './routes/api/v1/previs-revisions/$revisionId/source'
+import { Route as ApiV1PrevisRendersRenderIdRetryRouteImport } from './routes/api/v1/previs-renders/$renderId/retry'
+import { Route as ApiV1PrevisRendersRenderIdItemsRouteImport } from './routes/api/v1/previs-renders/$renderId/items'
+import { Route as ApiV1PrevisRendersRenderIdImageAssetsRouteImport } from './routes/api/v1/previs-renders/$renderId/image-assets'
+import { Route as ApiV1PrevisRendersRenderIdCancelRouteImport } from './routes/api/v1/previs-renders/$renderId/cancel'
+import { Route as ApiV1PrevisArtifactsArtifactIdDownloadRouteImport } from './routes/api/v1/previs-artifacts/$artifactId/download'
 import { Route as ApiV1GenerationsJobIdXiaohongshuPackageRouteImport } from './routes/api/v1/generations/$jobId/xiaohongshu-package'
 import { Route as ApiV1GenerationsJobIdVideoRouteImport } from './routes/api/v1/generations/$jobId/video'
 import { Route as ApiV1GenerationsJobIdRetryRouteImport } from './routes/api/v1/generations/$jobId/retry'
@@ -76,6 +94,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const ScriptsRoute = ScriptsRouteImport.update({
   id: '/scripts',
   path: '/scripts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrevisRoute = PrevisRouteImport.update({
+  id: '/previs',
+  path: '/previs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PlatformsRoute = PlatformsRouteImport.update({
@@ -163,6 +186,16 @@ const ApiV1ScriptsRoute = ApiV1ScriptsRouteImport.update({
   path: '/api/v1/scripts',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiV1PrevisGroupsRoute = ApiV1PrevisGroupsRouteImport.update({
+  id: '/api/v1/previs-groups',
+  path: '/api/v1/previs-groups',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiV1PrevisRoute = ApiV1PrevisRouteImport.update({
+  id: '/api/v1/previs',
+  path: '/api/v1/previs',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiV1PlatformAccountsRoute = ApiV1PlatformAccountsRouteImport.update({
   id: '/api/v1/platform-accounts',
   path: '/api/v1/platform-accounts',
@@ -218,6 +251,29 @@ const ApiV1PromptsOptimizeRoute = ApiV1PromptsOptimizeRouteImport.update({
   path: '/api/v1/prompts/optimize',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiV1PrevisSceneIdRoute = ApiV1PrevisSceneIdRouteImport.update({
+  id: '/$sceneId',
+  path: '/$sceneId',
+  getParentRoute: () => ApiV1PrevisRoute,
+} as any)
+const ApiV1PrevisRevisionsRevisionIdRoute =
+  ApiV1PrevisRevisionsRevisionIdRouteImport.update({
+    id: '/api/v1/previs-revisions/$revisionId',
+    path: '/api/v1/previs-revisions/$revisionId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiV1PrevisRendersRenderIdRoute =
+  ApiV1PrevisRendersRenderIdRouteImport.update({
+    id: '/api/v1/previs-renders/$renderId',
+    path: '/api/v1/previs-renders/$renderId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiV1PrevisGroupsGroupIdRoute =
+  ApiV1PrevisGroupsGroupIdRouteImport.update({
+    id: '/$groupId',
+    path: '/$groupId',
+    getParentRoute: () => ApiV1PrevisGroupsRoute,
+  } as any)
 const ApiV1GenerationsJobIdRoute = ApiV1GenerationsJobIdRouteImport.update({
   id: '/$jobId',
   path: '/$jobId',
@@ -233,6 +289,12 @@ const ApiMediaHubUploadsImageAssetRoute =
   ApiMediaHubUploadsImageAssetRouteImport.update({
     id: '/api/media-hub/uploads/image-asset',
     path: '/api/media-hub/uploads/image-asset',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiMediaHubPrevisArtifactsArtifactIdRoute =
+  ApiMediaHubPrevisArtifactsArtifactIdRouteImport.update({
+    id: '/api/media-hub/previs-artifacts/$artifactId',
+    path: '/api/media-hub/previs-artifacts/$artifactId',
     getParentRoute: () => rootRouteImport,
   } as any)
 const ApiMediaHubImagesAssetIdRoute =
@@ -258,6 +320,65 @@ const ApiV1ScriptsScriptIdAnimaticRoute =
     id: '/animatic',
     path: '/animatic',
     getParentRoute: () => ApiV1ScriptsScriptIdRoute,
+  } as any)
+const ApiV1PrevisSceneIdThumbnailRoute =
+  ApiV1PrevisSceneIdThumbnailRouteImport.update({
+    id: '/thumbnail',
+    path: '/thumbnail',
+    getParentRoute: () => ApiV1PrevisSceneIdRoute,
+  } as any)
+const ApiV1PrevisSceneIdRevisionsRoute =
+  ApiV1PrevisSceneIdRevisionsRouteImport.update({
+    id: '/revisions',
+    path: '/revisions',
+    getParentRoute: () => ApiV1PrevisSceneIdRoute,
+  } as any)
+const ApiV1PrevisSceneIdRendersRoute =
+  ApiV1PrevisSceneIdRendersRouteImport.update({
+    id: '/renders',
+    path: '/renders',
+    getParentRoute: () => ApiV1PrevisSceneIdRoute,
+  } as any)
+const ApiV1PrevisSceneIdForkRoute = ApiV1PrevisSceneIdForkRouteImport.update({
+  id: '/fork',
+  path: '/fork',
+  getParentRoute: () => ApiV1PrevisSceneIdRoute,
+} as any)
+const ApiV1PrevisRevisionsRevisionIdSourceRoute =
+  ApiV1PrevisRevisionsRevisionIdSourceRouteImport.update({
+    id: '/source',
+    path: '/source',
+    getParentRoute: () => ApiV1PrevisRevisionsRevisionIdRoute,
+  } as any)
+const ApiV1PrevisRendersRenderIdRetryRoute =
+  ApiV1PrevisRendersRenderIdRetryRouteImport.update({
+    id: '/retry',
+    path: '/retry',
+    getParentRoute: () => ApiV1PrevisRendersRenderIdRoute,
+  } as any)
+const ApiV1PrevisRendersRenderIdItemsRoute =
+  ApiV1PrevisRendersRenderIdItemsRouteImport.update({
+    id: '/items',
+    path: '/items',
+    getParentRoute: () => ApiV1PrevisRendersRenderIdRoute,
+  } as any)
+const ApiV1PrevisRendersRenderIdImageAssetsRoute =
+  ApiV1PrevisRendersRenderIdImageAssetsRouteImport.update({
+    id: '/image-assets',
+    path: '/image-assets',
+    getParentRoute: () => ApiV1PrevisRendersRenderIdRoute,
+  } as any)
+const ApiV1PrevisRendersRenderIdCancelRoute =
+  ApiV1PrevisRendersRenderIdCancelRouteImport.update({
+    id: '/cancel',
+    path: '/cancel',
+    getParentRoute: () => ApiV1PrevisRendersRenderIdRoute,
+  } as any)
+const ApiV1PrevisArtifactsArtifactIdDownloadRoute =
+  ApiV1PrevisArtifactsArtifactIdDownloadRouteImport.update({
+    id: '/api/v1/previs-artifacts/$artifactId/download',
+    path: '/api/v1/previs-artifacts/$artifactId/download',
+    getParentRoute: () => rootRouteImport,
   } as any)
 const ApiV1GenerationsJobIdXiaohongshuPackageRoute =
   ApiV1GenerationsJobIdXiaohongshuPackageRouteImport.update({
@@ -355,6 +476,7 @@ export interface FileRoutesByFullPath {
   '/agent-api': typeof AgentApiRoute
   '/images': typeof ImagesRoute
   '/platforms': typeof PlatformsRoute
+  '/previs': typeof PrevisRoute
   '/scripts': typeof ScriptsRoute
   '/settings': typeof SettingsRoute
   '/videos': typeof VideosRoute
@@ -372,15 +494,22 @@ export interface FileRoutesByFullPath {
   '/api/v1/generations': typeof ApiV1GenerationsRouteWithChildren
   '/api/v1/image-assets': typeof ApiV1ImageAssetsRoute
   '/api/v1/platform-accounts': typeof ApiV1PlatformAccountsRoute
+  '/api/v1/previs': typeof ApiV1PrevisRouteWithChildren
+  '/api/v1/previs-groups': typeof ApiV1PrevisGroupsRouteWithChildren
   '/api/v1/scripts': typeof ApiV1ScriptsRouteWithChildren
   '/generations/$jobId/edit': typeof GenerationsJobIdEditRoute
   '/oauth/douyin/callback': typeof OauthDouyinCallbackRoute
   '/oauth/instagram/callback': typeof OauthInstagramCallbackRoute
   '/oauth/youtube/callback': typeof OauthYoutubeCallbackRoute
   '/api/media-hub/images/$assetId': typeof ApiMediaHubImagesAssetIdRoute
+  '/api/media-hub/previs-artifacts/$artifactId': typeof ApiMediaHubPrevisArtifactsArtifactIdRoute
   '/api/media-hub/uploads/image-asset': typeof ApiMediaHubUploadsImageAssetRoute
   '/api/media-hub/uploads/reference-image': typeof ApiMediaHubUploadsReferenceImageRoute
   '/api/v1/generations/$jobId': typeof ApiV1GenerationsJobIdRouteWithChildren
+  '/api/v1/previs-groups/$groupId': typeof ApiV1PrevisGroupsGroupIdRoute
+  '/api/v1/previs-renders/$renderId': typeof ApiV1PrevisRendersRenderIdRouteWithChildren
+  '/api/v1/previs-revisions/$revisionId': typeof ApiV1PrevisRevisionsRevisionIdRouteWithChildren
+  '/api/v1/previs/$sceneId': typeof ApiV1PrevisSceneIdRouteWithChildren
   '/api/v1/prompts/optimize': typeof ApiV1PromptsOptimizeRoute
   '/api/v1/scripts/$scriptId': typeof ApiV1ScriptsScriptIdRouteWithChildren
   '/api/v1/scripts/analyze': typeof ApiV1ScriptsAnalyzeRoute
@@ -393,6 +522,16 @@ export interface FileRoutesByFullPath {
   '/api/v1/generations/$jobId/retry': typeof ApiV1GenerationsJobIdRetryRoute
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
   '/api/v1/generations/$jobId/xiaohongshu-package': typeof ApiV1GenerationsJobIdXiaohongshuPackageRoute
+  '/api/v1/previs-artifacts/$artifactId/download': typeof ApiV1PrevisArtifactsArtifactIdDownloadRoute
+  '/api/v1/previs-renders/$renderId/cancel': typeof ApiV1PrevisRendersRenderIdCancelRoute
+  '/api/v1/previs-renders/$renderId/image-assets': typeof ApiV1PrevisRendersRenderIdImageAssetsRoute
+  '/api/v1/previs-renders/$renderId/items': typeof ApiV1PrevisRendersRenderIdItemsRoute
+  '/api/v1/previs-renders/$renderId/retry': typeof ApiV1PrevisRendersRenderIdRetryRoute
+  '/api/v1/previs-revisions/$revisionId/source': typeof ApiV1PrevisRevisionsRevisionIdSourceRoute
+  '/api/v1/previs/$sceneId/fork': typeof ApiV1PrevisSceneIdForkRoute
+  '/api/v1/previs/$sceneId/renders': typeof ApiV1PrevisSceneIdRendersRoute
+  '/api/v1/previs/$sceneId/revisions': typeof ApiV1PrevisSceneIdRevisionsRoute
+  '/api/v1/previs/$sceneId/thumbnail': typeof ApiV1PrevisSceneIdThumbnailRoute
   '/api/v1/scripts/$scriptId/animatic': typeof ApiV1ScriptsScriptIdAnimaticRouteWithChildren
   '/api/v1/scripts/$scriptId/assemble': typeof ApiV1ScriptsScriptIdAssembleRoute
   '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
@@ -410,6 +549,7 @@ export interface FileRoutesByTo {
   '/agent-api': typeof AgentApiRoute
   '/images': typeof ImagesRoute
   '/platforms': typeof PlatformsRoute
+  '/previs': typeof PrevisRoute
   '/scripts': typeof ScriptsRoute
   '/settings': typeof SettingsRoute
   '/videos': typeof VideosRoute
@@ -427,15 +567,22 @@ export interface FileRoutesByTo {
   '/api/v1/generations': typeof ApiV1GenerationsRouteWithChildren
   '/api/v1/image-assets': typeof ApiV1ImageAssetsRoute
   '/api/v1/platform-accounts': typeof ApiV1PlatformAccountsRoute
+  '/api/v1/previs': typeof ApiV1PrevisRouteWithChildren
+  '/api/v1/previs-groups': typeof ApiV1PrevisGroupsRouteWithChildren
   '/api/v1/scripts': typeof ApiV1ScriptsRouteWithChildren
   '/generations/$jobId/edit': typeof GenerationsJobIdEditRoute
   '/oauth/douyin/callback': typeof OauthDouyinCallbackRoute
   '/oauth/instagram/callback': typeof OauthInstagramCallbackRoute
   '/oauth/youtube/callback': typeof OauthYoutubeCallbackRoute
   '/api/media-hub/images/$assetId': typeof ApiMediaHubImagesAssetIdRoute
+  '/api/media-hub/previs-artifacts/$artifactId': typeof ApiMediaHubPrevisArtifactsArtifactIdRoute
   '/api/media-hub/uploads/image-asset': typeof ApiMediaHubUploadsImageAssetRoute
   '/api/media-hub/uploads/reference-image': typeof ApiMediaHubUploadsReferenceImageRoute
   '/api/v1/generations/$jobId': typeof ApiV1GenerationsJobIdRouteWithChildren
+  '/api/v1/previs-groups/$groupId': typeof ApiV1PrevisGroupsGroupIdRoute
+  '/api/v1/previs-renders/$renderId': typeof ApiV1PrevisRendersRenderIdRouteWithChildren
+  '/api/v1/previs-revisions/$revisionId': typeof ApiV1PrevisRevisionsRevisionIdRouteWithChildren
+  '/api/v1/previs/$sceneId': typeof ApiV1PrevisSceneIdRouteWithChildren
   '/api/v1/prompts/optimize': typeof ApiV1PromptsOptimizeRoute
   '/api/v1/scripts/$scriptId': typeof ApiV1ScriptsScriptIdRouteWithChildren
   '/api/v1/scripts/analyze': typeof ApiV1ScriptsAnalyzeRoute
@@ -448,6 +595,16 @@ export interface FileRoutesByTo {
   '/api/v1/generations/$jobId/retry': typeof ApiV1GenerationsJobIdRetryRoute
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
   '/api/v1/generations/$jobId/xiaohongshu-package': typeof ApiV1GenerationsJobIdXiaohongshuPackageRoute
+  '/api/v1/previs-artifacts/$artifactId/download': typeof ApiV1PrevisArtifactsArtifactIdDownloadRoute
+  '/api/v1/previs-renders/$renderId/cancel': typeof ApiV1PrevisRendersRenderIdCancelRoute
+  '/api/v1/previs-renders/$renderId/image-assets': typeof ApiV1PrevisRendersRenderIdImageAssetsRoute
+  '/api/v1/previs-renders/$renderId/items': typeof ApiV1PrevisRendersRenderIdItemsRoute
+  '/api/v1/previs-renders/$renderId/retry': typeof ApiV1PrevisRendersRenderIdRetryRoute
+  '/api/v1/previs-revisions/$revisionId/source': typeof ApiV1PrevisRevisionsRevisionIdSourceRoute
+  '/api/v1/previs/$sceneId/fork': typeof ApiV1PrevisSceneIdForkRoute
+  '/api/v1/previs/$sceneId/renders': typeof ApiV1PrevisSceneIdRendersRoute
+  '/api/v1/previs/$sceneId/revisions': typeof ApiV1PrevisSceneIdRevisionsRoute
+  '/api/v1/previs/$sceneId/thumbnail': typeof ApiV1PrevisSceneIdThumbnailRoute
   '/api/v1/scripts/$scriptId/animatic': typeof ApiV1ScriptsScriptIdAnimaticRouteWithChildren
   '/api/v1/scripts/$scriptId/assemble': typeof ApiV1ScriptsScriptIdAssembleRoute
   '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
@@ -466,6 +623,7 @@ export interface FileRoutesById {
   '/agent-api': typeof AgentApiRoute
   '/images': typeof ImagesRoute
   '/platforms': typeof PlatformsRoute
+  '/previs': typeof PrevisRoute
   '/scripts': typeof ScriptsRoute
   '/settings': typeof SettingsRoute
   '/videos': typeof VideosRoute
@@ -483,15 +641,22 @@ export interface FileRoutesById {
   '/api/v1/generations': typeof ApiV1GenerationsRouteWithChildren
   '/api/v1/image-assets': typeof ApiV1ImageAssetsRoute
   '/api/v1/platform-accounts': typeof ApiV1PlatformAccountsRoute
+  '/api/v1/previs': typeof ApiV1PrevisRouteWithChildren
+  '/api/v1/previs-groups': typeof ApiV1PrevisGroupsRouteWithChildren
   '/api/v1/scripts': typeof ApiV1ScriptsRouteWithChildren
   '/generations/$jobId/edit': typeof GenerationsJobIdEditRoute
   '/oauth/douyin/callback': typeof OauthDouyinCallbackRoute
   '/oauth/instagram/callback': typeof OauthInstagramCallbackRoute
   '/oauth/youtube/callback': typeof OauthYoutubeCallbackRoute
   '/api/media-hub/images/$assetId': typeof ApiMediaHubImagesAssetIdRoute
+  '/api/media-hub/previs-artifacts/$artifactId': typeof ApiMediaHubPrevisArtifactsArtifactIdRoute
   '/api/media-hub/uploads/image-asset': typeof ApiMediaHubUploadsImageAssetRoute
   '/api/media-hub/uploads/reference-image': typeof ApiMediaHubUploadsReferenceImageRoute
   '/api/v1/generations/$jobId': typeof ApiV1GenerationsJobIdRouteWithChildren
+  '/api/v1/previs-groups/$groupId': typeof ApiV1PrevisGroupsGroupIdRoute
+  '/api/v1/previs-renders/$renderId': typeof ApiV1PrevisRendersRenderIdRouteWithChildren
+  '/api/v1/previs-revisions/$revisionId': typeof ApiV1PrevisRevisionsRevisionIdRouteWithChildren
+  '/api/v1/previs/$sceneId': typeof ApiV1PrevisSceneIdRouteWithChildren
   '/api/v1/prompts/optimize': typeof ApiV1PromptsOptimizeRoute
   '/api/v1/scripts/$scriptId': typeof ApiV1ScriptsScriptIdRouteWithChildren
   '/api/v1/scripts/analyze': typeof ApiV1ScriptsAnalyzeRoute
@@ -504,6 +669,16 @@ export interface FileRoutesById {
   '/api/v1/generations/$jobId/retry': typeof ApiV1GenerationsJobIdRetryRoute
   '/api/v1/generations/$jobId/video': typeof ApiV1GenerationsJobIdVideoRoute
   '/api/v1/generations/$jobId/xiaohongshu-package': typeof ApiV1GenerationsJobIdXiaohongshuPackageRoute
+  '/api/v1/previs-artifacts/$artifactId/download': typeof ApiV1PrevisArtifactsArtifactIdDownloadRoute
+  '/api/v1/previs-renders/$renderId/cancel': typeof ApiV1PrevisRendersRenderIdCancelRoute
+  '/api/v1/previs-renders/$renderId/image-assets': typeof ApiV1PrevisRendersRenderIdImageAssetsRoute
+  '/api/v1/previs-renders/$renderId/items': typeof ApiV1PrevisRendersRenderIdItemsRoute
+  '/api/v1/previs-renders/$renderId/retry': typeof ApiV1PrevisRendersRenderIdRetryRoute
+  '/api/v1/previs-revisions/$revisionId/source': typeof ApiV1PrevisRevisionsRevisionIdSourceRoute
+  '/api/v1/previs/$sceneId/fork': typeof ApiV1PrevisSceneIdForkRoute
+  '/api/v1/previs/$sceneId/renders': typeof ApiV1PrevisSceneIdRendersRoute
+  '/api/v1/previs/$sceneId/revisions': typeof ApiV1PrevisSceneIdRevisionsRoute
+  '/api/v1/previs/$sceneId/thumbnail': typeof ApiV1PrevisSceneIdThumbnailRoute
   '/api/v1/scripts/$scriptId/animatic': typeof ApiV1ScriptsScriptIdAnimaticRouteWithChildren
   '/api/v1/scripts/$scriptId/assemble': typeof ApiV1ScriptsScriptIdAssembleRoute
   '/api/v1/scripts/$scriptId/generate': typeof ApiV1ScriptsScriptIdGenerateRoute
@@ -523,6 +698,7 @@ export interface FileRouteTypes {
     | '/agent-api'
     | '/images'
     | '/platforms'
+    | '/previs'
     | '/scripts'
     | '/settings'
     | '/videos'
@@ -540,15 +716,22 @@ export interface FileRouteTypes {
     | '/api/v1/generations'
     | '/api/v1/image-assets'
     | '/api/v1/platform-accounts'
+    | '/api/v1/previs'
+    | '/api/v1/previs-groups'
     | '/api/v1/scripts'
     | '/generations/$jobId/edit'
     | '/oauth/douyin/callback'
     | '/oauth/instagram/callback'
     | '/oauth/youtube/callback'
     | '/api/media-hub/images/$assetId'
+    | '/api/media-hub/previs-artifacts/$artifactId'
     | '/api/media-hub/uploads/image-asset'
     | '/api/media-hub/uploads/reference-image'
     | '/api/v1/generations/$jobId'
+    | '/api/v1/previs-groups/$groupId'
+    | '/api/v1/previs-renders/$renderId'
+    | '/api/v1/previs-revisions/$revisionId'
+    | '/api/v1/previs/$sceneId'
     | '/api/v1/prompts/optimize'
     | '/api/v1/scripts/$scriptId'
     | '/api/v1/scripts/analyze'
@@ -561,6 +744,16 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/retry'
     | '/api/v1/generations/$jobId/video'
     | '/api/v1/generations/$jobId/xiaohongshu-package'
+    | '/api/v1/previs-artifacts/$artifactId/download'
+    | '/api/v1/previs-renders/$renderId/cancel'
+    | '/api/v1/previs-renders/$renderId/image-assets'
+    | '/api/v1/previs-renders/$renderId/items'
+    | '/api/v1/previs-renders/$renderId/retry'
+    | '/api/v1/previs-revisions/$revisionId/source'
+    | '/api/v1/previs/$sceneId/fork'
+    | '/api/v1/previs/$sceneId/renders'
+    | '/api/v1/previs/$sceneId/revisions'
+    | '/api/v1/previs/$sceneId/thumbnail'
     | '/api/v1/scripts/$scriptId/animatic'
     | '/api/v1/scripts/$scriptId/assemble'
     | '/api/v1/scripts/$scriptId/generate'
@@ -578,6 +771,7 @@ export interface FileRouteTypes {
     | '/agent-api'
     | '/images'
     | '/platforms'
+    | '/previs'
     | '/scripts'
     | '/settings'
     | '/videos'
@@ -595,15 +789,22 @@ export interface FileRouteTypes {
     | '/api/v1/generations'
     | '/api/v1/image-assets'
     | '/api/v1/platform-accounts'
+    | '/api/v1/previs'
+    | '/api/v1/previs-groups'
     | '/api/v1/scripts'
     | '/generations/$jobId/edit'
     | '/oauth/douyin/callback'
     | '/oauth/instagram/callback'
     | '/oauth/youtube/callback'
     | '/api/media-hub/images/$assetId'
+    | '/api/media-hub/previs-artifacts/$artifactId'
     | '/api/media-hub/uploads/image-asset'
     | '/api/media-hub/uploads/reference-image'
     | '/api/v1/generations/$jobId'
+    | '/api/v1/previs-groups/$groupId'
+    | '/api/v1/previs-renders/$renderId'
+    | '/api/v1/previs-revisions/$revisionId'
+    | '/api/v1/previs/$sceneId'
     | '/api/v1/prompts/optimize'
     | '/api/v1/scripts/$scriptId'
     | '/api/v1/scripts/analyze'
@@ -616,6 +817,16 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/retry'
     | '/api/v1/generations/$jobId/video'
     | '/api/v1/generations/$jobId/xiaohongshu-package'
+    | '/api/v1/previs-artifacts/$artifactId/download'
+    | '/api/v1/previs-renders/$renderId/cancel'
+    | '/api/v1/previs-renders/$renderId/image-assets'
+    | '/api/v1/previs-renders/$renderId/items'
+    | '/api/v1/previs-renders/$renderId/retry'
+    | '/api/v1/previs-revisions/$revisionId/source'
+    | '/api/v1/previs/$sceneId/fork'
+    | '/api/v1/previs/$sceneId/renders'
+    | '/api/v1/previs/$sceneId/revisions'
+    | '/api/v1/previs/$sceneId/thumbnail'
     | '/api/v1/scripts/$scriptId/animatic'
     | '/api/v1/scripts/$scriptId/assemble'
     | '/api/v1/scripts/$scriptId/generate'
@@ -633,6 +844,7 @@ export interface FileRouteTypes {
     | '/agent-api'
     | '/images'
     | '/platforms'
+    | '/previs'
     | '/scripts'
     | '/settings'
     | '/videos'
@@ -650,15 +862,22 @@ export interface FileRouteTypes {
     | '/api/v1/generations'
     | '/api/v1/image-assets'
     | '/api/v1/platform-accounts'
+    | '/api/v1/previs'
+    | '/api/v1/previs-groups'
     | '/api/v1/scripts'
     | '/generations/$jobId/edit'
     | '/oauth/douyin/callback'
     | '/oauth/instagram/callback'
     | '/oauth/youtube/callback'
     | '/api/media-hub/images/$assetId'
+    | '/api/media-hub/previs-artifacts/$artifactId'
     | '/api/media-hub/uploads/image-asset'
     | '/api/media-hub/uploads/reference-image'
     | '/api/v1/generations/$jobId'
+    | '/api/v1/previs-groups/$groupId'
+    | '/api/v1/previs-renders/$renderId'
+    | '/api/v1/previs-revisions/$revisionId'
+    | '/api/v1/previs/$sceneId'
     | '/api/v1/prompts/optimize'
     | '/api/v1/scripts/$scriptId'
     | '/api/v1/scripts/analyze'
@@ -671,6 +890,16 @@ export interface FileRouteTypes {
     | '/api/v1/generations/$jobId/retry'
     | '/api/v1/generations/$jobId/video'
     | '/api/v1/generations/$jobId/xiaohongshu-package'
+    | '/api/v1/previs-artifacts/$artifactId/download'
+    | '/api/v1/previs-renders/$renderId/cancel'
+    | '/api/v1/previs-renders/$renderId/image-assets'
+    | '/api/v1/previs-renders/$renderId/items'
+    | '/api/v1/previs-renders/$renderId/retry'
+    | '/api/v1/previs-revisions/$revisionId/source'
+    | '/api/v1/previs/$sceneId/fork'
+    | '/api/v1/previs/$sceneId/renders'
+    | '/api/v1/previs/$sceneId/revisions'
+    | '/api/v1/previs/$sceneId/thumbnail'
     | '/api/v1/scripts/$scriptId/animatic'
     | '/api/v1/scripts/$scriptId/assemble'
     | '/api/v1/scripts/$scriptId/generate'
@@ -689,6 +918,7 @@ export interface RootRouteChildren {
   AgentApiRoute: typeof AgentApiRoute
   ImagesRoute: typeof ImagesRoute
   PlatformsRoute: typeof PlatformsRoute
+  PrevisRoute: typeof PrevisRoute
   ScriptsRoute: typeof ScriptsRoute
   SettingsRoute: typeof SettingsRoute
   VideosRoute: typeof VideosRoute
@@ -706,17 +936,23 @@ export interface RootRouteChildren {
   ApiV1GenerationsRoute: typeof ApiV1GenerationsRouteWithChildren
   ApiV1ImageAssetsRoute: typeof ApiV1ImageAssetsRoute
   ApiV1PlatformAccountsRoute: typeof ApiV1PlatformAccountsRoute
+  ApiV1PrevisRoute: typeof ApiV1PrevisRouteWithChildren
+  ApiV1PrevisGroupsRoute: typeof ApiV1PrevisGroupsRouteWithChildren
   ApiV1ScriptsRoute: typeof ApiV1ScriptsRouteWithChildren
   GenerationsJobIdEditRoute: typeof GenerationsJobIdEditRoute
   OauthDouyinCallbackRoute: typeof OauthDouyinCallbackRoute
   OauthInstagramCallbackRoute: typeof OauthInstagramCallbackRoute
   OauthYoutubeCallbackRoute: typeof OauthYoutubeCallbackRoute
   ApiMediaHubImagesAssetIdRoute: typeof ApiMediaHubImagesAssetIdRoute
+  ApiMediaHubPrevisArtifactsArtifactIdRoute: typeof ApiMediaHubPrevisArtifactsArtifactIdRoute
   ApiMediaHubUploadsImageAssetRoute: typeof ApiMediaHubUploadsImageAssetRoute
   ApiMediaHubUploadsReferenceImageRoute: typeof ApiMediaHubUploadsReferenceImageRoute
+  ApiV1PrevisRendersRenderIdRoute: typeof ApiV1PrevisRendersRenderIdRouteWithChildren
+  ApiV1PrevisRevisionsRevisionIdRoute: typeof ApiV1PrevisRevisionsRevisionIdRouteWithChildren
   ApiV1PromptsOptimizeRoute: typeof ApiV1PromptsOptimizeRoute
   ApiV1UploadsPresignRoute: typeof ApiV1UploadsPresignRoute
   ApiMediaHubGenerationJobIdVideoRoute: typeof ApiMediaHubGenerationJobIdVideoRoute
+  ApiV1PrevisArtifactsArtifactIdDownloadRoute: typeof ApiV1PrevisArtifactsArtifactIdDownloadRoute
   ApiMediaHubScriptsScriptIdAnimaticVersionVideoRoute: typeof ApiMediaHubScriptsScriptIdAnimaticVersionVideoRoute
 }
 
@@ -741,6 +977,13 @@ declare module '@tanstack/react-router' {
       path: '/scripts'
       fullPath: '/scripts'
       preLoaderRoute: typeof ScriptsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/previs': {
+      id: '/previs'
+      path: '/previs'
+      fullPath: '/previs'
+      preLoaderRoute: typeof PrevisRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/platforms': {
@@ -862,6 +1105,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiV1ScriptsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/v1/previs-groups': {
+      id: '/api/v1/previs-groups'
+      path: '/api/v1/previs-groups'
+      fullPath: '/api/v1/previs-groups'
+      preLoaderRoute: typeof ApiV1PrevisGroupsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/previs': {
+      id: '/api/v1/previs'
+      path: '/api/v1/previs'
+      fullPath: '/api/v1/previs'
+      preLoaderRoute: typeof ApiV1PrevisRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/v1/platform-accounts': {
       id: '/api/v1/platform-accounts'
       path: '/api/v1/platform-accounts'
@@ -939,6 +1196,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiV1PromptsOptimizeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/v1/previs/$sceneId': {
+      id: '/api/v1/previs/$sceneId'
+      path: '/$sceneId'
+      fullPath: '/api/v1/previs/$sceneId'
+      preLoaderRoute: typeof ApiV1PrevisSceneIdRouteImport
+      parentRoute: typeof ApiV1PrevisRoute
+    }
+    '/api/v1/previs-revisions/$revisionId': {
+      id: '/api/v1/previs-revisions/$revisionId'
+      path: '/api/v1/previs-revisions/$revisionId'
+      fullPath: '/api/v1/previs-revisions/$revisionId'
+      preLoaderRoute: typeof ApiV1PrevisRevisionsRevisionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/previs-renders/$renderId': {
+      id: '/api/v1/previs-renders/$renderId'
+      path: '/api/v1/previs-renders/$renderId'
+      fullPath: '/api/v1/previs-renders/$renderId'
+      preLoaderRoute: typeof ApiV1PrevisRendersRenderIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/previs-groups/$groupId': {
+      id: '/api/v1/previs-groups/$groupId'
+      path: '/$groupId'
+      fullPath: '/api/v1/previs-groups/$groupId'
+      preLoaderRoute: typeof ApiV1PrevisGroupsGroupIdRouteImport
+      parentRoute: typeof ApiV1PrevisGroupsRoute
+    }
     '/api/v1/generations/$jobId': {
       id: '/api/v1/generations/$jobId'
       path: '/$jobId'
@@ -958,6 +1243,13 @@ declare module '@tanstack/react-router' {
       path: '/api/media-hub/uploads/image-asset'
       fullPath: '/api/media-hub/uploads/image-asset'
       preLoaderRoute: typeof ApiMediaHubUploadsImageAssetRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/media-hub/previs-artifacts/$artifactId': {
+      id: '/api/media-hub/previs-artifacts/$artifactId'
+      path: '/api/media-hub/previs-artifacts/$artifactId'
+      fullPath: '/api/media-hub/previs-artifacts/$artifactId'
+      preLoaderRoute: typeof ApiMediaHubPrevisArtifactsArtifactIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/media-hub/images/$assetId': {
@@ -987,6 +1279,76 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/v1/scripts/$scriptId/animatic'
       preLoaderRoute: typeof ApiV1ScriptsScriptIdAnimaticRouteImport
       parentRoute: typeof ApiV1ScriptsScriptIdRoute
+    }
+    '/api/v1/previs/$sceneId/thumbnail': {
+      id: '/api/v1/previs/$sceneId/thumbnail'
+      path: '/thumbnail'
+      fullPath: '/api/v1/previs/$sceneId/thumbnail'
+      preLoaderRoute: typeof ApiV1PrevisSceneIdThumbnailRouteImport
+      parentRoute: typeof ApiV1PrevisSceneIdRoute
+    }
+    '/api/v1/previs/$sceneId/revisions': {
+      id: '/api/v1/previs/$sceneId/revisions'
+      path: '/revisions'
+      fullPath: '/api/v1/previs/$sceneId/revisions'
+      preLoaderRoute: typeof ApiV1PrevisSceneIdRevisionsRouteImport
+      parentRoute: typeof ApiV1PrevisSceneIdRoute
+    }
+    '/api/v1/previs/$sceneId/renders': {
+      id: '/api/v1/previs/$sceneId/renders'
+      path: '/renders'
+      fullPath: '/api/v1/previs/$sceneId/renders'
+      preLoaderRoute: typeof ApiV1PrevisSceneIdRendersRouteImport
+      parentRoute: typeof ApiV1PrevisSceneIdRoute
+    }
+    '/api/v1/previs/$sceneId/fork': {
+      id: '/api/v1/previs/$sceneId/fork'
+      path: '/fork'
+      fullPath: '/api/v1/previs/$sceneId/fork'
+      preLoaderRoute: typeof ApiV1PrevisSceneIdForkRouteImport
+      parentRoute: typeof ApiV1PrevisSceneIdRoute
+    }
+    '/api/v1/previs-revisions/$revisionId/source': {
+      id: '/api/v1/previs-revisions/$revisionId/source'
+      path: '/source'
+      fullPath: '/api/v1/previs-revisions/$revisionId/source'
+      preLoaderRoute: typeof ApiV1PrevisRevisionsRevisionIdSourceRouteImport
+      parentRoute: typeof ApiV1PrevisRevisionsRevisionIdRoute
+    }
+    '/api/v1/previs-renders/$renderId/retry': {
+      id: '/api/v1/previs-renders/$renderId/retry'
+      path: '/retry'
+      fullPath: '/api/v1/previs-renders/$renderId/retry'
+      preLoaderRoute: typeof ApiV1PrevisRendersRenderIdRetryRouteImport
+      parentRoute: typeof ApiV1PrevisRendersRenderIdRoute
+    }
+    '/api/v1/previs-renders/$renderId/items': {
+      id: '/api/v1/previs-renders/$renderId/items'
+      path: '/items'
+      fullPath: '/api/v1/previs-renders/$renderId/items'
+      preLoaderRoute: typeof ApiV1PrevisRendersRenderIdItemsRouteImport
+      parentRoute: typeof ApiV1PrevisRendersRenderIdRoute
+    }
+    '/api/v1/previs-renders/$renderId/image-assets': {
+      id: '/api/v1/previs-renders/$renderId/image-assets'
+      path: '/image-assets'
+      fullPath: '/api/v1/previs-renders/$renderId/image-assets'
+      preLoaderRoute: typeof ApiV1PrevisRendersRenderIdImageAssetsRouteImport
+      parentRoute: typeof ApiV1PrevisRendersRenderIdRoute
+    }
+    '/api/v1/previs-renders/$renderId/cancel': {
+      id: '/api/v1/previs-renders/$renderId/cancel'
+      path: '/cancel'
+      fullPath: '/api/v1/previs-renders/$renderId/cancel'
+      preLoaderRoute: typeof ApiV1PrevisRendersRenderIdCancelRouteImport
+      parentRoute: typeof ApiV1PrevisRendersRenderIdRoute
+    }
+    '/api/v1/previs-artifacts/$artifactId/download': {
+      id: '/api/v1/previs-artifacts/$artifactId/download'
+      path: '/api/v1/previs-artifacts/$artifactId/download'
+      fullPath: '/api/v1/previs-artifacts/$artifactId/download'
+      preLoaderRoute: typeof ApiV1PrevisArtifactsArtifactIdDownloadRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/v1/generations/$jobId/xiaohongshu-package': {
       id: '/api/v1/generations/$jobId/xiaohongshu-package'
@@ -1131,6 +1493,46 @@ const ApiV1GenerationsRouteChildren: ApiV1GenerationsRouteChildren = {
 const ApiV1GenerationsRouteWithChildren =
   ApiV1GenerationsRoute._addFileChildren(ApiV1GenerationsRouteChildren)
 
+interface ApiV1PrevisSceneIdRouteChildren {
+  ApiV1PrevisSceneIdForkRoute: typeof ApiV1PrevisSceneIdForkRoute
+  ApiV1PrevisSceneIdRendersRoute: typeof ApiV1PrevisSceneIdRendersRoute
+  ApiV1PrevisSceneIdRevisionsRoute: typeof ApiV1PrevisSceneIdRevisionsRoute
+  ApiV1PrevisSceneIdThumbnailRoute: typeof ApiV1PrevisSceneIdThumbnailRoute
+}
+
+const ApiV1PrevisSceneIdRouteChildren: ApiV1PrevisSceneIdRouteChildren = {
+  ApiV1PrevisSceneIdForkRoute: ApiV1PrevisSceneIdForkRoute,
+  ApiV1PrevisSceneIdRendersRoute: ApiV1PrevisSceneIdRendersRoute,
+  ApiV1PrevisSceneIdRevisionsRoute: ApiV1PrevisSceneIdRevisionsRoute,
+  ApiV1PrevisSceneIdThumbnailRoute: ApiV1PrevisSceneIdThumbnailRoute,
+}
+
+const ApiV1PrevisSceneIdRouteWithChildren =
+  ApiV1PrevisSceneIdRoute._addFileChildren(ApiV1PrevisSceneIdRouteChildren)
+
+interface ApiV1PrevisRouteChildren {
+  ApiV1PrevisSceneIdRoute: typeof ApiV1PrevisSceneIdRouteWithChildren
+}
+
+const ApiV1PrevisRouteChildren: ApiV1PrevisRouteChildren = {
+  ApiV1PrevisSceneIdRoute: ApiV1PrevisSceneIdRouteWithChildren,
+}
+
+const ApiV1PrevisRouteWithChildren = ApiV1PrevisRoute._addFileChildren(
+  ApiV1PrevisRouteChildren,
+)
+
+interface ApiV1PrevisGroupsRouteChildren {
+  ApiV1PrevisGroupsGroupIdRoute: typeof ApiV1PrevisGroupsGroupIdRoute
+}
+
+const ApiV1PrevisGroupsRouteChildren: ApiV1PrevisGroupsRouteChildren = {
+  ApiV1PrevisGroupsGroupIdRoute: ApiV1PrevisGroupsGroupIdRoute,
+}
+
+const ApiV1PrevisGroupsRouteWithChildren =
+  ApiV1PrevisGroupsRoute._addFileChildren(ApiV1PrevisGroupsRouteChildren)
+
 interface ApiV1ScriptsScriptIdAnimaticRouteChildren {
   ApiV1ScriptsScriptIdAnimaticVersionVideoRoute: typeof ApiV1ScriptsScriptIdAnimaticVersionVideoRoute
 }
@@ -1208,11 +1610,49 @@ const ApiV1ScriptsRouteWithChildren = ApiV1ScriptsRoute._addFileChildren(
   ApiV1ScriptsRouteChildren,
 )
 
+interface ApiV1PrevisRendersRenderIdRouteChildren {
+  ApiV1PrevisRendersRenderIdCancelRoute: typeof ApiV1PrevisRendersRenderIdCancelRoute
+  ApiV1PrevisRendersRenderIdImageAssetsRoute: typeof ApiV1PrevisRendersRenderIdImageAssetsRoute
+  ApiV1PrevisRendersRenderIdItemsRoute: typeof ApiV1PrevisRendersRenderIdItemsRoute
+  ApiV1PrevisRendersRenderIdRetryRoute: typeof ApiV1PrevisRendersRenderIdRetryRoute
+}
+
+const ApiV1PrevisRendersRenderIdRouteChildren: ApiV1PrevisRendersRenderIdRouteChildren =
+  {
+    ApiV1PrevisRendersRenderIdCancelRoute:
+      ApiV1PrevisRendersRenderIdCancelRoute,
+    ApiV1PrevisRendersRenderIdImageAssetsRoute:
+      ApiV1PrevisRendersRenderIdImageAssetsRoute,
+    ApiV1PrevisRendersRenderIdItemsRoute: ApiV1PrevisRendersRenderIdItemsRoute,
+    ApiV1PrevisRendersRenderIdRetryRoute: ApiV1PrevisRendersRenderIdRetryRoute,
+  }
+
+const ApiV1PrevisRendersRenderIdRouteWithChildren =
+  ApiV1PrevisRendersRenderIdRoute._addFileChildren(
+    ApiV1PrevisRendersRenderIdRouteChildren,
+  )
+
+interface ApiV1PrevisRevisionsRevisionIdRouteChildren {
+  ApiV1PrevisRevisionsRevisionIdSourceRoute: typeof ApiV1PrevisRevisionsRevisionIdSourceRoute
+}
+
+const ApiV1PrevisRevisionsRevisionIdRouteChildren: ApiV1PrevisRevisionsRevisionIdRouteChildren =
+  {
+    ApiV1PrevisRevisionsRevisionIdSourceRoute:
+      ApiV1PrevisRevisionsRevisionIdSourceRoute,
+  }
+
+const ApiV1PrevisRevisionsRevisionIdRouteWithChildren =
+  ApiV1PrevisRevisionsRevisionIdRoute._addFileChildren(
+    ApiV1PrevisRevisionsRevisionIdRouteChildren,
+  )
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AgentApiRoute: AgentApiRoute,
   ImagesRoute: ImagesRoute,
   PlatformsRoute: PlatformsRoute,
+  PrevisRoute: PrevisRoute,
   ScriptsRoute: ScriptsRoute,
   SettingsRoute: SettingsRoute,
   VideosRoute: VideosRoute,
@@ -1230,17 +1670,26 @@ const rootRouteChildren: RootRouteChildren = {
   ApiV1GenerationsRoute: ApiV1GenerationsRouteWithChildren,
   ApiV1ImageAssetsRoute: ApiV1ImageAssetsRoute,
   ApiV1PlatformAccountsRoute: ApiV1PlatformAccountsRoute,
+  ApiV1PrevisRoute: ApiV1PrevisRouteWithChildren,
+  ApiV1PrevisGroupsRoute: ApiV1PrevisGroupsRouteWithChildren,
   ApiV1ScriptsRoute: ApiV1ScriptsRouteWithChildren,
   GenerationsJobIdEditRoute: GenerationsJobIdEditRoute,
   OauthDouyinCallbackRoute: OauthDouyinCallbackRoute,
   OauthInstagramCallbackRoute: OauthInstagramCallbackRoute,
   OauthYoutubeCallbackRoute: OauthYoutubeCallbackRoute,
   ApiMediaHubImagesAssetIdRoute: ApiMediaHubImagesAssetIdRoute,
+  ApiMediaHubPrevisArtifactsArtifactIdRoute:
+    ApiMediaHubPrevisArtifactsArtifactIdRoute,
   ApiMediaHubUploadsImageAssetRoute: ApiMediaHubUploadsImageAssetRoute,
   ApiMediaHubUploadsReferenceImageRoute: ApiMediaHubUploadsReferenceImageRoute,
+  ApiV1PrevisRendersRenderIdRoute: ApiV1PrevisRendersRenderIdRouteWithChildren,
+  ApiV1PrevisRevisionsRevisionIdRoute:
+    ApiV1PrevisRevisionsRevisionIdRouteWithChildren,
   ApiV1PromptsOptimizeRoute: ApiV1PromptsOptimizeRoute,
   ApiV1UploadsPresignRoute: ApiV1UploadsPresignRoute,
   ApiMediaHubGenerationJobIdVideoRoute: ApiMediaHubGenerationJobIdVideoRoute,
+  ApiV1PrevisArtifactsArtifactIdDownloadRoute:
+    ApiV1PrevisArtifactsArtifactIdDownloadRoute,
   ApiMediaHubScriptsScriptIdAnimaticVersionVideoRoute:
     ApiMediaHubScriptsScriptIdAnimaticVersionVideoRoute,
 }

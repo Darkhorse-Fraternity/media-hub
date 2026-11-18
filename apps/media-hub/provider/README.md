@@ -1,5 +1,33 @@
 # Media Hub H3 Provider
 
+## Whole-video reference generation
+
+The Agent API supports `POST /api/v1/generations` with `generation_mode: reference`
+and an uploaded `reference_video`. This creates a new video without a successful
+source generation job. It reuses the configured `h3EditProfile` model; the Provider
+advertises `supports_reference_video: true` separately from its legacy `kind: edit`
+classification. Older Providers fail capability preflight.
+
+The initial API accepts one H.264 MP4 (50 MB maximum), 24 FPS, matching output
+aspect, and up to four appearance images. One job represents one 5–15 second shot,
+with the reference aligned to the output's 17n+5 frame count. The API probes media
+before scheduling and persists its SHA-256 and dimensions in `reference_video`;
+the worker checks that checksum again before submission.
+
+Worker requests use `parameters.reference_mode: generation`,
+`preserve_source_audio: false`, and artifact role `reference_video`. The whole
+decoded sequence feeds `MiniMaxH3ReferenceToVideo`, alongside appearance images.
+Mapping retains blocking, motion, camera and occlusion while replacing proxy
+appearance. Existing edits omit the mode and continue requiring one `source_video`.
+
+Apply migration `0026_h3_reference_generation`, deploy the updated Provider and
+API/worker, then verify the advertised capability before submitting work. Use
+`.Codex/skills/previs-workbench` for white-model scene rendering and
+`.Codex/skills/media-hub-video` for API calls. FFprobe is needed by the API. Contract/graph tests do not establish
+visual fidelity of a real H3 render, which still requires take review.
+
+## Provider setup
+
 This directory contains a Provider implementation for a GPU host. It supports
 the FL2VA video profile, the Ref2VA video editing profile, and the HiDream-O1
 image generation/editing profile.

@@ -7,6 +7,7 @@ import {
   HeadContent,
   Outlet,
   Scripts,
+  useRouterState,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 
@@ -49,6 +50,9 @@ function RootComponent() {
 }
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+  const whiteModelWorkspace = useRouterState({
+    select: (state) => state.location.pathname === "/previs",
+  });
   return (
     <html lang="zh" suppressHydrationWarning>
       <head>
@@ -61,7 +65,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       <body className="bg-background text-foreground min-h-screen font-sans antialiased">
         <ThemeProvider>
           {children}
-          <FloatingMediaQueue />
+          {!whiteModelWorkspace && <FloatingMediaQueue />}
           <Toaster />
         </ThemeProvider>
         <TanStackRouterDevtools position="bottom-right" />

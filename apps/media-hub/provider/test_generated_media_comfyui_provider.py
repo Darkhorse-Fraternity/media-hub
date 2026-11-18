@@ -147,6 +147,7 @@ class Ref2VAWorkflowTests(unittest.TestCase):
                     "model_version": "platform-managed",
                     "max_reference_images": 4,
                     "max_reference_audios": 0,
+                    "supports_reference_video": True,
                     "supports_native_av_continuation": False,
                     "minimum_steps": 20,
                 }
@@ -302,6 +303,59 @@ class Ref2VAWorkflowTests(unittest.TestCase):
         )
         conditioning = workflow["30"]["inputs"]
         self.assertNotIn("ref_video_audios.ref_video_audio_0", conditioning)
+
+    def test_reference_generation_conditions_entire_previs_without_edit_identity_or_audio(self) -> None:
+        workflow = provider._build_comfyui_h3_ref2va_prompt(
+            ref2va_profile(), source_video_ref="", reference_video_refs=["job/previs.mp4"],
+            reference_image_refs=["job/look.png"], reference_roles=["subject"],
+            positive="summary: [reference generation] Follow <Video 1>.",
+            width=960, height=544, length=124, seed=42, filename_prefix="test/previs",
+            steps=20, fps=24, preserve_source_audio=False, reference_mode="generation",
+        )
+        conditioning = workflow["30"]["inputs"]
+        self.assertEqual(workflow["20"]["inputs"]["file"], "job/previs.mp4")
+        self.assertEqual(conditioning["ref_videos.ref_video_0"], ["21", 0])
+        self.assertEqual(conditioning["ref_images.ref_image_0"], ["22", 0])
+        self.assertNotIn("ref_video_audios.ref_video_audio_0", conditioning)
+        self.assertNotIn("source clip to edit", conditioning["prompt"])
+        self.assertIn("Replace proxy geometry", conditioning["prompt"])
+
+    def test_reference_generation_request_requires_reference_video_and_rejects_proxy_audio(self) -> None:
+        profile = ref2va_profile()
+        service = object.__new__(provider.ProviderService)
+        service.config = types.SimpleNamespace(profiles={profile.name: profile}, max_outputs=4, max_source_bytes=1_000_000)
+        content = b"previs-test-bytes"
+        source = {"name": "previs.mp4", "content_type": "video/mp4", "role": "reference_video",
+                  "content_base64": base64.b64encode(content).decode(), "checksum": provider._checksum(content)}
+        spec = {"profile": profile.name, "parameters": {"reference_mode": "generation", "behavior_prompts": {"main": "Use <Video 1>."}}}
+        payload = {"schema_version": provider.REQUEST_CONTRACT, "orchestration_run_id": "previs:1", "project_id": "test",
+                   "attempt": 1, "deficits": {"main": 1}, "max_outputs": 1,
+                   "generation_spec": spec, "generation_spec_checksum": provider._checksum(provider._canonical_json(spec)), "source_artifacts": [source]}
+        normalized = service._normalize_request(payload)
+        self.assertEqual(normalized["runtime_parameters"]["reference_mode"], "generation")
+        self.assertFalse(normalized["runtime_parameters"]["preserve_source_audio"])
+        source["role"] = "source_video"
+        with self.assertRaises(provider.ProviderJobError):
+            service._normalize_request(payload)
+        source["role"] = "reference_video"
+        spec["parameters"]["preserve_source_audio"] = True
+        payload["generation_spec_checksum"] = provider._checksum(provider._canonical_json(spec))
+        with self.assertRaises(provider.ProviderJobError):
+            service._normalize_request(payload)
+
+    def test_ninth_reference_image_does_not_overwrite_conditioning_node(self) -> None:
+        workflow = provider._build_comfyui_h3_ref2va_prompt(
+            ref2va_profile(), source_video_ref="", reference_video_refs=["previs.mp4"],
+            reference_image_refs=[f"look-{i}.png" for i in range(9)], reference_roles=["subject"] * 9,
+            positive="subject_definitions: Character.\nsummary: [reference generation]\nretention_analysis: Retain motion.\ndetailed_description: Follow <Video 1>.\noverall_soundscape: No dialogue.\nnon_diegetic_music: N/A",
+            width=960, height=544, length=124, seed=42, filename_prefix="test/previs-images",
+            steps=20, fps=24, preserve_source_audio=False, reference_mode="generation",
+        )
+        inputs = workflow["30"]["inputs"]
+        self.assertNotEqual(inputs["ref_images.ref_image_8"][0], "30")
+        self.assertEqual(workflow[inputs["ref_images.ref_image_8"][0]]["class_type"], "LoadImage")
+        self.assertTrue(inputs["prompt"].startswith("subject_definitions:"))
+        self.assertEqual(inputs["prompt"].count("retention_analysis:"), 1)
 
     def test_provider_resumes_persisted_comfyui_prompt_after_restart(self) -> None:
         class FakeComfyUi:

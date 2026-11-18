@@ -182,6 +182,7 @@ export async function getMediaHubPresignedDownloadUrl(
 export async function getMediaHubObject(
   key: string,
   signal?: AbortSignal,
+  maxBytes?: number,
 ): Promise<Buffer> {
   const response = await getMediaHubClient().send(
     new GetObjectCommand({
@@ -192,6 +193,30 @@ export async function getMediaHubObject(
   );
   if (!response.Body) {
     throw new Error(`Empty body for media-hub object: ${key}`);
+  }
+  if (maxBytes !== undefined && (response.ContentLength ?? 0) > maxBytes) {
+    void response.Body.transformToWebStream()
+      .cancel()
+      .catch(() => undefined);
+    throw new Error("Media Hub object exceeds input size limit");
+  }
+  if (maxBytes !== undefined) {
+    const reader = response.Body.transformToWebStream().getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > maxBytes)
+          throw new Error("Media Hub object exceeds input size limit");
+        chunks.push(value);
+      }
+      return Buffer.concat(chunks);
+    } finally {
+      await reader.cancel();
+    }
   }
   const bytes = await response.Body.transformToByteArray();
   return Buffer.from(bytes);

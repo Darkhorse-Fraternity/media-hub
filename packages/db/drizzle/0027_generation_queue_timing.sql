@@ -1,0 +1,1 @@
+ALTER TABLE "media_generation_job" ADD COLUMN "generation_started_at" timestamp;

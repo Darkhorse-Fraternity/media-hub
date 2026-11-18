@@ -109,6 +109,7 @@ ALLOWED_PARAMETERS = {
     "cfg",
     "seed",
     "preserve_source_audio",
+    "reference_mode",
 }
 
 
@@ -1281,7 +1282,12 @@ def _build_comfyui_h3_ref2va_prompt(
     steps: int,
     fps: float,
     preserve_source_audio: bool,
+    reference_mode: str = "edit",
 ) -> dict[str, Any]:
+    if reference_mode == "generation":
+        if source_video_ref or not reference_video_refs or preserve_source_audio:
+            raise ProviderJobError("invalid_source_artifact", "reference generation requires reference videos without source audio")
+        source_video_ref, *reference_video_refs = reference_video_refs
     nodes: dict[str, Any] = {
         "10": {
             "class_type": "UNETLoader",
@@ -1309,6 +1315,8 @@ def _build_comfyui_h3_ref2va_prompt(
         "21": {"class_type": "GetVideoComponents", "inputs": {"video": ["20", 0]}},
     }
     instructions = [
+        "<Video 1> supplies blocking, subject trajectories, camera motion, timing, framing, and occlusion order. Generate a new finished scene. Replace proxy geometry and flat proxy colors using the requested subjects and appearance references."
+        if reference_mode == "generation" else
         "<Video 1> is the source clip to edit. Preserve its subject identity, camera geometry, and temporal continuity outside the requested change.",
     ]
     conditioning_inputs: dict[str, Any] = {
@@ -1351,7 +1359,7 @@ def _build_comfyui_h3_ref2va_prompt(
             f"Use <Video {index + 1}> only as an additional motion and continuity reference."
         )
     for index, image_ref in enumerate(reference_image_refs):
-        node_id = str(22 + index)
+        node_id = str(22 + index if index < 8 else 90 + index)
         picture_number = index + 1
         nodes[node_id] = {
             "class_type": "LoadImage",
@@ -1367,12 +1375,15 @@ def _build_comfyui_h3_ref2va_prompt(
             instructions.append(
                 f"Use <Picture {picture_number}> as the requested subject identity and appearance reference."
             )
-    conditioning_inputs["prompt"] = (
-        "Video editing instruction:\n"
-        + positive
-        + "\n\nReference mapping:\n"
-        + "\n".join(instructions)
-    )
+    reference_mapping = "\n".join(instructions)
+    if reference_mode == "generation":
+        boundary = positive.find("\ndetailed_description:")
+        conditioning_inputs["prompt"] = (
+            positive[:boundary] + "\n" + reference_mapping + positive[boundary:]
+            if boundary >= 0 else positive + "\n\nReference mapping:\n" + reference_mapping
+        )
+    else:
+        conditioning_inputs["prompt"] = "Video editing instruction:\n" + positive + "\n\nReference mapping:\n" + reference_mapping
     nodes["30"] = {
         "class_type": "MiniMaxH3ReferenceToVideo",
         "inputs": conditioning_inputs,
@@ -1667,6 +1678,7 @@ class ProviderService:
                     # audio only from reference videos and cannot bind a
                     # standalone <Audio N> artifact yet.
                     "max_reference_audios": 0,
+                    "supports_reference_video": profile.adapter == COMFYUI_H3_REF2VA_ADAPTER_KIND,
                     "supports_native_av_continuation": (
                         profile.adapter == COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND
                         and any(item.get("native_av_continuation", False) for item in values)
@@ -1891,6 +1903,11 @@ class ProviderService:
                 "invalid_generation_spec",
                 "generation_spec contains unsupported parameters",
             )
+        reference_mode = parameters.get("reference_mode", "edit")
+        if not isinstance(reference_mode, str) or reference_mode not in {"edit", "generation"} or (
+            "reference_mode" in parameters and profile.adapter != COMFYUI_H3_REF2VA_ADAPTER_KIND
+        ):
+            raise ProviderJobError("invalid_generation_spec", "reference_mode is supported only by Ref2VA and must be edit or generation")
         prompts = parameters.get("behavior_prompts")
         if prompts is None:
             prompts = profile.default_behavior_prompts
@@ -1967,7 +1984,7 @@ class ProviderService:
                     "generation source artifact type is not supported",
                 )
             default_role = (
-                "source_video"
+                ("reference_video" if reference_mode == "generation" else "source_video")
                 if profile.adapter == COMFYUI_H3_REF2VA_ADAPTER_KIND and is_video
                 else (
                     "reference"
@@ -2013,10 +2030,11 @@ class ProviderService:
                 for source in normalized_sources
             )
             image_count = len(normalized_sources) - video_count
-            if source_video_count != 1 or video_count > 3 or image_count > 9:
+            expected_sources = 0 if reference_mode == "generation" else 1
+            if source_video_count != expected_sources or video_count < 1 or video_count > 3 or image_count > 9:
                 raise ProviderJobError(
                     "invalid_source_artifact",
-                    "Ref2VA requires one source video and accepts up to three videos and nine images",
+                    "Ref2VA edit requires one source video; generation requires reference videos only; limits are three videos and nine images",
                 )
         elif profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
             if len(normalized_sources) > 4:
@@ -2065,13 +2083,17 @@ class ProviderService:
         normalized_parameters["cfg"] = _bounded_float(parameters.get("cfg", profile.default_cfg), "cfg", 0, 30)
         normalized_parameters["negative_prompt"] = str(parameters.get("negative_prompt", profile.default_negative_prompt))
         if profile.adapter != COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
-            preserve_source_audio = parameters.get("preserve_source_audio", True)
+            preserve_source_audio = parameters.get("preserve_source_audio", reference_mode != "generation")
             if not isinstance(preserve_source_audio, bool):
                 raise ProviderJobError(
                     "invalid_generation_spec",
                     "preserve_source_audio must be a boolean",
                 )
             normalized_parameters["preserve_source_audio"] = preserve_source_audio
+            if profile.adapter == COMFYUI_H3_REF2VA_ADAPTER_KIND:
+                if reference_mode == "generation" and preserve_source_audio:
+                    raise ProviderJobError("invalid_generation_spec", "reference generation does not preserve proxy audio")
+                normalized_parameters["reference_mode"] = reference_mode
         if parameters.get("seed") is not None:
             normalized_parameters["seed"] = _bounded_int(
                 parameters["seed"],
@@ -2507,7 +2529,7 @@ class ProviderService:
                         raise ProviderJobError(
                             "comfyui_unavailable", "platform H3 generation backend is unavailable"
                         )
-                    if not source_video_ref:
+                    if not source_video_ref and parameters.get("reference_mode") != "generation":
                         raise ProviderJobError(
                             "source_artifacts_required", "Ref2VA source video is required"
                         )
@@ -2532,6 +2554,7 @@ class ProviderService:
                         steps=int(parameters["steps"]),
                         fps=float(parameters["fps"]),
                         preserve_source_audio=bool(parameters["preserve_source_audio"]),
+                        reference_mode=str(parameters.get("reference_mode", "edit")),
                     )
                     content = self._run_or_resume_comfyui_prompt(job_id, prompt)
                 elif profile.adapter == COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND:
