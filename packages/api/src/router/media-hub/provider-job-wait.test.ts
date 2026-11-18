@@ -9,7 +9,7 @@ describe("GPU queue and inference polling", () => {
     let elapsed = 0;
     const outage = new Error("Provider restarting");
     const fetchJob = vi
-      .fn()
+      .fn<() => Promise<{ status: string }>>()
       .mockRejectedValueOnce(outage)
       .mockRejectedValueOnce(outage)
       .mockResolvedValue({ status: "succeeded" });
@@ -18,8 +18,9 @@ describe("GPU queue and inference polling", () => {
       onPoll: vi.fn(),
       isRetryableError: (error) => error === outage,
       now: () => elapsed,
-      sleep: async () => {
+      sleep: () => {
         elapsed += 60_000;
+        return Promise.resolve();
       },
     });
     expect(result.status).toBe("succeeded");
@@ -35,8 +36,9 @@ describe("GPU queue and inference polling", () => {
         onPoll: vi.fn(),
         isRetryableError: () => true,
         now: () => elapsed,
-        sleep: async () => {
+        sleep: () => {
           elapsed += 60_000;
+          return Promise.resolve();
         },
       }),
     ).rejects.toBe(outage);
