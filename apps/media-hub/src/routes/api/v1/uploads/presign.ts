@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod/v4";
 
 import { putMediaHubObject } from "@acme/storage";
+import { MEDIA_H3_REFERENCE_VIDEO_MAX_BYTES } from "@acme/validators";
 
 import {
   AgentApiError,
@@ -11,25 +12,51 @@ import {
   readAgentJson,
 } from "~/lib/agent-api";
 
-const presignBody = z.object({
-  filename: z.string().trim().min(1).max(255),
-  content_type: z.enum(["image/jpeg", "image/png", "image/webp"]),
-  size_bytes: z.number().int().positive().max(5_000_000),
-  content_base64: z.string().max(7_000_000).optional(),
-});
+const presignBody = z
+  .object({
+    filename: z.string().trim().min(1).max(255),
+    content_type: z.enum([
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "video/mp4",
+    ]),
+    size_bytes: z
+      .number()
+      .int()
+      .positive()
+      .max(MEDIA_H3_REFERENCE_VIDEO_MAX_BYTES),
+    content_base64: z.string().max(66_666_668).optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (input.content_type !== "video/mp4" && input.size_bytes > 5_000_000) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["size_bytes"],
+        message: "Images must not exceed 5 MB",
+      });
+    }
+  });
 
-async function handlePost(request: Request): Promise<Response> {
+export async function handlePost(request: Request): Promise<Response> {
   try {
     const { caller } = await createAgentApiCaller(request);
     const input = presignBody.parse(await readAgentJson(request));
     const result = await caller.mediaHub.upload.presign({
-      kind: "cover",
+      kind: input.content_type === "video/mp4" ? "video" : "cover",
       filename: input.filename,
       contentType: input.content_type,
       sizeBytes: input.size_bytes,
     });
-    if (input.content_base64) {
+    if (input.content_base64 !== undefined) {
       const content = Buffer.from(input.content_base64, "base64");
+      if (content.toString("base64") !== input.content_base64) {
+        throw new AgentApiError(
+          400,
+          "content_base64 must be canonical base64",
+          "validation_error",
+        );
+      }
       if (content.byteLength !== input.size_bytes) {
         throw new AgentApiError(
           400,

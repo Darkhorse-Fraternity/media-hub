@@ -60,10 +60,17 @@ import {
   isH3SpeechIssue,
   repairH3NoDialoguePrompt,
   validateH3GenerationPrompt,
+  validateH3ReferencePrompt,
 } from "./h3-generation-config";
 import { requireH3Profile } from "./h3-profile";
 import { h3ReferenceAudioCapabilityIssue } from "./h3-reference-audio";
+import {
+  assertReferenceStorageOwner,
+  h3ReferenceFrameCount,
+  inspectH3ReferenceVideo,
+} from "./h3-reference-video";
 import { canManageMediaPlatformAccount } from "./platform-account-access";
+import { inspectPrevisReferenceVideo } from "./previs-video-reference";
 import {
   normalizeMediaPublishPlan,
   readMediaPublishPlans,
@@ -98,6 +105,7 @@ export const mediaGenerationRouter = {
     return {
       ...health,
       defaultGenerationProfile: systemSettings.h3GenerationProfile,
+      defaultReferenceGenerationProfile: systemSettings.h3EditProfile,
     };
   }),
 
@@ -140,11 +148,18 @@ export const mediaGenerationRouter = {
           message: `编译结构化对白后的提示词不能超过 ${MEDIA_H3_PROMPT_MAX_LENGTH} 个字符`,
         });
       }
-      let promptIssues = validateH3GenerationPrompt(
-        compiledDialogue.prompt,
-        input.durationSeconds,
-      );
+      let promptIssues =
+        input.generationMode === "reference"
+          ? validateH3ReferencePrompt(
+              compiledDialogue.prompt,
+              input.referenceImages.length + input.referenceImageAssets.length,
+            )
+          : validateH3GenerationPrompt(
+              compiledDialogue.prompt,
+              input.durationSeconds,
+            );
       if (
+        input.generationMode === "base" &&
         input.dialogues.length === 0 &&
         promptIssues.length > 0 &&
         promptIssues.every(isH3SpeechIssue)
@@ -242,10 +257,13 @@ export const mediaGenerationRouter = {
         });
       }
       const selectedProfileId =
-        input.h3Profile ?? systemSettings.h3GenerationProfile;
+        input.h3Profile ??
+        (input.generationMode === "reference"
+          ? systemSettings.h3EditProfile
+          : systemSettings.h3GenerationProfile);
       const selectedProfile = await requireH3Profile(
         selectedProfileId,
-        "generate",
+        input.generationMode === "reference" ? "reference" : "generate",
       );
       const referenceAudioIssue = h3ReferenceAudioCapabilityIssue(
         selectedProfileId,
@@ -268,6 +286,30 @@ export const mediaGenerationRouter = {
         });
       }
 
+      const referenceVideo = input.referenceArtifactId
+        ? await inspectPrevisReferenceVideo(
+            ctx.db,
+            ctx.session.user.id,
+            input.referenceArtifactId,
+            input,
+          )
+        : input.referenceVideo
+          ? await inspectH3ReferenceVideo(
+              input.referenceVideo,
+              ctx.session.user.id,
+              input,
+            )
+          : null;
+      if (referenceVideo) {
+        for (const reference of input.referenceImages) {
+          assertReferenceStorageOwner(
+            reference.storageKey,
+            ctx.session.user.id,
+            "cover",
+          );
+        }
+      }
+
       const id = crypto.randomUUID();
       const now = new Date();
       await ctx.db.insert(mediaGenerationJob).values({
@@ -282,6 +324,8 @@ export const mediaGenerationRouter = {
         sourceImageContentType:
           sourceAsset?.contentType ?? input.sourceImageContentType,
         referenceImages,
+        referenceVideo,
+        preserveSourceAudio: !referenceVideo,
         inputImageAssetIds: requestedAssetIds,
         durationSeconds: input.durationSeconds,
         fps: 24,
@@ -608,10 +652,20 @@ export const mediaGenerationRouter = {
         });
       }
       if (job.kind === "generate") {
-        const promptIssues = validateH3GenerationPrompt(
-          input.prompt,
-          input.durationSeconds,
-        );
+        if (
+          job.referenceVideo &&
+          (input.durationSeconds > 15 ||
+            h3ReferenceFrameCount(input.durationSeconds) !==
+              job.referenceVideo.frameCount)
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "修改后的时长必须与参考视频帧数一致",
+          });
+        }
+        const promptIssues = job.referenceVideo
+          ? validateH3ReferencePrompt(input.prompt, job.referenceImages.length)
+          : validateH3GenerationPrompt(input.prompt, input.durationSeconds);
         if (promptIssues.length) {
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -621,6 +675,13 @@ export const mediaGenerationRouter = {
       }
 
       const nextStatus = input.scheduledAt ? "scheduled" : "queued";
+      const generationProfile =
+        job.kind === "generate"
+          ? await requireH3Profile(
+              job.profile,
+              job.referenceVideo ? "reference" : "generate",
+            )
+          : null;
       const trimmedTitle = input.title?.trim();
       const [updated] = await ctx.db
         .update(mediaGenerationJob)
@@ -632,7 +693,10 @@ export const mediaGenerationRouter = {
           ...(job.kind === "generate"
             ? {
                 qualityPreset: input.qualityPreset,
-                steps: h3StepsForPreset(input.qualityPreset),
+                steps: Math.max(
+                  h3StepsForPreset(input.qualityPreset),
+                  generationProfile?.minimumSteps ?? 1,
+                ),
               }
             : {}),
           scheduledAt: input.scheduledAt,

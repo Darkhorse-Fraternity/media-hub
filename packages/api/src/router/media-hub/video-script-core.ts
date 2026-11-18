@@ -214,6 +214,16 @@ export function compileVideoScriptShotPrompt(
       ),
     `The shot lasts ${shot.durationSeconds} seconds and ends on the composition described above without adding unrequested text, logos, subtitles, or characters.`,
   ].filter(Boolean);
+  if (shot.referenceArtifactId) {
+    return [
+      `subject_definitions: ${continuityBible?.characters.trim() ? continuityBible.characters : shot.visualDescription}. Map the authored subjects to the corresponding proxies in <Video 1>; replace primitive shapes and flat proxy colors with the requested finished appearance.`,
+      "summary: [reference generation] Generate the described finished shot using <Video 1> for blocking, action timing, camera movement and occlusion.",
+      "retention_analysis: Retain proxy trajectories, relative scale, left/right direction, near/far ordering, lens perspective and event timing. Replace proxy appearance with the authored subjects and environment.",
+      `detailed_description: ${visualParts.join(" ")}`,
+      `overall_soundscape: ${shot.dialogues.length ? "" : "No dialogue. "}${shot.soundscape || "Synchronized physical sounds and ambience."}`,
+      `non_diegetic_music: ${shot.music || "N/A"}`,
+    ].join("\n");
+  }
   const prompt = [
     shot.firstFrameAssetId ? `${H3_I2VA_ALIGNMENT}\n` : "",
     `integrated_multimodal_description: ${visualParts.join(" ")}`,

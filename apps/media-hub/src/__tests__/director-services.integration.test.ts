@@ -507,7 +507,7 @@ describe("director services with real PostgreSQL", () => {
     });
   });
 
-  it("attaches standalone sources in order and rejects another owner's source", async () => {
+  it("assembles mixed base/reference shots in order and rejects another owner's source", async () => {
     const f = await fixture();
     const secondId = crypto.randomUUID();
     await database
@@ -516,7 +516,19 @@ describe("director services with real PostgreSQL", () => {
       .where(eq(mediaGenerationJob.id, f.takeId));
     await database.insert(mediaGenerationJob).values({
       id: secondId,
-      prompt: "Second standalone shot",
+      prompt: "Second standalone shot with white-model motion reference",
+      profile: "platform-h3-ref2va-edit-v1",
+      referenceVideo: {
+        storageKey: `media-hub/video/${ownerId}/previs.mp4`,
+        name: "previs.mp4",
+        contentType: "video/mp4",
+        checksum: `sha256:${"a".repeat(64)}`,
+        frameCount: 124,
+        fps: 24,
+        width: 160,
+        height: 96,
+        durationSeconds: 124 / 24,
+      },
       durationSeconds: 5,
       width: 160,
       height: 96,

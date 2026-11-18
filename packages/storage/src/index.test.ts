@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   deleteMediaHubObjectsByPrefix,
+  getMediaHubObject,
   scriptAnimaticKey,
   scriptAnimaticPrefix,
 } from "./index";
@@ -20,6 +21,54 @@ beforeEach(() => {
     MEDIA_HUB_S3_ACCESS_KEY: "test",
     MEDIA_HUB_S3_SECRET_KEY: "test",
     MEDIA_HUB_S3_BUCKET: "test",
+  });
+});
+
+describe("bounded reference downloads", () => {
+  it("rejects an oversized storage object without buffering it", async () => {
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    send.mockResolvedValue({
+      ContentLength: 101,
+      Body: { transformToWebStream: () => ({ cancel }) },
+    });
+    await expect(
+      getMediaHubObject("input.mp4", undefined, 100),
+    ).rejects.toThrow("size limit");
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it("bounds streaming bodies even without a content length", async () => {
+    send.mockResolvedValue({
+      Body: {
+        transformToWebStream: () =>
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array(101));
+              controller.close();
+            },
+          }),
+      },
+    });
+    await expect(
+      getMediaHubObject("input.mp4", undefined, 100),
+    ).rejects.toThrow("size limit");
+  });
+
+  it("reads a valid bounded input", async () => {
+    send.mockResolvedValue({
+      Body: {
+        transformToWebStream: () =>
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array([1, 2, 3]));
+              controller.close();
+            },
+          }),
+      },
+    });
+    await expect(
+      getMediaHubObject("input.mp4", undefined, 100),
+    ).resolves.toEqual(Buffer.from([1, 2, 3]));
   });
 });
 

@@ -41,9 +41,9 @@ describe("retrying a disconnected generation", () => {
   );
 
   it("keeps completed segments and creates a new run for a confirmed failed segment", async () => {
-    const fetchJob = vi.fn(async (id: string) => ({
-      status: id === "first" ? "succeeded" : "failed",
-    }));
+    const fetchJob = vi.fn((id: string) =>
+      Promise.resolve({ status: id === "first" ? "succeeded" : "failed" }),
+    );
     await expect(
       prepareGenerationRetry(
         {

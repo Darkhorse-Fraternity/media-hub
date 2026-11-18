@@ -53,6 +53,15 @@ const H3_PROMPT_FIELDS = [
   "non_diegetic_music:",
 ] as const;
 
+const H3_REFERENCE_PROMPT_FIELDS = [
+  "subject_definitions:",
+  "summary:",
+  "retention_analysis:",
+  "detailed_description:",
+  "overall_soundscape:",
+  "non_diegetic_music:",
+] as const;
+
 const H3_EXPLICIT_SPEECH_PATTERN =
   /\b(?:says?|speaks?|reads? aloud|dialogue|spoken words?)\b|朗读|说(?:道|话)?|对白|台词/i;
 const H3_NO_SPEECH_PATTERN =
@@ -60,16 +69,29 @@ const H3_NO_SPEECH_PATTERN =
 const H3_AMBIGUOUS_SPEECH_PATTERN =
   /\b(?:indistinct|unintelligible|incomprehensible|gibberish|babbl(?:e|ing)|murmur(?:s|ing)?)\b|含混|听不清|不可辨识|无法辨认|模糊人声|低声朗读/i;
 
-function validatePromptBody(body: string, label: string): string[] {
+function validatePromptBody(
+  body: string,
+  label: string,
+  fields: readonly string[] = H3_PROMPT_FIELDS,
+): string[] {
   const issues: string[] = [];
-  const fieldIndexes = H3_PROMPT_FIELDS.map((field) => body.indexOf(field));
+  const fieldIndexes = fields.map((field) => body.indexOf(field));
   const [descriptionIndex = -1, soundscapeIndex = -1, musicIndex = -1] =
     fieldIndexes;
   if (fieldIndexes.some((index) => index >= 0)) {
     if (fieldIndexes.some((index) => index < 0)) {
-      issues.push(`${label} 必须同时包含 H3 的三个顶层字段`);
+      issues.push(
+        fields.length === 3
+          ? `${label} 必须同时包含 H3 的三个顶层字段`
+          : `${label} 必须同时包含 H3 的六个顶层字段`,
+      );
     } else if (
-      !(descriptionIndex < soundscapeIndex && soundscapeIndex < musicIndex)
+      fields.length === 3
+        ? !(descriptionIndex < soundscapeIndex && soundscapeIndex < musicIndex)
+        : fieldIndexes.some(
+            (index, position) =>
+              position > 0 && index <= (fieldIndexes[position - 1] ?? -1),
+          )
     ) {
       issues.push(`${label} 的 H3 顶层字段顺序不正确`);
     }
@@ -174,12 +196,19 @@ function injectStructuredDialogue(
   const lines = dialogues.map(structuredDialogueLine).join("\n");
   const dialogueBlock = lines ? `Structured dialogue:\n${lines}` : "";
   const soundscapeIndex = body.indexOf("overall_soundscape:");
-  const hasCompleteContract = H3_PROMPT_FIELDS.every((field) =>
-    body.includes(field),
-  );
+  const hasCompleteContract =
+    H3_PROMPT_FIELDS.every((field) => body.includes(field)) ||
+    H3_REFERENCE_PROMPT_FIELDS.every((field) => body.includes(field));
   if (hasCompleteContract && soundscapeIndex >= 0) {
     if (!dialogueBlock) return body.trim();
-    return `${body.slice(0, soundscapeIndex).trimEnd()}\n${dialogueBlock}\n${body.slice(soundscapeIndex).trimStart()}`;
+    const soundscape = body
+      .slice(soundscapeIndex)
+      .trimStart()
+      .replace(
+        /^(overall_soundscape:\s*)(?:No dialogue\.?|无对白[。.]?)/i,
+        "$1Preserve the requested dialogue.",
+      );
+    return `${body.slice(0, soundscapeIndex).trimEnd()}\n${dialogueBlock}\n${soundscape}`;
   }
   return [
     `integrated_multimodal_description: ${body.trim()}`,
@@ -295,6 +324,54 @@ export function validateH3GenerationPrompt(
     return validatePromptBody(marked[0]?.prompt ?? "", "SEGMENT 1/1");
   }
   return validatePromptBody(prompt.trim(), "提示词");
+}
+
+/** Ref2VA 参考生成使用六字段契约，不能降级为首帧/基础提示词。 */
+export function validateH3ReferencePrompt(
+  prompt: string,
+  imageCount: number,
+): string[] {
+  const issues = validatePromptBody(
+    prompt.trim(),
+    "参考生成",
+    H3_REFERENCE_PROMPT_FIELDS,
+  );
+  if (!H3_REFERENCE_PROMPT_FIELDS.every((field) => prompt.includes(field))) {
+    issues.push("参考生成必须使用完整 H3 六字段契约");
+  }
+  const headers = H3_REFERENCE_PROMPT_FIELDS.map((field) => [
+    ...prompt.matchAll(new RegExp(`^${field}`, "gm")),
+  ]);
+  for (const [index, matches] of headers.entries()) {
+    const start = matches[0]?.index;
+    const next = headers[index + 1]?.[0]?.index ?? prompt.length;
+    if (
+      matches.length !== 1 ||
+      start === undefined ||
+      !prompt
+        .slice(start + (H3_REFERENCE_PROMPT_FIELDS[index]?.length ?? 0), next)
+        .trim()
+    ) {
+      issues.push(
+        `参考生成字段 ${H3_REFERENCE_PROMPT_FIELDS[index]} 必须独占一行、仅出现一次且内容非空`,
+      );
+    }
+  }
+  if (!/summary:\s*\[reference generation\]/i.test(prompt)) {
+    issues.push("summary 必须以 [reference generation] 开始");
+  }
+  if (!prompt.includes("<Video 1>"))
+    issues.push("必须明确 <Video 1> 提供的动作、运镜和空间约束");
+  for (const match of prompt.matchAll(/<(Video|Picture|Audio)\s+(\d+)>/g)) {
+    const count =
+      match[1] === "Video" ? 1 : match[1] === "Picture" ? imageCount : 0;
+    if (Number(match[2]) < 1 || Number(match[2]) > count)
+      issues.push(`引用了未提供的 ${match[0]}`);
+  }
+  if (/===\s*SEGMENT/i.test(prompt) || /\[video editing\]/i.test(prompt)) {
+    issues.push("参考生成只接受单镜参考生成提示词");
+  }
+  return issues;
 }
 
 export function isH3SpeechIssue(issue: string): boolean {

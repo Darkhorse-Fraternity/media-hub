@@ -4,7 +4,7 @@ import { getMediaGenerationProviderHealth } from "./generation";
 
 export async function requireH3Profile(
   profileId: string,
-  kind: "generate" | "edit",
+  kind: "generate" | "edit" | "reference",
 ) {
   const health = await getMediaGenerationProviderHealth(false);
   if (health.status !== "healthy") {
@@ -22,10 +22,14 @@ export async function requireH3Profile(
       message: `H3 Provider 未启用工作流 ${profileId}`,
     });
   }
-  if (profile.kind !== kind) {
+  if (
+    kind === "reference"
+      ? !profile.supportsReferenceVideo
+      : profile.kind !== kind
+  ) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
-      message: `H3 工作流 ${profileId} 不支持${kind === "edit" ? "视频编辑" : "视频生成"}`,
+      message: `H3 工作流 ${profileId} 不支持${kind === "reference" ? "整段视频参考生成（请升级 Provider）" : kind === "edit" ? "视频编辑" : "视频生成"}`,
     });
   }
   return profile;

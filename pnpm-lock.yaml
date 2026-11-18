@@ -122,6 +122,9 @@ importers:
       '@acme/validators':
         specifier: workspace:*
         version: link:../../packages/validators
+      '@codepawlhq/crucible':
+        specifier: 0.20.0
+        version: 0.20.0
       '@fontsource-variable/geist':
         specifier: ^5.2.8
         version: 5.2.8
@@ -270,6 +273,9 @@ importers:
       '@better-auth/core':
         specifier: 'catalog:'
         version: 1.4.0-beta.9(@better-auth/utils@0.3.0)(@better-fetch/fetch@1.1.18)(better-call@1.0.19)(better-sqlite3@12.6.2)(jose@6.2.1)(kysely@0.28.11)(nanostores@1.1.1)
+      '@codepawlhq/crucible':
+        specifier: 0.20.0
+        version: 0.20.0
       '@trpc/server':
         specifier: 'catalog:'
         version: 11.12.0(typescript@5.9.3)
@@ -1042,6 +1048,22 @@ packages:
 
   '@clack/prompts@0.11.0':
     resolution: {integrity: sha512-pMN5FcrEw9hUkZA4f+zLlzivQSeQf5dRGJjSUbvVYDLvpKCdQx5OaknvKzgbtXOizhP+SJJJjqEbOe55uKKfAw==}
+
+  '@codepawlhq/crucible@0.20.0':
+    resolution: {integrity: sha512-XMI05Pa4xcChbjQcn3MVtS9SP441ulIIj8JftpX7MM+8VsxOV3Cy6V7TSnU6W+7HbnoeSGqkODkYZC5XD2RdFg==}
+    engines: {node: '>=20.19.0'}
+    hasBin: true
+    peerDependencies:
+      '@dimforge/rapier3d-compat': 0.21.0
+      jolt-physics: 1.1.1
+      manifold-3d: 3.5.4
+    peerDependenciesMeta:
+      '@dimforge/rapier3d-compat':
+        optional: true
+      jolt-physics:
+        optional: true
+      manifold-3d:
+        optional: true
 
   '@csstools/color-helpers@6.1.2':
     resolution: {integrity: sha512-grhRy3OKmniaAEKXMjua5z/EODX0MSqBGjunw8+j/3HQjOnahs2AGhvEOIYVUWcU6ScApbhLhVrQTX8XqrMrow==}
@@ -6113,6 +6135,11 @@ packages:
   pkg-types@2.3.0:
     resolution: {integrity: sha512-SIqCzDRg0s9npO5XQ3tNZioRY1uK06lA41ynBC1YmFTmnY6FjUjVt6s4LoADmwoig1qqD0oK8h1p/8mlMx8Oig==}
 
+  playwright-core@1.65.0:
+    resolution: {integrity: sha512-vNSKgH6YqtN7cdT/L334zo0a+YwkrpicyrHJlWWPIm/Q+Nn2SWInil01oT0mbu96U4GgoRtCYQD9CzJQgju+lA==}
+    engines: {node: '>=20'}
+    hasBin: true
+
   possible-typed-array-names@1.1.0:
     resolution: {integrity: sha512-/+5VFTchJDoVj3bhoqi6UeymcD00DAwb1nJwamzPvHEszJ4FpF6SNNbUbOS8yI56qHzdV8eK0qEfOSiodkTdxg==}
     engines: {node: '>= 0.4'}
@@ -8160,6 +8187,10 @@ snapshots:
       '@clack/core': 0.5.0
       picocolors: 1.1.1
       sisteransi: 1.0.5
+
+  '@codepawlhq/crucible@0.20.0':
+    dependencies:
+      playwright-core: 1.65.0
 
   '@csstools/color-helpers@6.1.2': {}
 
@@ -13314,6 +13345,8 @@ snapshots:
       confbox: 0.2.4
       exsolve: 1.0.8
       pathe: 2.0.3
+
+  playwright-core@1.65.0: {}
 
   possible-typed-array-names@1.1.0: {}
 

@@ -26,6 +26,7 @@
     "@acme/storage": "workspace:*",
     "@acme/validators": "workspace:*",
     "@better-auth/core": "catalog:",
+    "@codepawlhq/crucible": "0.20.0",
     "@trpc/server": "catalog:",
     "better-auth": "catalog:",
     "superjson": "2.2.3",

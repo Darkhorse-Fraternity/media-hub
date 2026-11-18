@@ -21,7 +21,7 @@ it("keeps assembly sources, transitions, rebuild and captions together", () => {
   expect(assembleScriptBody.parse(body)).toEqual(body);
 });
 
-it("preserves native voice direction in the director API and defaults to AV continuity", () => {
+it("preserves native voice direction and lets the selected workflow determine continuity", () => {
   const body = scriptShotBody.parse({
     title: "旁白",
     duration_seconds: 12,
@@ -41,7 +41,7 @@ it("preserves native voice direction in the director API and defaults to AV cont
     voice: "Warm Mandarin narrator.",
     delivery: "off_screen_voiceover",
   });
-  expect(generateScriptBody.parse({}).continuity_mode).toBe("native_av");
+  expect(generateScriptBody.parse({}).continuity_mode).toBeUndefined();
 });
 
 describe("agent video script PATCH schema", () => {
@@ -63,6 +63,7 @@ describe("agent video script PATCH schema", () => {
       music: "N/A",
       dialogues: [],
       selectedGenerationJobId: "take-1",
+      referenceArtifactId: "11111111-1111-4111-8111-111111111111",
       trimStartSeconds: 1,
       trimEndSeconds: 8,
       captions: [{ id: "cue", startSeconds: 2, endSeconds: 4, text: "字幕" }],
@@ -79,7 +80,21 @@ describe("agent video script PATCH schema", () => {
       trimStartSeconds: 1,
       trimEndSeconds: 8,
       captions: existing.captions,
+      referenceArtifactId: existing.referenceArtifactId,
     });
+    expect(
+      mapScriptShots(
+        [{ ...patch, first_frame_asset_id: "image-1" }],
+        [existing],
+      )[0],
+    ).toMatchObject({
+      firstFrameAssetId: "image-1",
+      referenceArtifactId: undefined,
+    });
+    expect(
+      mapScriptShots([{ ...patch, reference_artifact_id: null }], [existing])[0]
+        ?.referenceArtifactId,
+    ).toBeUndefined();
   });
 });
 

@@ -6,6 +6,7 @@ import { mediaGenerationRouter } from "./generation-router";
 import { mediaImageRouter } from "./image";
 import { mediaDouyinRouter } from "./oauth-douyin";
 import { mediaInstagramRouter } from "./oauth-instagram";
+import { mediaPrevisRouter } from "./previs";
 import { mediaSettingsRouter } from "./settings";
 import { mediaTaskRouter } from "./task";
 import { mediaUploadRouter } from "./upload";
@@ -25,4 +26,5 @@ export const mediaHubRouter = createTRPCRouter({
   generation: mediaGenerationRouter,
   image: mediaImageRouter,
   script: mediaVideoScriptRouter,
+  previs: mediaPrevisRouter,
 });

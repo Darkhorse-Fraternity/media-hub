@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import type { StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import type { Server } from "node:http";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
@@ -21,6 +23,7 @@ import { closeTestServer, configureTestDockerHost } from "./helpers/postgres";
 const storage = vi.hoisted(() => ({
   get: vi.fn(),
   put: vi.fn(),
+  presign: vi.fn().mockResolvedValue("https://storage.test/upload"),
 }));
 vi.mock(
   "../../../../packages/api/src/router/media-hub/generation-output-validation",
@@ -42,6 +45,7 @@ vi.mock("@acme/storage", async (original) => ({
   ...(await original<typeof import("@acme/storage")>()),
   getMediaHubObject: storage.get,
   putMediaHubObject: storage.put,
+  getMediaHubPresignedUploadUrl: storage.presign,
 }));
 
 const migrationsFolder = fileURLToPath(
@@ -70,9 +74,37 @@ let handleTake: HandleShotRequest;
 let handleCaptions: HandleShotRequest;
 let providerServer: Server;
 let createdEditJobId: string | null = null;
+let handleGenerate: (request: Request) => Promise<Response>;
 let handleRetry: (request: Request, jobId: string) => Promise<Response>;
+let handleUpload: (request: Request) => Promise<Response>;
+let createdReferenceJobId: string | null = null;
 const recoveryRequests: string[] = [];
 let recoveryPolls = 0;
+
+function referenceRequest(overrides: Record<string, unknown> = {}) {
+  return new Request("http://media-hub.test/api/v1/generations", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${agentToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      generation_mode: "reference",
+      duration_seconds: 5,
+      width: 96,
+      height: 64,
+      scheduled_at: new Date(Date.now() + 3_600_000).toISOString(),
+      reference_video: {
+        storage_key: `media-hub/video/${ownerId}/previs.mp4`,
+        name: "previs.mp4",
+        content_type: "video/mp4",
+      },
+      prompt:
+        "subject_definitions: <Subject 1> is the red proxy in <Video 1>.\nsummary: [reference generation] Retain <Video 1> motion and camera.\nretention_analysis: Retain blocking and occlusion, replace proxy appearance.\ndetailed_description: [Shot 1] A character crosses left to right.\noverall_soundscape: No dialogue. Footsteps.\nnon_diegetic_music: N/A",
+      ...overrides,
+    }),
+  });
+}
 
 function createEditRequest(
   body: Record<string, unknown>,
@@ -189,6 +221,7 @@ describe("Agent video edit and director REST API", () => {
               kind: "edit",
               minimum_steps: 20,
               max_reference_images: 4,
+              supports_reference_video: true,
             },
           ],
           provider_version: "integration-test",
@@ -213,8 +246,36 @@ describe("Agent video edit and director REST API", () => {
     const routeModule =
       await import("../routes/api/v1/generations/$jobId/edits");
     handlePost = routeModule.handlePost;
+    handleGenerate = (await import("../routes/api/v1/generations")).handlePost;
     handleRetry = (await import("../routes/api/v1/generations/$jobId/retry"))
       .handlePost;
+    handleUpload = (await import("../routes/api/v1/uploads/presign"))
+      .handlePost;
+    const { stdout: previs } = await promisify(execFile)(
+      process.env.FFMPEG_PATH ?? "ffmpeg",
+      [
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=gray:s=96x64:r=24",
+        "-frames:v",
+        "124",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "frag_keyframe+empty_moov",
+        "-f",
+        "mp4",
+        "pipe:1",
+      ],
+      { encoding: "buffer" },
+    );
+    storage.get.mockResolvedValue(previs);
     handleEditPlan = (
       await import("../routes/api/v1/scripts/$scriptId/shots/$shotId/edit-plan")
     ).handlePatch;
@@ -294,6 +355,10 @@ describe("Agent video edit and director REST API", () => {
   }, 120_000);
 
   afterAll(async () => {
+    if (createdReferenceJobId) {
+      const { cancelMediaGenerationJob } = await import("@acme/api");
+      await cancelMediaGenerationJob(createdReferenceJobId);
+    }
     if (createdEditJobId) {
       const { cancelMediaGenerationJob } = await import("@acme/api");
       await cancelMediaGenerationJob(createdEditJobId);
@@ -380,6 +445,91 @@ describe("Agent video edit and director REST API", () => {
         message: "Request validation failed",
       },
     });
+  });
+
+  it("creates a reference generation from an uploaded MP4 without a source job", async () => {
+    const response = await handleGenerate(referenceRequest());
+    const result = (await response.json()) as { id: string };
+    expect(response.status).toBe(201);
+    createdReferenceJobId = result.id;
+    const saved = await database.query.mediaGenerationJob.findFirst({
+      where: eq(mediaGenerationJob.id, result.id),
+    });
+    expect(saved).toMatchObject({
+      kind: "generate",
+      sourceGenerationJobId: null,
+      profile: "platform-h3-ref2va-edit-v1",
+      steps: 20,
+      preserveSourceAudio: false,
+      referenceVideo: {
+        frameCount: 124,
+        fps: 24,
+        width: 96,
+        height: 64,
+        contentType: "video/mp4",
+      },
+    });
+    expect(saved?.referenceVideo?.checksum).toMatch(/^sha256:[a-f0-9]{64}$/);
+  });
+
+  it("rejects temporal-reference misuse before creating a GPU job", async () => {
+    for (const patch of [
+      { duration_seconds: 30 },
+      { generation_mode: "base" },
+      { reference_video: undefined },
+    ]) {
+      expect((await handleGenerate(referenceRequest(patch))).status).toBe(400);
+    }
+    expect(
+      (
+        await handleGenerate(
+          referenceRequest({
+            reference_video: {
+              storage_key: "media-hub/video/other/previs.mp4",
+              name: "previs.mp4",
+              content_type: "video/mp4",
+            },
+          }),
+        )
+      ).status,
+    ).toBe(403);
+  });
+
+  it("uploads MP4 server-side while retaining image size and base64 validation", async () => {
+    const upload = (patch: Record<string, unknown>) =>
+      handleUpload(
+        new Request("http://media-hub.test/api/v1/uploads/presign", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${agentToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            filename: "previs.mp4",
+            content_type: "video/mp4",
+            size_bytes: 3,
+            content_base64: "YWJj",
+            ...patch,
+          }),
+        }),
+      );
+    const response = await upload({});
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      uploaded: true,
+      content_type: "video/mp4",
+      upload_url: null,
+    });
+    expect(storage.put).toHaveBeenCalledWith(
+      expect.stringContaining(`media-hub/video/${ownerId}/`),
+      Buffer.from("abc"),
+      "video/mp4",
+    );
+    expect((await upload({ content_base64: "YW Jj" })).status).toBe(400);
+    expect(
+      (await upload({ content_type: "image/png", size_bytes: 5_000_001 }))
+        .status,
+    ).toBe(400);
   });
 
   it("rejects edit segments outside the source video duration", async () => {

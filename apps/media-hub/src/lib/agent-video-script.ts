@@ -30,18 +30,28 @@ export const continuityBibleBody = continuityBibleObject.default({
   visual_rules: "",
 });
 
-export const scriptShotBody = z.object({
-  id: z.string().trim().min(1).max(100).optional(),
-  title: z.string().trim().min(1).max(120),
-  duration_seconds: z.number().int().min(5).max(15),
-  visual_description: z.string().trim().min(1).max(5000),
-  camera_direction: z.string().trim().max(1000).default(""),
-  continuity: z.string().trim().max(1000).default(""),
-  soundscape: z.string().trim().max(1000).default(""),
-  music: z.string().trim().max(1000).default("N/A"),
-  dialogues: z.array(dialogueBody).max(6).default([]),
-  first_frame_asset_id: z.string().trim().min(1).optional(),
-});
+export const scriptShotBody = z
+  .object({
+    id: z.string().trim().min(1).max(100).optional(),
+    title: z.string().trim().min(1).max(120),
+    duration_seconds: z.number().int().min(5).max(15),
+    visual_description: z.string().trim().min(1).max(5000),
+    camera_direction: z.string().trim().max(1000).default(""),
+    continuity: z.string().trim().max(1000).default(""),
+    soundscape: z.string().trim().max(1000).default(""),
+    music: z.string().trim().max(1000).default("N/A"),
+    dialogues: z.array(dialogueBody).max(6).default([]),
+    first_frame_asset_id: z.string().trim().min(1).nullable().optional(),
+    reference_artifact_id: z.string().uuid().nullable().optional(),
+  })
+  .superRefine((shot, ctx) => {
+    if (shot.first_frame_asset_id && shot.reference_artifact_id)
+      ctx.addIssue({
+        code: "custom",
+        path: ["reference_artifact_id"],
+        message: "镜头首帧与白模视频参考必须二选一",
+      });
+  });
 
 export const createScriptBody = z.object({
   title: z.string().trim().min(1).max(200),
@@ -83,7 +93,7 @@ export const generateScriptBody = z.object({
   shot_ids: z.array(z.string().trim().min(1)).max(12).default([]),
   quality_preset: z.enum(["fast", "balanced", "quality"]).default("balanced"),
   generation_profile: z.string().trim().min(1).max(200).optional(),
-  continuity_mode: z.enum(["independent", "native_av"]).default("native_av"),
+  continuity_mode: z.enum(["independent", "native_av"]).optional(),
 });
 
 export const analyzeScriptBody = z.object({
@@ -167,8 +177,15 @@ export function mapScriptShots(
       delivery: dialogue.delivery,
     })),
     firstFrameAssetId:
-      shot.first_frame_asset_id ??
-      existingById.get(shot.id ?? "")?.firstFrameAssetId,
+      shot.first_frame_asset_id === null || shot.reference_artifact_id
+        ? undefined
+        : (shot.first_frame_asset_id ??
+          existingById.get(shot.id ?? "")?.firstFrameAssetId),
+    referenceArtifactId:
+      shot.reference_artifact_id === null || shot.first_frame_asset_id
+        ? undefined
+        : (shot.reference_artifact_id ??
+          existingById.get(shot.id ?? "")?.referenceArtifactId),
   }));
 }
 

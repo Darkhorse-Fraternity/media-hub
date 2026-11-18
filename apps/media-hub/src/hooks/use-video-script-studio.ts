@@ -57,9 +57,9 @@ export function useVideoScriptStudio(
   const [dirty, setDirty] = useState(false);
   const [selectedShotIds, setSelectedShotIds] = useState<string[]>([]);
   const [qualityPreset, setQualityPreset] = useState<QualityPreset>("balanced");
-  const [continuityMode, setContinuityMode] = useState<
-    "native_av" | "independent"
-  >("native_av");
+  const [requestedContinuityMode, setContinuityMode] = useState<
+    "native_av" | "independent" | null
+  >(null);
   const [message, setMessage] = useState<string | null>(null);
   const { run: runWorkflow, pending: workflowPending } =
     useScriptWorkflow(setMessage);
@@ -100,7 +100,8 @@ export function useVideoScriptStudio(
   const healthQuery = useQuery(
     trpc.mediaHub.generation.providerHealth.queryOptions(undefined, {
       retry: false,
-      refetchInterval: continuityMode === "native_av" ? 30_000 : false,
+      refetchInterval:
+        requestedContinuityMode !== "independent" ? 30_000 : false,
     }),
   );
   const imageQuery = useQuery(
@@ -129,6 +130,7 @@ export function useVideoScriptStudio(
       setWidth(script.width);
       setHeight(script.height);
       setDefaultProfile(script.defaultProfile ?? "");
+      setContinuityMode(null);
       setContinuityBible(script.continuityBible);
       setShots(script.shots);
       setVersion(script.version);
@@ -145,6 +147,7 @@ export function useVideoScriptStudio(
       setWidth,
       setHeight,
       setDefaultProfile,
+      setContinuityMode,
       setContinuityBible,
       setShots,
       setVersion,
@@ -242,6 +245,17 @@ export function useVideoScriptStudio(
   const generationProfiles = (healthQuery.data?.profiles ?? []).filter(
     (profile) => profile.kind === "generate",
   );
+  const selectedProfile = generationProfiles.find(
+    (profile) =>
+      profile.id ===
+      (defaultProfile || healthQuery.data?.defaultGenerationProfile),
+  );
+  const continuityMode =
+    requestedContinuityMode ??
+    (shots.some((shot) => shot.referenceArtifactId) ||
+    selectedProfile?.supportsNativeAVContinuation === false
+      ? "independent"
+      : "native_av");
   const nativeContinuityIssue = scriptNativeContinuityIssue({
     mode: continuityMode,
     healthStatus: healthQuery.data?.status,
@@ -340,6 +354,7 @@ export function useVideoScriptStudio(
           ...emptyShot(index + 1),
           visualDescription: newBrief.trim(),
           firstFrameAssetId: assetId,
+          referenceArtifactId: undefined,
         })),
       });
       setNewTitle("");
@@ -381,6 +396,9 @@ export function useVideoScriptStudio(
         shots: draft.shots.map((shot, index) => ({
           ...shot,
           firstFrameAssetId: importedFrameIds[index] ?? shot.firstFrameAssetId,
+          referenceArtifactId: importedFrameIds[index]
+            ? undefined
+            : shot.referenceArtifactId,
         })),
       });
       setNewTitle("");
@@ -449,7 +467,7 @@ export function useVideoScriptStudio(
         outputCount: 4,
       });
       await refreshScripts(selectedScriptId);
-      setMessage("4 张首帧候选已进入 HiDream 队列。");
+      setMessage("4 张首帧候选已加入生成队列。");
     }, "首帧生成失败");
   };
 
@@ -487,11 +505,21 @@ export function useVideoScriptStudio(
       if (nativeContinuityIssue) throw new Error(nativeContinuityIssue);
 
       if (dirty) await persistScript();
+      const requestedShots = shots.filter((shot) =>
+        shotId
+          ? shot.id === shotId
+          : selectedShotIds.length
+            ? selectedShotIds.includes(shot.id)
+            : true,
+      );
+      const onlyReferences =
+        requestedShots.length > 0 &&
+        requestedShots.every((shot) => shot.referenceArtifactId);
       const result = await generateMutation.mutateAsync({
         id: selectedScriptId,
         shotIds: shotId ? [shotId] : selectedShotIds,
         qualityPreset,
-        h3Profile: defaultProfile || undefined,
+        h3Profile: onlyReferences ? undefined : defaultProfile || undefined,
         continuityMode,
       });
       setSelectedShotIds([]);
@@ -660,6 +688,7 @@ export function useVideoScriptStudio(
     setQualityPreset,
     continuityMode,
     setContinuityMode,
+    resetContinuityMode: () => setContinuityMode(null),
     nativeContinuityIssue,
     message,
     imageImportError: importedImagesQuery.isError

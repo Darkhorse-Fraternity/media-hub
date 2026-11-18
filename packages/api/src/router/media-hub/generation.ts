@@ -38,6 +38,10 @@ import {
   trimH3AVContinuation,
 } from "./h3-native-continuation";
 import {
+  H3ReferenceVideoChangedError,
+  loadVerifiedH3ReferenceVideo,
+} from "./h3-reference-video";
+import {
   checksumProviderValue,
   providerOrchestrationRunId,
 } from "./provider-contract";
@@ -80,6 +84,7 @@ export interface MediaGenerationProviderProfile {
   modelVersion: string | null;
   maxReferenceImages: number | null;
   maxReferenceAudios: number;
+  supportsReferenceVideo: boolean;
   supportsNativeAVContinuation: boolean;
   minimumSteps: number | null;
 }
@@ -92,6 +97,7 @@ interface ProviderHealthProfile {
   model_version?: string;
   max_reference_images?: number;
   max_reference_audios?: number;
+  supports_reference_video?: boolean;
   supports_native_av_continuation?: boolean;
   minimum_steps?: number;
 }
@@ -135,6 +141,7 @@ function normalizeProviderProfiles(
           typeof detail?.max_reference_audios === "number"
             ? detail.max_reference_audios
             : 0,
+        supportsReferenceVideo: detail?.supports_reference_video === true,
         supportsNativeAVContinuation:
           detail?.supports_native_av_continuation === true,
         minimumSteps:
@@ -188,7 +195,8 @@ function structuredGenerationFailure(error: unknown): {
     error instanceof GenerationProviderJobError ||
     error instanceof ProviderJobWaitTimeoutError ||
     error instanceof GenerationOutputValidationError ||
-    error instanceof GenerationSpeechValidationError
+    error instanceof GenerationSpeechValidationError ||
+    error instanceof H3ReferenceVideoChangedError
   ) {
     return {
       code: error.code,
@@ -389,6 +397,25 @@ async function createProviderJob(
     }),
   );
   sourceArtifacts = [...sourceArtifacts, ...referenceArtifacts];
+  if (job.referenceVideo) {
+    if (
+      continuationFrame ||
+      continuationVideo ||
+      firstFrame ||
+      job.durationSeconds > 15
+    ) {
+      throw new Error("整段参考生成不能与首帧、原生延续或长视频分段混用");
+    }
+    const content = await loadVerifiedH3ReferenceVideo(job.referenceVideo);
+    sourceArtifacts.unshift({
+      name: job.referenceVideo.name,
+      content_type: "video/mp4",
+      checksum: job.referenceVideo.checksum,
+      contract: "generated_media_source.v1",
+      role: "reference_video",
+      content_base64: content.toString("base64"),
+    });
+  }
   if (continuationVideo) {
     sourceArtifacts.push({
       name: "previous-shot-av-context.mp4",
@@ -422,6 +449,9 @@ async function createProviderJob(
       steps: job.steps,
       cfg: 1,
       seed: (job.seed ?? fallbackJobSeed(job)) + segmentIndex,
+      ...(job.referenceVideo
+        ? { reference_mode: "generation", preserve_source_audio: false }
+        : {}),
     },
   };
   const payload = {
@@ -949,10 +979,14 @@ async function createDraftFromGeneration(
     language: job.language,
     videoStorageKey: outputStorageKey,
     aiPrompts: {
-      source: job.kind === "edit" ? "minimax-h3-ref2va" : "minimax-h3",
+      source:
+        job.kind === "edit" || job.referenceVideo
+          ? "minimax-h3-ref2va"
+          : "minimax-h3",
       generationJobId: job.id,
       sourceGenerationJobId: job.sourceGenerationJobId,
       editSegments: job.editSegments,
+      referenceVideo: job.referenceVideo,
       prompt: job.prompt,
       durationSeconds: job.durationSeconds,
       language: job.language,
@@ -1050,7 +1084,11 @@ async function runGenerationJob(jobId: string, resume = false): Promise<void> {
     if (!activeProfile) {
       throw new Error(`H3 Provider 未启用任务工作流 ${job.profile}`);
     }
-    if (activeProfile.kind !== expectedProfileKind) {
+    if (
+      job.referenceVideo
+        ? !activeProfile.supportsReferenceVideo
+        : activeProfile.kind !== expectedProfileKind
+    ) {
       throw new Error(
         `H3 工作流 ${job.profile} 不支持${job.kind === "edit" ? "视频编辑" : "视频生成"}`,
       );

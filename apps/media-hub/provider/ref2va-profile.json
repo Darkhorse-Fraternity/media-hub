@@ -1,7 +1,7 @@
 {
   "platform-h3-ref2va-edit-v1": {
     "adapter": "comfyui_minimax_h3_ref2va.v1",
-    "workflow_version": "comfyui-h3-ref2va-pruned-int8-20step-v1",
+    "workflow_version": "comfyui-h3-ref2va-pruned-int8-20step-v2",
     "model_version": "minimax-h3-ref2va-pruned-int8-convrot",
     "models": {
       "transformer": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",

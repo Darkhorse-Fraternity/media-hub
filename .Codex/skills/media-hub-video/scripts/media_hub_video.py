@@ -95,6 +95,19 @@ def upload_image(path: str):
     )
 
 
+def upload_video(path: str):
+    video_path = Path(path)
+    size = video_path.stat().st_size
+    if video_path.suffix.lower() != ".mp4" or not 0 < size <= 50_000_000:
+        raise ValueError("Reference video must be an MP4 between 1 byte and 50 MB")
+    return request_json("POST", "/api/v1/uploads/presign", {
+        "filename": video_path.name,
+        "content_type": "video/mp4",
+        "size_bytes": size,
+        "content_base64": base64.b64encode(video_path.read_bytes()).decode("ascii"),
+    })
+
+
 def download_video(job_id: str, output: str) -> dict:
     output_path = Path(output)
     part_path = output_path.with_name(output_path.name + ".part")
@@ -149,6 +162,8 @@ def main() -> int:
     edit.add_argument("payload", help="Path to a JSON object")
     upload = commands.add_parser("upload", help="Upload a JPEG, PNG, or WebP first frame/reference")
     upload.add_argument("image")
+    upload_ref = commands.add_parser("upload-video", help="Upload a normalized Blender/previs MP4")
+    upload_ref.add_argument("video")
     video = commands.add_parser("video", help="Download a succeeded job's MP4")
     video.add_argument("job_id")
     video.add_argument("output")
@@ -191,6 +206,8 @@ def main() -> int:
         result = request_json("POST", f"/api/v1/generations/{quote(args.source_job_id, safe='')}/edits", read_payload(args.payload))
     elif args.command == "upload":
         result = upload_image(args.image)
+    elif args.command == "upload-video":
+        result = upload_video(args.video)
     else:
         result = download_video(args.job_id, args.output)
 

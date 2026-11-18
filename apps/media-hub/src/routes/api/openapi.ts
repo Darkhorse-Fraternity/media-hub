@@ -10,6 +10,12 @@ import {
   MEDIA_H3_SCRIPT_TARGET_DURATIONS,
 } from "@acme/validators";
 
+import { previsOpenApiPaths, previsOpenApiSchemas } from "~/lib/previs-openapi";
+import {
+  previsRenderOpenApiPaths,
+  previsRenderOpenApiSchemas,
+} from "~/lib/previs-render-openapi";
+
 function openApiDocument(request: Request) {
   const origin = new URL(request.url).origin;
   const bearerSecurity = [{ bearerAuth: [] }];
@@ -26,7 +32,7 @@ function openApiDocument(request: Request) {
     openapi: "3.1.0",
     info: {
       title: "Pumpkii Media Hub Agent API",
-      version: "1.8.0",
+      version: "1.12.0",
       description:
         "Bearer-token API for agents to optimize prompts, create and manage MiniMax H3 generation jobs, retrieve videos, and publish to configured platform accounts.",
     },
@@ -40,6 +46,8 @@ function openApiDocument(request: Request) {
         },
       },
       schemas: {
+        ...previsOpenApiSchemas,
+        ...previsRenderOpenApiSchemas,
         GenerationDialogue: {
           type: "object",
           required: ["segment", "speaker_id", "language", "text"],
@@ -69,10 +77,67 @@ function openApiDocument(request: Request) {
         CreateGeneration: {
           type: "object",
           required: ["prompt"],
+          allOf: [
+            {
+              if: {
+                required: ["generation_mode"],
+                properties: { generation_mode: { const: "reference" } },
+              },
+              then: {
+                required: ["duration_seconds"],
+                oneOf: [
+                  {
+                    required: ["reference_video"],
+                    not: { required: ["reference_artifact_id"] },
+                  },
+                  {
+                    required: ["reference_artifact_id"],
+                    not: { required: ["reference_video"] },
+                  },
+                ],
+                properties: {
+                  duration_seconds: { maximum: 15 },
+                  first_frame: { type: "null" },
+                },
+              },
+              else: {
+                not: {
+                  anyOf: [
+                    { required: ["reference_video"] },
+                    { required: ["reference_artifact_id"] },
+                  ],
+                },
+              },
+            },
+          ],
           properties: {
             prompt: {
               type: "string",
               maxLength: MEDIA_H3_PROMPT_MAX_LENGTH,
+            },
+            generation_mode: {
+              type: "string",
+              enum: ["base", "reference"],
+              default: "base",
+              description:
+                "reference generates a new video from full Blender/previs motion using Ref2VA, independent of existing generation jobs. Requires reference_artifact_id or reference_video, duration_seconds 5–15, and the six-field H3 reference prompt. first_frame is not supported in this mode.",
+            },
+            reference_video: {
+              type: "object",
+              required: ["storage_key", "name", "content_type"],
+              description:
+                "One uploaded H.264 MP4, max 50 MB, 24 FPS, matching output aspect. Frames must equal min(362, ceil((ceil(duration_seconds*24)-5)/17)*17+5), e.g. 124 at 5 seconds. Video supplies blocking, camera and occlusion; proxy audio is ignored. Source ownership and checksum are verified. Reference conditioning does not guarantee exact geometric reproduction.",
+              properties: {
+                storage_key: { type: "string" },
+                name: { type: "string", minLength: 1, maxLength: 255 },
+                content_type: { type: "string", const: "video/mp4" },
+              },
+            },
+            reference_artifact_id: {
+              type: "string",
+              format: "uuid",
+              description:
+                "Owned successful previs h3_reference MP4 artifact. Set generation_mode=reference. Mutually exclusive with reference_video. Actual media is probed and its checksum pinned with artifact/revision provenance.",
             },
             language: {
               type: "string",
@@ -278,7 +343,16 @@ function openApiDocument(request: Request) {
               maxItems: 6,
               items: { $ref: "#/components/schemas/VideoScriptDialogue" },
             },
-            first_frame_asset_id: { type: "string" },
+            first_frame_asset_id: {
+              type: ["string", "null"],
+              description: "Set null to clear the first-frame reference.",
+            },
+            reference_artifact_id: {
+              type: ["string", "null"],
+              format: "uuid",
+              description:
+                "Fixed successful H3-reference MP4 from the white-model workbench; mutually exclusive with first_frame_asset_id. Set null to clear. Generate these shots in independent mode and assemble later.",
+            },
           },
         },
         VideoScriptCaption: {
@@ -412,13 +486,17 @@ function openApiDocument(request: Request) {
               enum: ["fast", "balanced", "quality"],
               default: "balanced",
             },
-            generation_profile: { type: "string", maxLength: 200 },
+            generation_profile: {
+              type: "string",
+              maxLength: 200,
+              description:
+                "Override the base workflow in a mixed batch. Reference shots use the configured reference workflow. For a reference-only request this may override that reference workflow; when omitted, the configured reference workflow is used independently of the script's base default.",
+            },
             continuity_mode: {
               type: "string",
               enum: ["native_av", "independent"],
-              default: "native_av",
               description:
-                "Native AV waits for the preceding accepted shot and conditions H3 on its synchronized tail. Shots default to 15 seconds and must be at most 15 seconds. The official Provider profile reserves additional context frames (396 total for a 15-second continuation). Requires supportsNativeAVContinuation; never silently substitutes a still frame or TTS.",
+                "When omitted, reference-containing batches use independent shots; otherwise use native AV if the selected workflow supports it. Explicit native AV cannot be combined with white-model reference shots. Native AV requires supportsNativeAVContinuation and conditions each later shot on the preceding accepted shot's synchronized tail. Shots are at most 15 seconds.",
             },
           },
         },
@@ -467,6 +545,8 @@ function openApiDocument(request: Request) {
     },
     security: bearerSecurity,
     paths: {
+      ...previsOpenApiPaths(errorResponses),
+      ...previsRenderOpenApiPaths(errorResponses),
       "/api/v1/prompts/optimize": {
         post: {
           operationId: "optimizeVideoPrompt",
@@ -555,6 +635,8 @@ function openApiDocument(request: Request) {
           operationId: "listGenerationProfiles",
           summary:
             "List available H3 generation workflows and the admin default",
+          description:
+            "Includes base profiles and profiles advertising supportsReferenceVideo. default_reference_generation_profile selects the configured Ref2VA workflow. reference_video_constraints describes the initial single-video reference contract; older providers without the capability are rejected with 412.",
           responses: {
             "200": { description: "H3 generation profiles" },
             ...errorResponses,
@@ -1050,7 +1132,7 @@ function openApiDocument(request: Request) {
       "/api/v1/uploads/presign": {
         post: {
           operationId: "createReferenceImageUpload",
-          summary: "Create a presigned PUT URL for a reference image",
+          summary: "Upload or presign a reference image or previs MP4",
           requestBody: {
             required: true,
             content: {
@@ -1062,17 +1144,23 @@ function openApiDocument(request: Request) {
                     filename: { type: "string" },
                     content_type: {
                       type: "string",
-                      enum: ["image/jpeg", "image/png", "image/webp"],
+                      enum: [
+                        "image/jpeg",
+                        "image/png",
+                        "image/webp",
+                        "video/mp4",
+                      ],
                     },
                     size_bytes: {
                       type: "integer",
                       minimum: 1,
-                      maximum: 5000000,
+                      maximum: 50000000,
+                      description: "Images: max 5 MB. Previs MP4: max 50 MB.",
                     },
                     content_base64: {
                       type: "string",
                       description:
-                        "Optional base64 image content. When present, Media Hub stores the image server-side and upload_url is null.",
+                        "Optional canonical base64 file content. When present, Media Hub stores the file server-side and upload_url is null; useful when the signed storage URL is not reachable from the agent.",
                     },
                   },
                 },

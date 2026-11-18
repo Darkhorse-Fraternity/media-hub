@@ -669,7 +669,11 @@ function AuthenticatedImageStudio({
                               ? `${asset.width}×${asset.height} · `
                               : ""}
                             {formatImageBytes(asset.sizeBytes)} ·{" "}
-                            {asset.origin === "upload" ? "上传" : "HiDream"}
+                            {asset.origin === "previs"
+                              ? "白模"
+                              : asset.origin === "upload"
+                                ? "上传"
+                                : "生成"}
                           </p>
                         </div>
                         <div className="grid grid-cols-2 gap-2">

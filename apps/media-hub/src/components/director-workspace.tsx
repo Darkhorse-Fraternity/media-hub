@@ -104,6 +104,7 @@ function AuthenticatedVideoScriptStudio({
     setQualityPreset,
     continuityMode,
     setContinuityMode,
+    resetContinuityMode,
     nativeContinuityIssue,
     message,
     imageImportError,
@@ -276,7 +277,7 @@ function AuthenticatedVideoScriptStudio({
                 <div>
                   <p className="text-xs font-medium text-slate-300">首帧候选</p>
                   <p className="mt-1 text-[11px] text-slate-600">
-                    HiDream 按当前镜头与连续性设定生成 4 个开场构图
+                    按当前镜头与连续性设定生成 4 张首帧候选图
                   </p>
                 </div>
                 <button
@@ -899,6 +900,7 @@ function AuthenticatedVideoScriptStudio({
                     value={defaultProfile}
                     onChange={(event) => {
                       setDefaultProfile(event.target.value);
+                      resetContinuityMode();
                       markDirty();
                     }}
                     className="mt-2 w-full border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
@@ -950,7 +952,7 @@ function AuthenticatedVideoScriptStudio({
                   </select>
                   <span className="mt-2 block leading-relaxed">
                     {continuityMode === "native_av"
-                      ? "默认每镜 15 秒，按顺序延续上一镜的画面和声音，保留 H3 原声。"
+                      ? "每镜默认 15 秒，按顺序延续上一镜的画面和声音，保留 H3 原声。"
                       : "每镜重新生成声音，适合独立场景。"}
                   </span>
                   {nativeContinuityIssue && (
@@ -1077,7 +1079,7 @@ function AuthenticatedVideoScriptStudio({
               disabled={generating}
               className="border-t border-slate-800 pt-4"
             >
-              <h2 className="text-sm font-semibold">首帧素材</h2>
+              <h2 className="text-sm font-semibold">镜头参考素材</h2>
               <p className="mt-2 text-xs leading-5 text-slate-500">
                 在镜头中选择私有素材作为首帧。当前已加载 {assets.length} 张。
               </p>
@@ -1092,6 +1094,7 @@ function AuthenticatedVideoScriptStudio({
                     onChange={(event) =>
                       updateShot(shot.id, {
                         firstFrameAssetId: event.target.value || undefined,
+                        referenceArtifactId: undefined,
                       })
                     }
                     className="mt-1 w-full border border-slate-800 bg-slate-950 px-2 py-2 text-xs text-slate-300"
@@ -1103,6 +1106,22 @@ function AuthenticatedVideoScriptStudio({
                       </option>
                     ))}
                   </select>
+                  <span className="mt-2 block">
+                    白模视频产物 ID（与首帧二选一）
+                  </span>
+                  <input
+                    aria-label={`${shot.title} 白模视频产物 ID`}
+                    value={shot.referenceArtifactId ?? ""}
+                    placeholder="从白模工作台复制 H3 参考视频 ID"
+                    onChange={(event) =>
+                      updateShot(shot.id, {
+                        referenceArtifactId:
+                          event.target.value.trim() || undefined,
+                        firstFrameAssetId: undefined,
+                      })
+                    }
+                    className="mt-1 w-full border border-slate-800 bg-slate-950 px-2 py-2 text-xs text-slate-300"
+                  />
                 </label>
               ))}
             </fieldset>
