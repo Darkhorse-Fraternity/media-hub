@@ -46,6 +46,14 @@ image generation/editing profile.
   scheduler, and `res_multistep` sampling at a minimum of 20 steps. It supports
   an optional first frame but intentionally rejects extra reference images.
 
+ComfyUI H3 video profiles use `websockets>=15,<17` to receive node and sampler
+progress. Set `h3_step_timeout_seconds` in the Provider config to limit how
+long a node or denoising step can go without advancing. The default is 600
+seconds, measured after GPU admission. When the limit is reached, the Provider
+stops the specific ComfyUI prompt and returns `comfyui_step_timeout` with the
+node or sampler step. The separate `job_timeout_seconds` budget still applies
+to the workflow run.
+
 ## Director native audio-video continuation
 
 The official I2V adapter accepts one `continuation_video` source artifact:

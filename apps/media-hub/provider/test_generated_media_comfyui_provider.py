@@ -10,6 +10,7 @@ import types
 import unittest
 from tempfile import TemporaryDirectory
 from pathlib import Path
+from unittest.mock import patch
 
 
 class _DummyFastAPI:
@@ -559,6 +560,91 @@ class HiDreamImageWorkflowTests(unittest.TestCase):
             }
         )
         self.assertEqual(normalized["source_artifacts"][0]["role"], "reference")
+
+
+class ComfyUiStepTimeoutTests(unittest.TestCase):
+    def test_only_fresh_progress_on_this_prompt_extends_the_step(self) -> None:
+        clock = [0.0]
+        graph = {
+            "44": {"class_type": "SamplerCustomAdvanced"},
+            "50": {"class_type": "VAEDecode"},
+        }
+        with patch.object(provider.time, "monotonic", lambda: clock[0]):
+            progress = provider.ComfyUiStepProgress("job", "prompt", graph, 20, 600)
+            progress.observe(json.dumps({
+                "type": "executing", "data": {"node": "44", "prompt_id": "prompt"},
+            }))
+            self.assertIn("去噪第 1/20 步", progress.timeout_error().safe_message)
+            clock[0] = 260
+            step = {"node": "44", "value": 1, "max": 20, "prompt_id": "prompt"}
+            progress.observe(json.dumps({"type": "progress", "data": step}))
+            self.assertEqual(progress.deadline, 860)
+            self.assertIn("去噪第 2/20 步", progress.timeout_error().safe_message)
+            clock[0] = 800
+            progress.observe(json.dumps({"type": "progress", "data": step}))
+            progress.observe(json.dumps({
+                "type": "progress", "data": dict(step, prompt_id="other", value=2),
+            }))
+            progress.observe(json.dumps({"type": "executing", "data": {"node": "44"}}))
+            self.assertEqual(progress.deadline, 860)
+            progress.observe(json.dumps({
+                "type": "executing", "data": {"node": "50", "prompt_id": "prompt"},
+            }))
+            self.assertEqual(progress.deadline, 1400)
+            self.assertIn("VAEDecode", progress.timeout_error().safe_message)
+
+    def test_stalled_step_fails_and_interrupts_only_its_prompt(self) -> None:
+        clock = [0.0]
+        requests = []
+
+        class Socket:
+            def recv(self, *, timeout):
+                if clock[0] == 0:
+                    clock[0] = 1
+                    return json.dumps({
+                        "type": "progress",
+                        "data": {"node": "44", "prompt_id": "prompt", "value": 1, "max": 20},
+                    })
+                clock[0] += timeout
+                raise TimeoutError
+
+            def close(self):
+                pass
+
+        ws_exceptions = types.ModuleType("websockets.exceptions")
+        ws_exceptions.WebSocketException = type("WebSocketException", (Exception,), {})
+        ws_sync = types.ModuleType("websockets.sync.client")
+        ws_sync.connect = lambda *_args, **_kwargs: Socket()
+        client = provider.ComfyUiClient("http://comfyui")
+
+        def request(method, path, *, body=None, **_):
+            requests.append((method, path, json.loads(body) if body else None))
+            return b"{}" if method == "GET" else b""
+
+        client._request = request
+        with (
+            patch.dict(sys.modules, {
+                "websockets.exceptions": ws_exceptions,
+                "websockets.sync.client": ws_sync,
+            }),
+            patch.object(provider.time, "monotonic", lambda: clock[0]),
+        ):
+            progress = provider.ComfyUiStepProgress(
+                "job", "prompt", {"44": {"class_type": "SamplerCustomAdvanced"}}, 20, 4,
+            )
+            with self.assertRaises(provider.ProviderJobError) as raised:
+                client.wait_for_history(
+                    "prompt", timeout=100, poll_seconds=2, canceled=lambda: False,
+                    progress=progress,
+                )
+        self.assertEqual(clock[0], 5)
+        self.assertEqual(raised.exception.code, "comfyui_step_timeout")
+        self.assertEqual(raised.exception.failure_stage, "provider_execution")
+        self.assertIn("去噪第 2/20 步", raised.exception.safe_message)
+        self.assertEqual([request for request in requests if request[0] == "POST"], [
+            ("POST", "/queue", {"delete": ["prompt"]}),
+            ("POST", "/interrupt", {"prompt_id": "prompt"}),
+        ])
 
 
 if __name__ == "__main__":

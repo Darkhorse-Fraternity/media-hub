@@ -18,7 +18,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -176,7 +176,7 @@ class ProviderJobError(RuntimeError):
 def _provider_failure_defaults(code: str) -> tuple[str, bool]:
     if code in {"comfyui_unavailable", "comfyui_invalid_response", "comfyui_timeout"}:
         return "provider_backend", True
-    if code in {"comfyui_execution_failed", "comfyui_output_missing", "provider_output_missing"}:
+    if code in {"comfyui_execution_failed", "comfyui_step_timeout", "comfyui_output_missing", "provider_output_missing"}:
         return "provider_execution", True
     if code == "provider_internal_error":
         return "provider_execution", True
@@ -384,6 +384,7 @@ class ProviderConfig:
     max_outputs: int = 16
     poll_seconds: float = 2.0
     job_timeout_seconds: float = 1800.0
+    h3_step_timeout_seconds: float = 600.0
     inline_core_idle_unload_seconds: float = 3600.0
     inline_core_memory_pressure_unload_gb: float = 12.0
     inline_core_memory_pressure_min_idle_seconds: float = 300.0
@@ -429,6 +430,9 @@ class ProviderConfig:
         if not raw_token_file:
             raise RuntimeError("YDC_GENERATED_MEDIA_PROVIDER_TOKEN_FILE is required")
         token_file = Path(raw_token_file)
+        step_timeout = float(raw.get("h3_step_timeout_seconds", 600))
+        if not 1 <= step_timeout <= 3600:
+            raise RuntimeError("h3_step_timeout_seconds must be between 1 and 3600")
         idle_unload_seconds = float(raw.get("inline_core_idle_unload_seconds", 3600))
         if not 0 <= idle_unload_seconds <= 86400:
             raise RuntimeError("inline_core_idle_unload_seconds must be between 0 and 86400")
@@ -472,6 +476,7 @@ class ProviderConfig:
             max_outputs=int(raw.get("max_outputs", 16)),
             poll_seconds=float(raw.get("poll_seconds", 2)),
             job_timeout_seconds=float(raw.get("job_timeout_seconds", 1800)),
+            h3_step_timeout_seconds=step_timeout,
             inline_core_idle_unload_seconds=idle_unload_seconds,
             inline_core_memory_pressure_unload_gb=pressure_unload_gb,
             inline_core_memory_pressure_min_idle_seconds=pressure_min_idle_seconds,
@@ -487,6 +492,80 @@ class ProviderConfig:
         if not token:
             raise RuntimeError("provider credential is empty")
         return token
+
+
+class ComfyUiStepProgress:
+    """Track the current workflow node and real completions within a sampler."""
+
+    def __init__(
+        self,
+        client_id: str,
+        prompt_id: str,
+        graph: dict[str, Any],
+        sampler_steps: int,
+        timeout: float,
+    ) -> None:
+        self.client_id = client_id
+        self.prompt_id = prompt_id
+        self.graph = graph
+        self.sampler_steps = sampler_steps
+        self.timeout = timeout
+        self.deadline = time.monotonic() + timeout
+        self.node_id: str | None = None
+        self.completed = 0
+        self.total = 0
+
+    def observe(self, message: str | bytes) -> None:
+        if not isinstance(message, str):
+            return
+        try:
+            event = json.loads(message)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(event, dict):
+            return
+        kind = event.get("type")
+        data = event.get("data")
+        if kind not in {"executing", "progress"} or not isinstance(data, dict):
+            return
+        # ComfyUI's reconnect snapshot lacks a prompt ID. It is sent only to
+        # this job's socket. All live sampler updates must name our prompt.
+        event_prompt = data.get("prompt_id")
+        if event_prompt != self.prompt_id and not (kind == "executing" and event_prompt is None):
+            return
+        node = data.get("node")
+        if not isinstance(node, str) or not node:
+            return
+        if kind == "executing":
+            if node == self.node_id:
+                return
+            self.node_id = node
+            self.completed = self.total = 0
+        else:
+            value, total = data.get("value"), data.get("max")
+            if type(value) is not int or type(total) is not int or not 0 < value <= total:
+                return
+            if node == self.node_id and value <= self.completed:
+                return
+            self.node_id, self.completed, self.total = node, value, total
+        self.deadline = time.monotonic() + self.timeout
+
+    def timeout_error(self) -> ProviderJobError:
+        node_type = self.graph.get(self.node_id, {}).get("class_type")
+        if node_type == "SamplerCustomAdvanced":
+            total = self.total or self.sampler_steps
+            if self.completed < total:
+                stage = f"去噪第 {self.completed + 1}/{total} 步"
+            else:
+                stage = "去噪收尾"
+        elif node_type:
+            stage = f"工作流节点 {node_type}"
+        else:
+            stage = "工作流启动"
+        return ProviderJobError(
+            "comfyui_step_timeout",
+            f"MiniMax H3 {stage}超时（{self.timeout:g} 秒内未收到新的完成进度）",
+        )
 
 
 class ComfyUiClient:
@@ -706,29 +785,88 @@ class ComfyUiClient:
         timeout: float,
         poll_seconds: float,
         canceled: Callable[[], bool],
+        progress: ComfyUiStepProgress | None = None,
     ) -> dict[str, Any]:
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if canceled():
-                raise ProviderJobCanceled("provider job canceled")
-            value = self._json("GET", f"/history/{quote(prompt_id, safe='')}")
-            history = value.get(prompt_id)
-            if isinstance(history, dict):
-                status = history.get("status")
-                if isinstance(status, dict) and (
-                    status.get("status_str") == "error"
-                    or status.get("completed") is False
-                ):
+        socket = None
+        if progress is not None:
+            try:
+                from websockets.exceptions import WebSocketException
+                from websockets.sync.client import connect
+            except ImportError as exc:
+                self.interrupt_prompt(prompt_id)
+                raise ProviderJobError(
+                    "comfyui_progress_unavailable",
+                    "H3 逐步进度监听依赖缺失",
+                ) from exc
+            url = urlsplit(self.base_url)
+            query = urlencode({"clientId": progress.client_id})
+            ws_scheme = "wss" if url.scheme == "https" else "ws"
+            ws_url = f"{ws_scheme}://{url.netloc}{url.path}/ws?{query}"
+        try:
+            while True:
+                if canceled():
+                    raise ProviderJobCanceled("provider job canceled")
+                value = self._json("GET", f"/history/{quote(prompt_id, safe='')}")
+                history = value.get(prompt_id)
+                if isinstance(history, dict):
+                    status = history.get("status")
+                    if isinstance(status, dict) and (
+                        status.get("status_str") == "error"
+                        or status.get("completed") is False
+                    ):
+                        raise ProviderJobError(
+                            "comfyui_execution_failed",
+                            "platform generation workflow failed",
+                        )
+                    return history
+                now = time.monotonic()
+                if progress is not None and now >= progress.deadline:
+                    self.interrupt_prompt(prompt_id)
+                    raise progress.timeout_error()
+                if now >= deadline:
+                    self.interrupt_prompt(prompt_id)
                     raise ProviderJobError(
-                        "comfyui_execution_failed",
-                        "platform generation workflow failed",
+                        "comfyui_timeout", "platform generation workflow timed out"
                     )
-                return history
-            time.sleep(poll_seconds)
-        raise ProviderJobError(
-            "comfyui_timeout",
-            "platform generation workflow timed out",
-        )
+                poll_at = now + min(poll_seconds, deadline - now)
+                if progress is None:
+                    time.sleep(poll_at - now)
+                    continue
+                # Keep checking HTTP history even if the progress socket drops
+                # or produces frequent previews. Reconnects never reset a step.
+                while (remaining := min(poll_at, progress.deadline) - time.monotonic()) > 0:
+                    try:
+                        if socket is None:
+                            socket = connect(ws_url, open_timeout=remaining, close_timeout=1, proxy=None)
+                            continue
+                        progress.observe(socket.recv(timeout=remaining))
+                    except TimeoutError:
+                        break
+                    except (OSError, WebSocketException):
+                        if socket is not None:
+                            socket.close()
+                            socket = None
+                        time.sleep(max(0, min(poll_at, progress.deadline) - time.monotonic()))
+                        break
+        finally:
+            if socket is not None:
+                socket.close()
+
+    def interrupt_prompt(self, prompt_id: str) -> None:
+        # Delete this prompt if pending, then target it if the worker has
+        # already started. These routes return an empty response on success.
+        for path, payload in (
+            ("/queue", {"delete": [prompt_id]}),
+            ("/interrupt", {"prompt_id": prompt_id}),
+        ):
+            try:
+                self._request(
+                    "POST", path, body=json.dumps(payload).encode(),
+                    headers={"content-type": "application/json"}, timeout=5,
+                )
+            except ProviderJobError:
+                LOGGER.warning("ComfyUI could not stop prompt %s via %s", prompt_id, path)
 
     def download_output(self, history: dict[str, Any], save_node_id: str = "70") -> bytes:
         outputs = history.get("outputs")
@@ -2334,6 +2472,9 @@ class ProviderService:
         with self._lock:
             job = self._require_job(job_id)
             prompt_id = str(job.get("current_prompt_id") or "").strip()
+            request = job.get("request") or {}
+            profile_name = request.get("generation_spec", {}).get("profile")
+            profile = self.config.profiles.get(profile_name) if profile_name else None
         if prompt_id and not self.comfyui.prompt_exists(prompt_id):
             LOGGER.warning(
                 "persisted ComfyUI prompt %s is no longer available; requeueing provider job %s",
@@ -2359,11 +2500,18 @@ class ProviderService:
                 job["current_prompt_id"] = prompt_id
                 job["updated_at"] = _utc_now()
                 self._write_job(job)
+        progress = None
+        if profile is not None and profile.adapter in COMFYUI_H3_ADAPTER_KINDS:
+            progress = ComfyUiStepProgress(
+                job_id, prompt_id, prompt, int(request["runtime_parameters"]["steps"]),
+                self.config.h3_step_timeout_seconds,
+            )
         history = self.comfyui.wait_for_history(
             prompt_id,
             timeout=self.config.job_timeout_seconds,
             poll_seconds=self.config.poll_seconds,
             canceled=lambda: self._cancel_requested(job_id),
+            progress=progress,
         )
         return self.comfyui.download_output(history)
 
