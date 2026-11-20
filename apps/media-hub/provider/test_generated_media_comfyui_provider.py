@@ -563,6 +563,45 @@ class HiDreamImageWorkflowTests(unittest.TestCase):
 
 
 class ComfyUiStepTimeoutTests(unittest.TestCase):
+    def test_hard_render_deadline_stops_the_prompt_even_if_history_is_ready(self) -> None:
+        client = provider.ComfyUiClient("http://comfyui")
+        with (
+            patch.object(provider.time, "monotonic", return_value=1200),
+            patch.object(client, "_json") as history,
+            patch.object(client, "interrupt_prompt") as interrupt,
+        ):
+            with self.assertRaises(provider.ProviderJobError) as error:
+                client.wait_for_history(
+                    "prompt", timeout=3600, poll_seconds=2, canceled=lambda: False,
+                    render_deadline=1200,
+                )
+        self.assertEqual(error.exception.code, "comfyui_render_timeout")
+        self.assertEqual(error.exception.failure_stage, "provider_execution")
+        interrupt.assert_called_once_with("prompt")
+        history.assert_not_called()
+
+    def test_render_budget_limits_history_request_time(self) -> None:
+        clock = [1199.0]
+        client = provider.ComfyUiClient("http://comfyui")
+
+        def history(*_args, **kwargs):
+            self.assertEqual(kwargs["timeout"], 1)
+            clock[0] += kwargs["timeout"]
+            raise provider.ProviderJobError("comfyui_unavailable", "request timed out")
+
+        with (
+            patch.object(provider.time, "monotonic", side_effect=lambda: clock[0]),
+            patch.object(client, "_json", side_effect=history),
+            patch.object(client, "interrupt_prompt") as interrupt,
+        ):
+            with self.assertRaises(provider.ProviderJobError) as error:
+                client.wait_for_history(
+                    "prompt", timeout=3600, poll_seconds=2, canceled=lambda: False,
+                    render_deadline=1200,
+                )
+        self.assertEqual(error.exception.code, "comfyui_render_timeout")
+        interrupt.assert_called_once_with("prompt")
+
     def test_only_fresh_progress_on_this_prompt_extends_the_step(self) -> None:
         clock = [0.0]
         graph = {

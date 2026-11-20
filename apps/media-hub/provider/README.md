@@ -51,8 +51,10 @@ progress. Set `h3_step_timeout_seconds` in the Provider config to limit how
 long a node or denoising step can go without advancing. The default is 600
 seconds, measured after GPU admission. When the limit is reached, the Provider
 stops the specific ComfyUI prompt and returns `comfyui_step_timeout` with the
-node or sampler step. The separate `job_timeout_seconds` budget still applies
-to the workflow run.
+node or sampler step. Each ComfyUI H3 video segment also has a 20-minute render
+deadline anchored to its Provider start time after GPU admission, including
+preparation. At that deadline the Provider stops the specific prompt and reports
+`comfyui_render_timeout`. The deadline is carried across Provider restarts.
 
 ## Director native audio-video continuation
 

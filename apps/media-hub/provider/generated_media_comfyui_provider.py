@@ -40,6 +40,8 @@ INLINE_CORE_H3_NODE_TYPE = "minimax/h3-image-to-video"
 SAMPLE_CONTRACT = "generated_video_sample.v1"
 IMAGE_SAMPLE_CONTRACT = "generated_image_sample.v1"
 ACTIVE_JOB_STATUSES = {"queued", "running", "canceling"}
+H3_COMFYUI_RENDER_TIMEOUT_SECONDS = 20 * 60
+H3_COMFYUI_RENDER_TIMEOUT_MESSAGE = "H3 单段实际生成超过 20 分钟（不含排队）"
 REQUIRED_NODES = (
     "UNETLoader",
     "LoraLoaderModelOnly",
@@ -176,7 +178,10 @@ class ProviderJobError(RuntimeError):
 def _provider_failure_defaults(code: str) -> tuple[str, bool]:
     if code in {"comfyui_unavailable", "comfyui_invalid_response", "comfyui_timeout"}:
         return "provider_backend", True
-    if code in {"comfyui_execution_failed", "comfyui_step_timeout", "comfyui_output_missing", "provider_output_missing"}:
+    if code in {
+        "comfyui_execution_failed", "comfyui_step_timeout", "comfyui_render_timeout",
+        "comfyui_output_missing", "provider_output_missing",
+    }:
         return "provider_execution", True
     if code == "provider_internal_error":
         return "provider_execution", True
@@ -596,13 +601,16 @@ class ComfyUiClient:
                 "platform generation backend is unavailable",
             ) from exc
 
-    def _json(self, method: str, path: str, payload: Any | None = None) -> dict[str, Any]:
+    def _json(
+        self, method: str, path: str, payload: Any | None = None, *, timeout: float = 60,
+    ) -> dict[str, Any]:
         body = None if payload is None else json.dumps(payload, separators=(",", ":")).encode()
         raw = self._request(
             method,
             path,
             body=body,
             headers={"content-type": "application/json"} if body is not None else None,
+            timeout=timeout,
         )
         try:
             value = json.loads(raw)
@@ -786,8 +794,11 @@ class ComfyUiClient:
         poll_seconds: float,
         canceled: Callable[[], bool],
         progress: ComfyUiStepProgress | None = None,
+        render_deadline: float | None = None,
     ) -> dict[str, Any]:
         deadline = time.monotonic() + timeout
+        if render_deadline is not None:
+            deadline = min(deadline, render_deadline)
         socket = None
         if progress is not None:
             try:
@@ -807,7 +818,28 @@ class ComfyUiClient:
             while True:
                 if canceled():
                     raise ProviderJobCanceled("provider job canceled")
-                value = self._json("GET", f"/history/{quote(prompt_id, safe='')}")
+                now = time.monotonic()
+                remaining = deadline - now
+                if remaining <= 0:
+                    self.interrupt_prompt(prompt_id)
+                    if render_deadline is not None and now >= render_deadline:
+                        raise ProviderJobError(
+                            "comfyui_render_timeout", H3_COMFYUI_RENDER_TIMEOUT_MESSAGE,
+                        )
+                    raise ProviderJobError(
+                        "comfyui_timeout", "platform generation workflow timed out"
+                    )
+                try:
+                    value = self._json(
+                        "GET", f"/history/{quote(prompt_id, safe='')}",
+                        timeout=min(60, remaining),
+                    )
+                except ProviderJobError:
+                    if time.monotonic() >= deadline:
+                        continue
+                    raise
+                if render_deadline is not None and time.monotonic() >= render_deadline:
+                    continue
                 history = value.get(prompt_id)
                 if isinstance(history, dict):
                     status = history.get("status")
@@ -825,10 +857,7 @@ class ComfyUiClient:
                     self.interrupt_prompt(prompt_id)
                     raise progress.timeout_error()
                 if now >= deadline:
-                    self.interrupt_prompt(prompt_id)
-                    raise ProviderJobError(
-                        "comfyui_timeout", "platform generation workflow timed out"
-                    )
+                    continue
                 poll_at = now + min(poll_seconds, deadline - now)
                 if progress is None:
                     time.sleep(poll_at - now)
@@ -2475,6 +2504,12 @@ class ProviderService:
             request = job.get("request") or {}
             profile_name = request.get("generation_spec", {}).get("profile")
             profile = self.config.profiles.get(profile_name) if profile_name else None
+            started_at = job.get("started_at")
+        render_deadline = None
+        if profile is not None and profile.adapter in COMFYUI_H3_ADAPTER_KINDS:
+            started = datetime.fromisoformat(started_at)
+            elapsed = max(0, (datetime.now(timezone.utc) - started).total_seconds())
+            render_deadline = time.monotonic() + H3_COMFYUI_RENDER_TIMEOUT_SECONDS - elapsed
         if prompt_id and not self.comfyui.prompt_exists(prompt_id):
             LOGGER.warning(
                 "persisted ComfyUI prompt %s is no longer available; requeueing provider job %s",
@@ -2494,6 +2529,10 @@ class ProviderService:
                 job_id,
             )
         else:
+            if render_deadline is not None and time.monotonic() >= render_deadline:
+                raise ProviderJobError(
+                    "comfyui_render_timeout", H3_COMFYUI_RENDER_TIMEOUT_MESSAGE,
+                )
             prompt_id = self.comfyui.queue_prompt(prompt, client_id=job_id)
             with self._lock:
                 job = self._require_job(job_id)
@@ -2512,6 +2551,7 @@ class ProviderService:
             poll_seconds=self.config.poll_seconds,
             canceled=lambda: self._cancel_requested(job_id),
             progress=progress,
+            render_deadline=render_deadline,
         )
         return self.comfyui.download_output(history)
 
