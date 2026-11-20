@@ -341,6 +341,9 @@ export const mediaH3DialogueSchema = z.object({
 export type MediaH3Dialogue = z.infer<typeof mediaH3DialogueSchema>;
 
 export const MEDIA_H3_REFERENCE_VIDEO_MAX_BYTES = 50_000_000;
+export const MEDIA_H3_REFERENCE_VIDEO_FPS = 24;
+export const MEDIA_H3_REFERENCE_VIDEO_MIN_FRAMES = 56;
+export const MEDIA_H3_REFERENCE_VIDEO_MAX_FRAMES = 124;
 export const mediaH3ReferenceVideoSchema = z.object({
   storageKey: z.string().min(1),
   name: z.string().min(1).max(255),

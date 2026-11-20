@@ -11,11 +11,14 @@ import { mediaGenerationJob, mediaTask } from "@acme/db/schema";
 import { log } from "@acme/logger";
 import { getMediaHubObject, putMediaHubObject } from "@acme/storage";
 
+import type { ProviderQueueSnapshot } from "./generation-queue";
 import { deliverGenerationResultNotification } from "./generation-notification";
 import {
   GenerationOutputValidationError,
   validateGeneratedVideoOutput,
+  validateGeneratedVideoPicture,
 } from "./generation-output-validation";
+import { providerQueueSnapshotSchema } from "./generation-queue";
 import { prepareGenerationRetry } from "./generation-retry";
 import {
   GenerationSpeechValidationError,
@@ -47,6 +50,7 @@ import {
 } from "./provider-contract";
 import {
   ProviderJobWaitTimeoutError,
+  providerTimestamp,
   waitForGenerationProviderJob,
 } from "./provider-job-wait";
 import {
@@ -254,6 +258,21 @@ async function providerRequest<T>(
       });
     },
   });
+}
+
+export async function getMediaGenerationQueueSnapshot(): Promise<ProviderQueueSnapshot | null> {
+  try {
+    const raw = await providerRequest<unknown>(
+      "/v1/generated-media/queue",
+      {},
+      { timeoutMs: 1_500, maxAttempts: 1 },
+    );
+    const snapshot = providerQueueSnapshotSchema.safeParse(raw);
+    return snapshot.success ? snapshot.data : null;
+  } catch {
+    // Queue details are optional for a rolling upgrade or a Provider outage.
+    return null;
+  }
 }
 
 export function prepareMediaGenerationRetry(
@@ -557,7 +576,11 @@ async function waitForProviderJob(
     onPoll: async (current) => {
       const localStatus = await db.query.mediaGenerationJob.findFirst({
         where: eq(mediaGenerationJob.id, mediaJobId),
-        columns: { status: true },
+        columns: {
+          status: true,
+          generationStartedAt: true,
+          providerJobIds: true,
+        },
       });
       if (
         !localStatus ||
@@ -567,13 +590,25 @@ async function waitForProviderJob(
           `生成任务已停止（${localStatus?.status ?? "missing"}）`,
         );
       }
-      // The Provider owns GPU admission; polling only mirrors its queue phase.
+      // The Provider owns the only GPU Broker lease. Mirror its queue phase so
+      // Media Hub does not claim the GPU itself or label queue time as inference.
       const nextStatus =
         current.status === "queued" ? "waiting_for_gpu" : "running";
-      if (localStatus.status !== nextStatus) {
+      const actualStartedAt = providerTimestamp(current.started_at);
+      const shouldStoreStart =
+        actualStartedAt !== null &&
+        localStatus.providerJobIds[0] === providerJobId &&
+        localStatus.generationStartedAt?.getTime() !== actualStartedAt;
+      if (localStatus.status !== nextStatus || shouldStoreStart) {
         const [updated] = await db
           .update(mediaGenerationJob)
-          .set({ status: nextStatus, updatedAt: new Date() })
+          .set({
+            status: nextStatus,
+            ...(shouldStoreStart
+              ? { generationStartedAt: new Date(actualStartedAt) }
+              : {}),
+            updatedAt: new Date(),
+          })
           .where(
             and(
               eq(mediaGenerationJob.id, mediaJobId),
@@ -651,6 +686,7 @@ async function runVideoGenerationPipeline(
   job: typeof mediaGenerationJob.$inferSelect,
 ): Promise<GenerationPipelineResult> {
   const totalSegments = h3SegmentCount(job.durationSeconds);
+  const segmentDuration = job.durationSeconds / totalSegments;
   const prompts = h3SegmentPrompts(job.prompt, totalSegments);
   const providerJobIds: string[] = [];
   const samples: ProviderSample[] = [];
@@ -734,11 +770,17 @@ async function runVideoGenerationPipeline(
     workflowVersion = completed.workflow_version ?? workflowVersion;
     const generatedVideo = await joinVideoSamples(completed.samples ?? []);
     const segmentVideo = continuationVideo
-      ? await trimH3AVContinuation(
-          generatedVideo,
-          job.durationSeconds / totalSegments,
-        )
+      ? await trimH3AVContinuation(generatedVideo, segmentDuration)
       : generatedVideo;
+    // Check each constituent shot before it can be used for continuity.
+    if (totalSegments > 1) {
+      await validateGeneratedVideoOutput(segmentVideo, {
+        durationSeconds: segmentDuration,
+        width: job.width,
+        height: job.height,
+        fps: job.fps,
+      });
+    }
     samples.push({
       content_base64: segmentVideo.toString("base64"),
       content_type: "video/mp4",
@@ -939,6 +981,10 @@ async function runVideoEditPipeline(
         editedPath,
         await joinVideoSamples(completed.samples ?? []),
       );
+      await validateGeneratedVideoPicture(
+        editedPath,
+        segment.endSeconds - segment.startSeconds,
+      );
       editedPaths.push(editedPath);
     }
     await mergeEditedSegments(
@@ -1046,6 +1092,7 @@ async function runGenerationJob(jobId: string, resume = false): Promise<void> {
         ? {}
         : {
             startedAt: pending?.startedAt ?? claimedAt,
+            ...(pending?.startedAt ? {} : { generationStartedAt: null }),
           }),
       gpuBrokerRequestId: null,
       gpuBrokerLeaseId: null,
@@ -1073,34 +1120,38 @@ async function runGenerationJob(jobId: string, resume = false): Promise<void> {
 
   try {
     job.startedAt = startedAt;
-    const providerHealth = await getMediaGenerationProviderHealth(true);
-    if (providerHealth.status !== "healthy") {
-      throw new Error(`H3 生成链路安全检查失败：${providerHealth.message}`);
-    }
-    const expectedProfileKind = job.kind === "edit" ? "edit" : "generate";
-    const activeProfile = providerHealth.profiles.find(
-      (profile) => profile.id === job.profile,
-    );
-    if (!activeProfile) {
-      throw new Error(`H3 Provider 未启用任务工作流 ${job.profile}`);
-    }
-    if (
-      job.referenceVideo
-        ? !activeProfile.supportsReferenceVideo
-        : activeProfile.kind !== expectedProfileKind
-    ) {
-      throw new Error(
-        `H3 工作流 ${job.profile} 不支持${job.kind === "edit" ? "视频编辑" : "视频生成"}`,
+    // An admission outage can leave a previously submitted segment intact.
+    // Reattach to the existing Provider jobs before considering new work.
+    if (!job.providerJobId && !job.providerJobIds.length) {
+      const providerHealth = await getMediaGenerationProviderHealth(true);
+      if (providerHealth.status !== "healthy") {
+        throw new Error(`H3 生成链路安全检查失败：${providerHealth.message}`);
+      }
+      const expectedProfileKind = job.kind === "edit" ? "edit" : "generate";
+      const activeProfile = providerHealth.profiles.find(
+        (profile) => profile.id === job.profile,
       );
-    }
-    if (
-      job.kind === "generate" &&
-      job.sourceGenerationJobId &&
-      !activeProfile.supportsNativeAVContinuation
-    ) {
-      throw new Error(
-        "当前工作流未启用 H3 原生音视频延续；不能用静态首帧代替声音条件",
-      );
+      if (!activeProfile) {
+        throw new Error(`H3 Provider 未启用任务工作流 ${job.profile}`);
+      }
+      if (
+        job.referenceVideo
+          ? !activeProfile.supportsReferenceVideo
+          : activeProfile.kind !== expectedProfileKind
+      ) {
+        throw new Error(
+          `H3 工作流 ${job.profile} 不支持${job.kind === "edit" ? "视频编辑" : "视频生成"}`,
+        );
+      }
+      if (
+        job.kind === "generate" &&
+        job.sourceGenerationJobId &&
+        !activeProfile.supportsNativeAVContinuation
+      ) {
+        throw new Error(
+          "当前工作流未启用 H3 原生音视频延续；不能用静态首帧代替声音条件",
+        );
+      }
     }
     const result =
       job.kind === "edit"

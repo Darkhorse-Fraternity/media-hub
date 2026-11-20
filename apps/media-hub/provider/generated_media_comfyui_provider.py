@@ -18,7 +18,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -31,8 +31,10 @@ CONFIG_CONTRACT = "generated_media_provider_config.v1"
 COMFYUI_WAN22_ADAPTER_KIND = "comfyui_wan22_i2v.v1"
 COMFYUI_H3_ADAPTER_KIND = "comfyui_minimax_h3_i2v.v1"
 COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND = "comfyui_minimax_h3_i2v_official.v1"
+COMFYUI_H3_HYPERFLOW_ADAPTER_KIND = "comfyui_minimax_h3_hyperflow_gguf.v1"
 COMFYUI_H3_REF2VA_ADAPTER_KIND = "comfyui_minimax_h3_ref2va.v1"
 COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND = "comfyui_hidream_o1_image.v1"
+COMFYUI_H3_IMAGE_ADAPTER_KIND = "comfyui_minimax_h3_image.v1"
 INLINE_CORE_H3_ADAPTER_KIND = "inline_core_minimax_h3_i2v.v1"
 # Backward-compatible export used by existing callers and tests.
 ADAPTER_KIND = COMFYUI_WAN22_ADAPTER_KIND
@@ -40,6 +42,8 @@ INLINE_CORE_H3_NODE_TYPE = "minimax/h3-image-to-video"
 SAMPLE_CONTRACT = "generated_video_sample.v1"
 IMAGE_SAMPLE_CONTRACT = "generated_image_sample.v1"
 ACTIVE_JOB_STATUSES = {"queued", "running", "canceling"}
+H3_COMFYUI_RENDER_TIMEOUT_SECONDS = 20 * 60
+H3_COMFYUI_RENDER_TIMEOUT_MESSAGE = "H3 单段实际生成超过 20 分钟（不含排队）"
 REQUIRED_NODES = (
     "UNETLoader",
     "LoraLoaderModelOnly",
@@ -56,20 +60,38 @@ REQUIRED_NODES = (
 )
 H3_REQUIRED_NODES = (
     "UNETLoader",
-    "MiniMaxH3TurboLoRA",
     "CLIPLoader",
     "VAELoader",
     "LoadImage",
     "MiniMaxH3ImageToVideo",
     "MiniMaxH3ReferenceToVideo",
-    "YDCMiniMaxH3MultiReferenceToVideo",
     "LoadVideo",
     "GetVideoComponents",
     "RandomNoise",
     "BasicScheduler",
     "KSamplerSelect",
     "MiniMaxH3SigmaShift",
+    "BasicGuider",
+    "SamplerCustomAdvanced",
+    "VAEDecode",
+    "VAEDecodeAudio",
+    "CreateVideo",
+    "SaveVideo",
+)
+H3_TURBO_REQUIRED_NODES = (
+    "MiniMaxH3TurboLoRA",
+    "YDCMiniMaxH3MultiReferenceToVideo",
     "MiniMaxH3TurboSampler",
+)
+HYPERFLOW_REQUIRED_NODES = (
+    "HyperFlowLoader",
+    "HyperFlowSigmas",
+    "CLIPLoader",
+    "VAELoader",
+    "LoadImage",
+    "MiniMaxH3ImageToVideo",
+    "RandomNoise",
+    "KSamplerSelect",
     "BasicGuider",
     "SamplerCustomAdvanced",
     "VAEDecode",
@@ -91,9 +113,26 @@ HIDREAM_IMAGE_REQUIRED_NODES = (
     "VAEDecode",
     "SaveImage",
 )
+H3_IMAGE_REQUIRED_NODES = (
+    "UNETLoader",
+    "CLIPLoader",
+    "VAELoader",
+    "TextGenerateV2",
+    "MiniMaxH3ImageConditioning",
+    "LoadImage",
+    "ConditioningZeroOut",
+    "KSampler",
+    "VAEDecode",
+    "SaveImage",
+)
+COMFYUI_IMAGE_ADAPTER_KINDS = {
+    COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+    COMFYUI_H3_IMAGE_ADAPTER_KIND,
+}
 COMFYUI_H3_ADAPTER_KINDS = {
     COMFYUI_H3_ADAPTER_KIND,
     COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND,
+    COMFYUI_H3_HYPERFLOW_ADAPTER_KIND,
     COMFYUI_H3_REF2VA_ADAPTER_KIND,
 }
 H3_ADAPTER_KINDS = {*COMFYUI_H3_ADAPTER_KINDS, INLINE_CORE_H3_ADAPTER_KIND}
@@ -176,7 +215,10 @@ class ProviderJobError(RuntimeError):
 def _provider_failure_defaults(code: str) -> tuple[str, bool]:
     if code in {"comfyui_unavailable", "comfyui_invalid_response", "comfyui_timeout"}:
         return "provider_backend", True
-    if code in {"comfyui_execution_failed", "comfyui_output_missing", "provider_output_missing"}:
+    if code in {
+        "comfyui_execution_failed", "comfyui_step_timeout", "comfyui_render_timeout",
+        "comfyui_output_missing", "provider_output_missing",
+    }:
         return "provider_execution", True
     if code == "provider_internal_error":
         return "provider_execution", True
@@ -237,6 +279,8 @@ class ProviderProfile:
     processor: str = ""
     turbo_lora: str = ""
     checkpoint: str = ""
+    prompt_expander: str = ""
+    attention_backend: str = ""
 
     @classmethod
     def from_mapping(cls, name: str, value: Any) -> "ProviderProfile":
@@ -267,12 +311,17 @@ class ProviderProfile:
         if adapter not in {
             COMFYUI_WAN22_ADAPTER_KIND,
             COMFYUI_H3_ADAPTER_KIND,
-            COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND,
-            COMFYUI_H3_REF2VA_ADAPTER_KIND,
-            COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+            *COMFYUI_H3_ADAPTER_KINDS,
+            *COMFYUI_IMAGE_ADAPTER_KINDS,
             INLINE_CORE_H3_ADAPTER_KIND,
         }:
             raise RuntimeError(f"unsupported generated-media adapter: {adapter}")
+        attention_backend = str(value.get("attention_backend") or "").strip()
+        if attention_backend and (
+            adapter != COMFYUI_H3_REF2VA_ADAPTER_KIND
+            or attention_backend != "pytorch attention"
+        ):
+            raise RuntimeError(f"unsupported attention backend for profile: {name}")
 
         def model_value(key: str) -> str:
             return str(models.get(key) or "").strip()
@@ -285,11 +334,7 @@ class ProviderProfile:
             required_model_keys = (
                 "transformer", "text_encoder", "video_vae", "audio_vae", "turbo_lora"
             )
-        elif adapter == COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND:
-            required_model_keys = (
-                "transformer", "text_encoder", "video_vae", "audio_vae"
-            )
-        elif adapter == COMFYUI_H3_REF2VA_ADAPTER_KIND:
+        elif adapter in COMFYUI_H3_ADAPTER_KINDS:
             required_model_keys = (
                 "transformer", "text_encoder", "video_vae", "audio_vae"
             )
@@ -297,6 +342,8 @@ class ProviderProfile:
             required_model_keys = (
                 "transformer", "text_encoder", "video_vae", "audio_vae", "processor"
             )
+        elif adapter == COMFYUI_H3_IMAGE_ADAPTER_KIND:
+            required_model_keys = ("transformer", "text_encoder", "vae", "prompt_expander")
         else:
             required_model_keys = ("checkpoint",)
         for key in required_model_keys:
@@ -331,15 +378,28 @@ class ProviderProfile:
             processor=model_value("processor"),
             turbo_lora=model_value("turbo_lora"),
             checkpoint=model_value("checkpoint"),
+            prompt_expander=model_value("prompt_expander"),
+            attention_backend=attention_backend,
         )
 
     @property
     def configured_models(self) -> dict[str, tuple[str, ...]]:
         if self.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
             return {"CheckpointLoaderSimple": (self.checkpoint,)}
-        if self.adapter in COMFYUI_H3_ADAPTER_KINDS:
-            models = {
+        if self.adapter == COMFYUI_H3_IMAGE_ADAPTER_KIND:
+            return {
                 "UNETLoader": (self.transformer,),
+                "CLIPLoader": (self.text_encoder, self.prompt_expander),
+                "VAELoader": (self.vae,),
+            }
+        if self.adapter in COMFYUI_H3_ADAPTER_KINDS:
+            loader = (
+                "HyperFlowLoader"
+                if self.adapter == COMFYUI_H3_HYPERFLOW_ADAPTER_KIND
+                else "UNETLoader"
+            )
+            models = {
+                loader: (self.transformer,),
                 "CLIPLoader": (self.text_encoder,),
                 "VAELoader": (self.video_vae, self.audio_vae),
             }
@@ -379,11 +439,14 @@ class ProviderConfig:
     token_file: Path
     provider_version: str
     profiles: dict[str, ProviderProfile]
+    hyperflow_comfyui_url: str = ""
+
     inline_core_url: str = ""
     max_source_bytes: int = 256 * 1024 * 1024
     max_outputs: int = 16
     poll_seconds: float = 2.0
     job_timeout_seconds: float = 1800.0
+    h3_step_timeout_seconds: float = 600.0
     inline_core_idle_unload_seconds: float = 3600.0
     inline_core_memory_pressure_unload_gb: float = 12.0
     inline_core_memory_pressure_min_idle_seconds: float = 300.0
@@ -407,13 +470,20 @@ class ProviderConfig:
             for name, value in raw_profiles.items()
         }
         comfyui_url = os.environ.get("YDC_GENERATED_MEDIA_COMFYUI_URL", "").strip().rstrip("/")
+        hyperflow_comfyui_url = str(raw.get("hyperflow_comfyui_url") or "").strip().rstrip("/")
+
+        if any(
+            profile.adapter == COMFYUI_H3_HYPERFLOW_ADAPTER_KIND
+            for profile in profiles.values()
+        ) and not hyperflow_comfyui_url.startswith(("http://", "https://")):
+            raise RuntimeError("hyperflow_comfyui_url is required")
         inline_core_url = os.environ.get(
             "YDC_GENERATED_MEDIA_INLINE_CORE_URL", "http://127.0.0.1:8848"
         ).strip().rstrip("/")
         if any(
-            profile.adapter in {
+            profile.adapter != COMFYUI_H3_HYPERFLOW_ADAPTER_KIND and profile.adapter in {
                 COMFYUI_WAN22_ADAPTER_KIND,
-                COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+                *COMFYUI_IMAGE_ADAPTER_KINDS,
                 *COMFYUI_H3_ADAPTER_KINDS,
             }
             for profile in profiles.values()
@@ -429,6 +499,9 @@ class ProviderConfig:
         if not raw_token_file:
             raise RuntimeError("YDC_GENERATED_MEDIA_PROVIDER_TOKEN_FILE is required")
         token_file = Path(raw_token_file)
+        step_timeout = float(raw.get("h3_step_timeout_seconds", 600))
+        if not 1 <= step_timeout <= 3600:
+            raise RuntimeError("h3_step_timeout_seconds must be between 1 and 3600")
         idle_unload_seconds = float(raw.get("inline_core_idle_unload_seconds", 3600))
         if not 0 <= idle_unload_seconds <= 86400:
             raise RuntimeError("inline_core_idle_unload_seconds must be between 0 and 86400")
@@ -458,6 +531,8 @@ class ProviderConfig:
             raise RuntimeError("inline_core_service_unit is invalid")
         return cls(
             comfyui_url=comfyui_url,
+            hyperflow_comfyui_url=hyperflow_comfyui_url,
+
             state_root=Path(
                 os.environ.get(
                     "YDC_GENERATED_MEDIA_PROVIDER_STATE_ROOT",
@@ -472,6 +547,7 @@ class ProviderConfig:
             max_outputs=int(raw.get("max_outputs", 16)),
             poll_seconds=float(raw.get("poll_seconds", 2)),
             job_timeout_seconds=float(raw.get("job_timeout_seconds", 1800)),
+            h3_step_timeout_seconds=step_timeout,
             inline_core_idle_unload_seconds=idle_unload_seconds,
             inline_core_memory_pressure_unload_gb=pressure_unload_gb,
             inline_core_memory_pressure_min_idle_seconds=pressure_min_idle_seconds,
@@ -487,6 +563,80 @@ class ProviderConfig:
         if not token:
             raise RuntimeError("provider credential is empty")
         return token
+
+
+class ComfyUiStepProgress:
+    """Track the current workflow node and real completions within a sampler."""
+
+    def __init__(
+        self,
+        client_id: str,
+        prompt_id: str,
+        graph: dict[str, Any],
+        sampler_steps: int,
+        timeout: float,
+    ) -> None:
+        self.client_id = client_id
+        self.prompt_id = prompt_id
+        self.graph = graph
+        self.sampler_steps = sampler_steps
+        self.timeout = timeout
+        self.deadline = time.monotonic() + timeout
+        self.node_id: str | None = None
+        self.completed = 0
+        self.total = 0
+
+    def observe(self, message: str | bytes) -> None:
+        if not isinstance(message, str):
+            return
+        try:
+            event = json.loads(message)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(event, dict):
+            return
+        kind = event.get("type")
+        data = event.get("data")
+        if kind not in {"executing", "progress"} or not isinstance(data, dict):
+            return
+        # ComfyUI's reconnect snapshot lacks a prompt ID. It is sent only to
+        # this job's socket. All live sampler updates must name our prompt.
+        event_prompt = data.get("prompt_id")
+        if event_prompt != self.prompt_id and not (kind == "executing" and event_prompt is None):
+            return
+        node = data.get("node")
+        if not isinstance(node, str) or not node:
+            return
+        if kind == "executing":
+            if node == self.node_id:
+                return
+            self.node_id = node
+            self.completed = self.total = 0
+        else:
+            value, total = data.get("value"), data.get("max")
+            if type(value) is not int or type(total) is not int or not 0 < value <= total:
+                return
+            if node == self.node_id and value <= self.completed:
+                return
+            self.node_id, self.completed, self.total = node, value, total
+        self.deadline = time.monotonic() + self.timeout
+
+    def timeout_error(self) -> ProviderJobError:
+        node_type = self.graph.get(self.node_id, {}).get("class_type")
+        if node_type == "SamplerCustomAdvanced":
+            total = self.total or self.sampler_steps
+            if self.completed < total:
+                stage = f"去噪第 {self.completed + 1}/{total} 步"
+            else:
+                stage = "去噪收尾"
+        elif node_type:
+            stage = f"工作流节点 {node_type}"
+        else:
+            stage = "工作流启动"
+        return ProviderJobError(
+            "comfyui_step_timeout",
+            f"MiniMax H3 {stage}超时（{self.timeout:g} 秒内未收到新的完成进度）",
+        )
 
 
 class ComfyUiClient:
@@ -517,13 +667,16 @@ class ComfyUiClient:
                 "platform generation backend is unavailable",
             ) from exc
 
-    def _json(self, method: str, path: str, payload: Any | None = None) -> dict[str, Any]:
+    def _json(
+        self, method: str, path: str, payload: Any | None = None, *, timeout: float = 60,
+    ) -> dict[str, Any]:
         body = None if payload is None else json.dumps(payload, separators=(",", ":")).encode()
         raw = self._request(
             method,
             path,
             body=body,
             headers={"content-type": "application/json"} if body is not None else None,
+            timeout=timeout,
         )
         try:
             value = json.loads(raw)
@@ -539,10 +692,14 @@ class ComfyUiClient:
             )
         return value
 
-    def healthcheck(self, profiles: dict[str, ProviderProfile]) -> dict[str, Any]:
+    def healthcheck(
+        self,
+        profiles: dict[str, ProviderProfile],
+        required_nodes: tuple[str, ...] = REQUIRED_NODES,
+    ) -> dict[str, Any]:
         self._json("GET", "/system_stats")
         node_payloads: dict[str, str] = {}
-        for node_name in REQUIRED_NODES:
+        for node_name in required_nodes:
             value = self._json("GET", f"/object_info/{quote(node_name, safe='')}")
             if node_name not in value:
                 raise ProviderJobError(
@@ -561,13 +718,18 @@ class ComfyUiClient:
         return {
             "status": "healthy",
             "profiles": sorted(profiles),
-            "nodes_verified": len(REQUIRED_NODES),
+            "nodes_verified": len(required_nodes),
         }
 
     def healthcheck_h3(self, profiles: dict[str, ProviderProfile]) -> dict[str, Any]:
         self._json("GET", "/system_stats")
         node_payloads: dict[str, str] = {}
-        for node_name in H3_REQUIRED_NODES:
+        required_nodes = H3_REQUIRED_NODES
+        if any(profile.adapter == COMFYUI_H3_ADAPTER_KIND for profile in profiles.values()):
+            required_nodes += H3_TURBO_REQUIRED_NODES
+        if any(profile.attention_backend for profile in profiles.values()):
+            required_nodes += ("ModelAttentionBackend",)
+        for node_name in required_nodes:
             value = self._json("GET", f"/object_info/{quote(node_name, safe='')}")
             if node_name not in value:
                 raise ProviderJobError(
@@ -591,22 +753,25 @@ class ComfyUiClient:
         return {
             "status": "healthy",
             "profiles": sorted(profiles),
-            "nodes_verified": len(H3_REQUIRED_NODES),
+            "nodes_verified": len(required_nodes),
             "backend": "comfyui_h3",
             "native_av_continuation": native_av_continuation,
         }
 
-    def healthcheck_hidream_image(
-        self, profiles: dict[str, ProviderProfile]
+    def healthcheck_image(
+        self, profiles: dict[str, ProviderProfile], *, h3_image: bool = False
     ) -> dict[str, Any]:
+        required_nodes = (
+            H3_IMAGE_REQUIRED_NODES if h3_image else HIDREAM_IMAGE_REQUIRED_NODES
+        )
         self._json("GET", "/system_stats")
         node_payloads: dict[str, str] = {}
-        for node_name in HIDREAM_IMAGE_REQUIRED_NODES:
+        for node_name in required_nodes:
             value = self._json("GET", f"/object_info/{quote(node_name, safe='')}")
             if node_name not in value:
                 raise ProviderJobError(
                     "comfyui_node_missing",
-                    "platform HiDream image workflow is not available",
+                    "platform image workflow is not available",
                 )
             node_payloads[node_name] = json.dumps(value, separators=(",", ":"))
         for profile in profiles.values():
@@ -615,13 +780,13 @@ class ComfyUiClient:
                 if any(model not in payload for model in models):
                     raise ProviderJobError(
                         "comfyui_model_missing",
-                        "platform HiDream image model is not available",
+                        "platform image model is not available",
                     )
         return {
             "status": "healthy",
             "profiles": sorted(profiles),
-            "nodes_verified": len(HIDREAM_IMAGE_REQUIRED_NODES),
-            "backend": "comfyui_hidream_o1",
+            "nodes_verified": len(required_nodes),
+            "backend": "comfyui_minimax_h3_image" if h3_image else "comfyui_hidream_o1",
             "capabilities": {
                 "modes": ["text_to_image", "reference_edit"],
                 "max_reference_images": 4,
@@ -706,29 +871,109 @@ class ComfyUiClient:
         timeout: float,
         poll_seconds: float,
         canceled: Callable[[], bool],
+        progress: ComfyUiStepProgress | None = None,
+        render_deadline: float | None = None,
     ) -> dict[str, Any]:
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if canceled():
-                raise ProviderJobCanceled("provider job canceled")
-            value = self._json("GET", f"/history/{quote(prompt_id, safe='')}")
-            history = value.get(prompt_id)
-            if isinstance(history, dict):
-                status = history.get("status")
-                if isinstance(status, dict) and (
-                    status.get("status_str") == "error"
-                    or status.get("completed") is False
-                ):
+        if render_deadline is not None:
+            deadline = min(deadline, render_deadline)
+        socket = None
+        if progress is not None:
+            try:
+                from websockets.exceptions import WebSocketException
+                from websockets.sync.client import connect
+            except ImportError as exc:
+                self.interrupt_prompt(prompt_id)
+                raise ProviderJobError(
+                    "comfyui_progress_unavailable",
+                    "H3 逐步进度监听依赖缺失",
+                ) from exc
+            url = urlsplit(self.base_url)
+            query = urlencode({"clientId": progress.client_id})
+            ws_scheme = "wss" if url.scheme == "https" else "ws"
+            ws_url = f"{ws_scheme}://{url.netloc}{url.path}/ws?{query}"
+        try:
+            while True:
+                if canceled():
+                    raise ProviderJobCanceled("provider job canceled")
+                now = time.monotonic()
+                remaining = deadline - now
+                if remaining <= 0:
+                    self.interrupt_prompt(prompt_id)
+                    if render_deadline is not None and now >= render_deadline:
+                        raise ProviderJobError(
+                            "comfyui_render_timeout", H3_COMFYUI_RENDER_TIMEOUT_MESSAGE,
+                        )
                     raise ProviderJobError(
-                        "comfyui_execution_failed",
-                        "platform generation workflow failed",
+                        "comfyui_timeout", "platform generation workflow timed out"
                     )
-                return history
-            time.sleep(poll_seconds)
-        raise ProviderJobError(
-            "comfyui_timeout",
-            "platform generation workflow timed out",
-        )
+                try:
+                    value = self._json(
+                        "GET", f"/history/{quote(prompt_id, safe='')}",
+                        timeout=min(60, remaining),
+                    )
+                except ProviderJobError:
+                    if time.monotonic() >= deadline:
+                        continue
+                    raise
+                if render_deadline is not None and time.monotonic() >= render_deadline:
+                    continue
+                history = value.get(prompt_id)
+                if isinstance(history, dict):
+                    status = history.get("status")
+                    if isinstance(status, dict) and (
+                        status.get("status_str") == "error"
+                        or status.get("completed") is False
+                    ):
+                        raise ProviderJobError(
+                            "comfyui_execution_failed",
+                            "platform generation workflow failed",
+                        )
+                    return history
+                now = time.monotonic()
+                if progress is not None and now >= progress.deadline:
+                    self.interrupt_prompt(prompt_id)
+                    raise progress.timeout_error()
+                if now >= deadline:
+                    continue
+                poll_at = now + min(poll_seconds, deadline - now)
+                if progress is None:
+                    time.sleep(poll_at - now)
+                    continue
+                # Keep checking HTTP history even if the progress socket drops
+                # or produces frequent previews. Reconnects never reset a step.
+                while (remaining := min(poll_at, progress.deadline) - time.monotonic()) > 0:
+                    try:
+                        if socket is None:
+                            socket = connect(ws_url, open_timeout=remaining, close_timeout=1, proxy=None)
+                            continue
+                        progress.observe(socket.recv(timeout=remaining))
+                    except TimeoutError:
+                        break
+                    except (OSError, WebSocketException):
+                        if socket is not None:
+                            socket.close()
+                            socket = None
+                        time.sleep(max(0, min(poll_at, progress.deadline) - time.monotonic()))
+                        break
+        finally:
+            if socket is not None:
+                socket.close()
+
+    def interrupt_prompt(self, prompt_id: str) -> None:
+        # Delete this prompt if pending, then target it if the worker has
+        # already started. These routes return an empty response on success.
+        for path, payload in (
+            ("/queue", {"delete": [prompt_id]}),
+            ("/interrupt", {"prompt_id": prompt_id}),
+        ):
+            try:
+                self._request(
+                    "POST", path, body=json.dumps(payload).encode(),
+                    headers={"content-type": "application/json"}, timeout=5,
+                )
+            except ProviderJobError:
+                LOGGER.warning("ComfyUI could not stop prompt %s via %s", prompt_id, path)
 
     def download_output(self, history: dict[str, Any], save_node_id: str = "70") -> bytes:
         outputs = history.get("outputs")
@@ -1154,6 +1399,7 @@ def _build_comfyui_h3_official_i2v_prompt(
             "profile_reference_images_unsupported",
             "the selected official H3 I2V workflow does not support extra reference images",
         )
+    hyperflow = profile.adapter == COMFYUI_H3_HYPERFLOW_ADAPTER_KIND
     nodes: dict[str, Any] = {
         "10": {
             "class_type": "UNETLoader",
@@ -1263,6 +1509,16 @@ def _build_comfyui_h3_official_i2v_prompt(
             },
         }
     )
+    if hyperflow:
+        nodes["10"] = {
+            "class_type": "HyperFlowLoader",
+            "inputs": {"unet_name": profile.transformer},
+        }
+        nodes["41"] = {
+            "class_type": "HyperFlowSigmas",
+            "inputs": {"model": ["10", 0], "steps": steps},
+        }
+        nodes["42"]["inputs"]["sampler_name"] = "euler"
     return nodes
 
 
@@ -1288,6 +1544,13 @@ def _build_comfyui_h3_ref2va_prompt(
         if source_video_ref or not reference_video_refs or preserve_source_audio:
             raise ProviderJobError("invalid_source_artifact", "reference generation requires reference videos without source audio")
         source_video_ref, *reference_video_refs = reference_video_refs
+        # Rewrite legacy labels in the graph while preserving the signed job payload.
+        positive = re.sub(
+            r"<(?:Image|Picture)[ \t]+([0-9]+)>",
+            lambda match: f"<Picture {match[1].lstrip('0') or '0'}>",
+            positive,
+            flags=re.IGNORECASE,
+        )
     nodes: dict[str, Any] = {
         "10": {
             "class_type": "UNETLoader",
@@ -1314,6 +1577,15 @@ def _build_comfyui_h3_ref2va_prompt(
         "20": {"class_type": "LoadVideo", "inputs": {"file": source_video_ref}},
         "21": {"class_type": "GetVideoComponents", "inputs": {"video": ["20", 0]}},
     }
+    sampling_model = ["11", 0]
+    if profile.attention_backend:
+        # Scope the SDPA override to this model. SageAttention FP8 can silently
+        # corrupt long packed H3 sequences on Blackwell (SageAttention #388).
+        nodes["15"] = {
+            "class_type": "ModelAttentionBackend",
+            "inputs": {"model": sampling_model, "attention": profile.attention_backend},
+        }
+        sampling_model = ["15", 0]
     instructions = [
         "<Video 1> supplies blocking, subject trajectories, camera motion, timing, framing, and occlusion order. Generate a new finished scene. Replace proxy geometry and flat proxy colors using the requested subjects and appearance references."
         if reference_mode == "generation" else
@@ -1394,7 +1666,7 @@ def _build_comfyui_h3_ref2va_prompt(
             "41": {
                 "class_type": "BasicScheduler",
                 "inputs": {
-                    "model": ["11", 0],
+                    "model": sampling_model,
                     "scheduler": "beta",
                     "steps": steps,
                     "denoise": 1.0,
@@ -1406,7 +1678,7 @@ def _build_comfyui_h3_ref2va_prompt(
             },
             "43": {
                 "class_type": "BasicGuider",
-                "inputs": {"model": ["11", 0], "conditioning": ["30", 0]},
+                "inputs": {"model": sampling_model, "conditioning": ["30", 0]},
             },
             "44": {
                 "class_type": "SamplerCustomAdvanced",
@@ -1557,6 +1829,92 @@ def _build_comfyui_hidream_o1_image_prompt(
     return nodes
 
 
+def _build_comfyui_h3_image_prompt(
+    profile: ProviderProfile,
+    *,
+    reference_image_refs: list[str],
+    positive: str,
+    negative: str,
+    width: int,
+    height: int,
+    seed: int,
+    filename_prefix: str,
+) -> dict[str, Any]:
+    # Use the dedicated H3 Image conditioning and VAE, not the H3 video graph.
+    conditioning: dict[str, Any] = {
+        "clip": ["2", 0],
+        "vae": ["3", 0],
+        "prompt": ["9", 0],
+        "width": width,
+        "height": height,
+    }
+    if negative.strip():
+        positive += f"\nExclude these elements from the finished image: {negative.strip()}"
+    expansion: dict[str, Any] = {
+        "clip": ["8", 0],
+        "prompt": positive,
+        "system_prompt": (
+            "Write one detailed English caption describing the finished still image. "
+            "Follow the requested edits and exclusions, preserve everything else in "
+            "the source image, and copy requested visible text exactly in its original "
+            "language. If references are supplied, identify them in order as <Picture 1>, "
+            "<Picture 2>, and so on. Return only the caption."
+        ),
+        "max_length": 2048,
+        "sampling_mode": "off",
+    }
+    nodes: dict[str, Any] = {
+        "1": {
+            "class_type": "UNETLoader",
+            "inputs": {"unet_name": profile.transformer, "weight_dtype": "default"},
+        },
+        "2": {
+            "class_type": "CLIPLoader",
+            "inputs": {"clip_name": profile.text_encoder, "type": "minimax", "device": "default"},
+        },
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": profile.vae}},
+        "4": {"class_type": "MiniMaxH3ImageConditioning", "inputs": conditioning},
+        "5": {
+            "class_type": "ConditioningZeroOut",
+            "inputs": {"conditioning": ["4", 0]},
+        },
+        "6": {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["1", 0],
+                "seed": seed,
+                "steps": 6,
+                "cfg": 1.0,
+                "sampler_name": "euler",
+                "scheduler": "simple",
+                "positive": ["4", 0],
+                "negative": ["5", 0],
+                "latent_image": ["4", 1],
+                "denoise": 1.0,
+            },
+        },
+        "7": {
+            "class_type": "VAEDecode",
+            "inputs": {"samples": ["6", 0], "vae": ["3", 0]},
+        },
+        "8": {
+            "class_type": "CLIPLoader",
+            "inputs": {"clip_name": profile.prompt_expander, "type": "minimax", "device": "default"},
+        },
+        "9": {"class_type": "TextGenerateV2", "inputs": expansion},
+        "70": {
+            "class_type": "SaveImage",
+            "inputs": {"images": ["7", 0], "filename_prefix": filename_prefix},
+        },
+    }
+    for index, image_ref in enumerate(reference_image_refs, start=1):
+        node_id = str(20 + index)
+        nodes[node_id] = {"class_type": "LoadImage", "inputs": {"image": image_ref}}
+        conditioning[f"images.image_{index}"] = [node_id, 0]
+        expansion[f"images.image{index}"] = [node_id, 0]
+    return nodes
+
+
 class ProviderService:
     def __init__(
         self,
@@ -1570,12 +1928,18 @@ class ProviderService:
     ) -> None:
         self.config = config
         self.comfyui = comfyui or (ComfyUiClient(config.comfyui_url) if config.comfyui_url else None)
+        self.hyperflow_comfyui = (
+            ComfyUiClient(config.hyperflow_comfyui_url)
+            if config.hyperflow_comfyui_url
+            else None
+        )
         self.inline_core = inline_core or (
             InlineCoreClient(config.inline_core_url) if config.inline_core_url else None
         )
         self.executor = executor or ThreadPoolExecutor(max_workers=1, thread_name_prefix="ydc-media")
         self._lock = threading.RLock()
-        self._scheduled: set[str] = set()
+        # Dict insertion order matches submission to the single worker.
+        self._scheduled: dict[str, str] = {}
         self._inline_core_unloader = inline_core_unloader or self._restart_inline_core_service
         self._inline_core_available_ram_gb = (
             inline_core_available_ram_gb or _available_ram_gb
@@ -1592,6 +1956,11 @@ class ProviderService:
         with self._lock:
             self._arm_idle_unload_locked(reset_deadline=True)
 
+    def _comfyui_for(self, profile: ProviderProfile | None) -> ComfyUiClient | None:
+        if profile and profile.adapter == COMFYUI_H3_HYPERFLOW_ADAPTER_KIND:
+            return self.hyperflow_comfyui
+        return self.comfyui
+
     def healthcheck(self) -> dict[str, Any]:
         wan_profiles = {
             name: profile for name, profile in self.config.profiles.items()
@@ -1604,10 +1973,19 @@ class ProviderService:
         comfyui_h3_profiles = {
             name: profile for name, profile in self.config.profiles.items()
             if profile.adapter in COMFYUI_H3_ADAPTER_KINDS
+            and profile.adapter != COMFYUI_H3_HYPERFLOW_ADAPTER_KIND
+        }
+        hyperflow_profiles = {
+            name: profile for name, profile in self.config.profiles.items()
+            if profile.adapter == COMFYUI_H3_HYPERFLOW_ADAPTER_KIND
         }
         hidream_image_profiles = {
             name: profile for name, profile in self.config.profiles.items()
             if profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND
+        }
+        h3_image_profiles = {
+            name: profile for name, profile in self.config.profiles.items()
+            if profile.adapter == COMFYUI_H3_IMAGE_ADAPTER_KIND
         }
         values: list[dict[str, Any]] = []
         if wan_profiles:
@@ -1630,18 +2008,45 @@ class ProviderService:
                     "comfyui_unavailable", "platform HiDream image backend is unavailable"
                 )
             values.append(
-                self.comfyui.healthcheck_hidream_image(hidream_image_profiles)
+                self.comfyui.healthcheck_image(hidream_image_profiles)
             )
+        unavailable_profiles: set[str] = set()
+        if h3_image_profiles:
+            if self.comfyui is None:
+                raise ProviderJobError(
+                    "comfyui_unavailable", "platform H3 Image backend is unavailable"
+                )
+            try:
+                values.append(self.comfyui.healthcheck_image(h3_image_profiles, h3_image=True))
+            except ProviderJobError as error:
+                if not values:
+                    raise
+                unavailable_profiles.update(h3_image_profiles)
+                LOGGER.warning("H3 Image readiness check failed: %s", error)
+
+        if hyperflow_profiles:
+            try:
+                if self.hyperflow_comfyui is None:
+                    raise ProviderJobError("comfyui_unavailable", "HyperFlow backend is unavailable")
+                values.append(self.hyperflow_comfyui.healthcheck(hyperflow_profiles, HYPERFLOW_REQUIRED_NODES))
+            except ProviderJobError as error:
+                if not values:
+                    raise
+                unavailable_profiles.update(hyperflow_profiles)
+                LOGGER.warning("HyperFlow readiness check failed: %s", error)
         value = values[0] if len(values) == 1 else {
             "status": "healthy",
-            "profiles": sorted(self.config.profiles),
+            "profiles": sorted(self.config.profiles.keys() - unavailable_profiles),
             "backends": values,
         }
         profile_details = []
         for name, profile in sorted(self.config.profiles.items()):
+            if name in unavailable_profiles:
+                continue
             if profile.adapter in {
                 COMFYUI_H3_ADAPTER_KIND,
                 COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND,
+                COMFYUI_H3_HYPERFLOW_ADAPTER_KIND,
                 INLINE_CORE_H3_ADAPTER_KIND,
             }:
                 kind = "generate"
@@ -1651,7 +2056,7 @@ class ProviderService:
             elif profile.adapter == COMFYUI_H3_REF2VA_ADAPTER_KIND:
                 kind = "edit"
                 max_reference_images = 4
-            elif profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
+            elif profile.adapter in COMFYUI_IMAGE_ADAPTER_KINDS:
                 kind = "image"
                 max_reference_images = 4
             else:
@@ -1663,8 +2068,9 @@ class ProviderService:
                 in {
                     COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND,
                     COMFYUI_H3_REF2VA_ADAPTER_KIND,
+                    COMFYUI_H3_IMAGE_ADAPTER_KIND,
                 }
-                else 1
+                else 4 if profile.adapter == COMFYUI_H3_HYPERFLOW_ADAPTER_KIND else 1
             )
             profile_details.append(
                 {
@@ -1750,7 +2156,7 @@ class ProviderService:
         profile_name = str(request.get("generation_spec", {}).get("profile") or "")
         profile = self.config.profiles.get(profile_name)
         is_h3 = profile is not None and profile.adapter in {
-            *H3_ADAPTER_KINDS, COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+            *H3_ADAPTER_KINDS, *COMFYUI_IMAGE_ADAPTER_KINDS,
         }
         with self._lock:
             current = self._read_job(job_id)
@@ -1788,6 +2194,17 @@ class ProviderService:
                 raise ProviderJobError("job_not_found", "generated-media job was not found")
             return self.public_job(job)
 
+    def queue_snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            first_phase = next(iter(self._scheduled.values()), None)
+            return {
+                "active_phase": None if first_phase == "provider_queue" else first_phase,
+                "jobs": {
+                    job_id: {"phase": phase, "ahead_segments": index}
+                    for index, (job_id, phase) in enumerate(self._scheduled.items())
+                },
+            }
+
     def cancel(self, job_id: str) -> dict[str, Any]:
         interrupt = False
         with self._lock:
@@ -1800,6 +2217,8 @@ class ProviderService:
             if job.get("status") == "queued":
                 job["status"] = "canceled"
                 job["finished_at"] = _utc_now()
+                if self._scheduled.get(job_id) == "provider_queue":
+                    self._scheduled.pop(job_id)
             else:
                 job["status"] = "canceling"
                 interrupt = True
@@ -1816,8 +2235,8 @@ class ProviderService:
                 run_id = str(job.get("current_run_id") or "")
                 if run_id and self.inline_core is not None:
                     self.inline_core.cancel(run_id)
-            elif self.comfyui is not None:
-                self.comfyui.interrupt()
+            elif backend := self._comfyui_for(profile):
+                backend.interrupt()
         return result
 
     def public_job(self, job: dict[str, Any]) -> dict[str, Any]:
@@ -1939,7 +2358,8 @@ class ProviderService:
         source_optional_adapters = {
             COMFYUI_H3_ADAPTER_KIND,
             COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND,
-            COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+            COMFYUI_H3_HYPERFLOW_ADAPTER_KIND,
+            *COMFYUI_IMAGE_ADAPTER_KINDS,
         }
         if not isinstance(source_artifacts, list) or (
             not source_artifacts and profile.adapter not in source_optional_adapters
@@ -1988,17 +2408,19 @@ class ProviderService:
                 if profile.adapter == COMFYUI_H3_REF2VA_ADAPTER_KIND and is_video
                 else (
                     "reference"
-                    if profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND
+                    if profile.adapter in COMFYUI_IMAGE_ADAPTER_KINDS
                     else ("first_frame" if source_index == 0 else "subject")
                 )
             )
             role = str(source.get("role") or default_role).strip()
             if profile.adapter == COMFYUI_H3_REF2VA_ADAPTER_KIND:
                 allowed_roles = {"source_video", "reference_video", "style", "subject"}
-            elif profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
+            elif profile.adapter in COMFYUI_IMAGE_ADAPTER_KINDS:
                 allowed_roles = {"reference"}
             elif profile.adapter == COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND:
                 allowed_roles = {"first_frame", "continuation_video"}
+            elif profile.adapter == COMFYUI_H3_HYPERFLOW_ADAPTER_KIND:
+                allowed_roles = {"first_frame"}
             else:
                 allowed_roles = {"first_frame", "style", "subject"}
             if role not in allowed_roles:
@@ -2036,16 +2458,19 @@ class ProviderService:
                     "invalid_source_artifact",
                     "Ref2VA edit requires one source video; generation requires reference videos only; limits are three videos and nine images",
                 )
-        elif profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
+        elif profile.adapter in COMFYUI_IMAGE_ADAPTER_KINDS:
             if len(normalized_sources) > 4:
                 raise ProviderJobError(
                     "invalid_source_artifact",
-                    "HiDream image editing accepts up to four reference images",
+                    "image editing accepts up to four reference images",
                 )
         elif profile.adapter == COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND:
             if any(sum(source["role"] == role for source in normalized_sources) > 1
                    for role in ("first_frame", "continuation_video")):
                 raise ProviderJobError("invalid_source_artifact", "official H3 accepts one first frame and one synchronized continuation clip")
+        elif profile.adapter == COMFYUI_H3_HYPERFLOW_ADAPTER_KIND:
+            if len(normalized_sources) > 1:
+                raise ProviderJobError("invalid_source_artifact", "HyperFlow accepts at most one first frame")
         else:
             first_frame_count = sum(
                 source["role"] == "first_frame" for source in normalized_sources
@@ -2062,12 +2487,12 @@ class ProviderService:
         normalized_parameters["height"] = _bounded_int(parameters.get("height", profile.default_height), "height", 64, profile.max_height)
         if profile.adapter in {
             *H3_ADAPTER_KINDS,
-            COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+            *COMFYUI_IMAGE_ADAPTER_KINDS,
         } and (
             normalized_parameters["width"] % 32 != 0 or normalized_parameters["height"] % 32 != 0
         ):
             raise ProviderJobError("invalid_generation_spec", "width and height must be multiples of 32")
-        if profile.adapter != COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
+        if profile.adapter not in COMFYUI_IMAGE_ADAPTER_KINDS:
             length_value = parameters.get("length", parameters.get("duration_frames", profile.default_length))
             normalized_parameters["length"] = _bounded_int(length_value, "length", 5, profile.max_length)
             normalized_parameters.pop("duration_frames", None)
@@ -2081,8 +2506,16 @@ class ProviderService:
             normalized_parameters["fps"] = _bounded_float(parameters.get("fps", profile.default_fps), "fps", 1, 60)
         normalized_parameters["steps"] = _bounded_int(parameters.get("steps", profile.default_steps), "steps", 2, 100)
         normalized_parameters["cfg"] = _bounded_float(parameters.get("cfg", profile.default_cfg), "cfg", 0, 30)
+        if profile.adapter == COMFYUI_H3_HYPERFLOW_ADAPTER_KIND and (
+            normalized_parameters["steps"] not in {4, 6, 8} or normalized_parameters["cfg"] != 1
+        ):
+            raise ProviderJobError("invalid_generation_spec", "HyperFlow requires 4, 6 or 8 steps and CFG 1")
+        if profile.adapter == COMFYUI_H3_IMAGE_ADAPTER_KIND and (
+            normalized_parameters["steps"] != 6 or normalized_parameters["cfg"] != 1
+        ):
+            raise ProviderJobError("invalid_generation_spec", "H3 Image requires six steps and CFG 1")
         normalized_parameters["negative_prompt"] = str(parameters.get("negative_prompt", profile.default_negative_prompt))
-        if profile.adapter != COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
+        if profile.adapter not in COMFYUI_IMAGE_ADAPTER_KINDS:
             preserve_source_audio = parameters.get("preserve_source_audio", reference_mode != "generation")
             if not isinstance(preserve_source_audio, bool):
                 raise ProviderJobError(
@@ -2115,6 +2548,7 @@ class ProviderService:
         }
 
     def _recover_pending_jobs(self) -> None:
+        pending: list[tuple[bool, str, str]] = []
         for path in sorted(self.config.state_root.glob("gmjob_*/job.json")):
             try:
                 job = json.loads(path.read_text(encoding="utf-8"))
@@ -2127,9 +2561,18 @@ class ProviderService:
                     job["finished_at"] = _utc_now()
                     self._write_job(job)
                 else:
-                    job["status"] = "queued"
-                    self._write_job(job)
-                    self._schedule_if_needed(str(job["job_id"]), job)
+                    was_queued = job["status"] == "queued"
+                    if not was_queued:
+                        job["status"] = "queued"
+                        self._write_job(job)
+                    pending.append((
+                        was_queued,
+                        str(job.get("created_at") or ""),
+                        str(job["job_id"]),
+                    ))
+        # Recover previously executing work first, followed by submission order.
+        for _, _, job_id in sorted(pending):
+            self._schedule_if_needed(job_id, {"status": "queued"})
 
     def _is_h3_job(self, job: dict[str, Any]) -> bool:
         request = job.get("request") if isinstance(job.get("request"), dict) else {}
@@ -2139,10 +2582,10 @@ class ProviderService:
             else {}
         )
         profile = self.config.profiles.get(str(spec.get("profile") or ""))
-        # Legacy lifecycle name: HiDream uses the same ComfyUI process as H3.
+        # The image models use the same ComfyUI process as H3 video.
         # Restarting that process during an image job also destroys its queue.
         return profile is not None and profile.adapter in {
-            *H3_ADAPTER_KINDS, COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+            *H3_ADAPTER_KINDS, *COMFYUI_IMAGE_ADAPTER_KINDS,
         }
 
     def _has_active_h3_jobs_locked(self) -> bool:
@@ -2168,7 +2611,7 @@ class ProviderService:
 
     def _has_h3_profiles(self) -> bool:
         return any(
-            profile.adapter in {*H3_ADAPTER_KINDS, COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND}
+            profile.adapter in {*H3_ADAPTER_KINDS, *COMFYUI_IMAGE_ADAPTER_KINDS}
             for profile in self.config.profiles.values()
         )
 
@@ -2298,10 +2741,11 @@ class ProviderService:
     def _ensure_comfyui_transformer(self, profile: ProviderProfile) -> None:
         if profile.adapter not in {
             *COMFYUI_H3_ADAPTER_KINDS,
-            COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+            *COMFYUI_IMAGE_ADAPTER_KINDS,
         }:
             return
-        if self.comfyui is None:
+        backend = self._comfyui_for(profile)
+        if backend is None:
             raise ProviderJobError(
                 "comfyui_unavailable",
                 "platform ComfyUI generation backend is unavailable",
@@ -2318,15 +2762,17 @@ class ProviderService:
             self._active_comfyui_transformer or "unknown",
             active_model,
         )
-        self.comfyui.free_memory()
+        backend.free_memory()
         self._active_comfyui_transformer = active_model
 
     def _run_or_resume_comfyui_prompt(
         self,
         job_id: str,
         prompt: dict[str, Any],
+        backend: ComfyUiClient | None = None,
     ) -> bytes:
-        if self.comfyui is None:
+        backend = backend or self.comfyui
+        if backend is None:
             raise ProviderJobError(
                 "comfyui_unavailable",
                 "platform generation backend is unavailable",
@@ -2334,7 +2780,16 @@ class ProviderService:
         with self._lock:
             job = self._require_job(job_id)
             prompt_id = str(job.get("current_prompt_id") or "").strip()
-        if prompt_id and not self.comfyui.prompt_exists(prompt_id):
+            request = job.get("request") or {}
+            profile_name = request.get("generation_spec", {}).get("profile")
+            profile = self.config.profiles.get(profile_name) if profile_name else None
+            started_at = job.get("started_at")
+        render_deadline = None
+        if profile is not None and profile.adapter in COMFYUI_H3_ADAPTER_KINDS:
+            started = datetime.fromisoformat(started_at)
+            elapsed = max(0, (datetime.now(timezone.utc) - started).total_seconds())
+            render_deadline = time.monotonic() + H3_COMFYUI_RENDER_TIMEOUT_SECONDS - elapsed
+        if prompt_id and not backend.prompt_exists(prompt_id):
             LOGGER.warning(
                 "persisted ComfyUI prompt %s is no longer available; requeueing provider job %s",
                 prompt_id,
@@ -2353,27 +2808,52 @@ class ProviderService:
                 job_id,
             )
         else:
-            prompt_id = self.comfyui.queue_prompt(prompt, client_id=job_id)
+            if render_deadline is not None and time.monotonic() >= render_deadline:
+                raise ProviderJobError(
+                    "comfyui_render_timeout", H3_COMFYUI_RENDER_TIMEOUT_MESSAGE,
+                )
+            prompt_id = backend.queue_prompt(prompt, client_id=job_id)
             with self._lock:
                 job = self._require_job(job_id)
                 job["current_prompt_id"] = prompt_id
                 job["updated_at"] = _utc_now()
                 self._write_job(job)
-        history = self.comfyui.wait_for_history(
+        progress = None
+        if profile is not None and profile.adapter in COMFYUI_H3_ADAPTER_KINDS:
+            progress = ComfyUiStepProgress(
+                job_id, prompt_id, prompt, int(request["runtime_parameters"]["steps"]),
+                self.config.h3_step_timeout_seconds,
+            )
+        history = backend.wait_for_history(
             prompt_id,
             timeout=self.config.job_timeout_seconds,
             poll_seconds=self.config.poll_seconds,
             canceled=lambda: self._cancel_requested(job_id),
+            progress=progress,
+            render_deadline=render_deadline,
         )
-        return self.comfyui.download_output(history)
+        return backend.download_output(history)
 
     def _schedule_if_needed(self, job_id: str, job: dict[str, Any]) -> None:
         if job.get("status") not in {"queued", "running"} or job_id in self._scheduled:
             return
-        self._scheduled.add(job_id)
-        self.executor.submit(self._run_job, job_id)
+        self._scheduled[job_id] = "provider_queue"
+        try:
+            self.executor.submit(self._run_job, job_id)
+        except RuntimeError:
+            self._scheduled.pop(job_id, None)
+            raise
+
+    def _set_queue_phase(self, job_id: str, phase: str) -> bool:
+        with self._lock:
+            if job_id not in self._scheduled:
+                return False
+            self._scheduled[job_id] = phase
+            return True
 
     def _run_job(self, job_id: str) -> None:
+        if not self._set_queue_phase(job_id, "provider_starting"):
+            return
         try:
             with self._lock:
                 job = self._require_job(job_id)
@@ -2385,14 +2865,16 @@ class ProviderService:
                 job.setdefault("started_at", _utc_now())
                 job["updated_at"] = _utc_now()
                 self._write_job(job)
+                self._set_queue_phase(job_id, "processing")
             request = job["request"]
             generation_spec = request["generation_spec"]
             profile = self.config.profiles[str(generation_spec["profile"])]
             parameters = request.get("runtime_parameters") or generation_spec["parameters"]
+            backend = self._comfyui_for(profile)
             source_artifacts = request.get("source_artifacts") or []
             if job.get("current_prompt_id") and profile.adapter in {
                 *COMFYUI_H3_ADAPTER_KINDS,
-                COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+                *COMFYUI_IMAGE_ADAPTER_KINDS,
             }:
                 self._active_comfyui_transformer = (
                     profile.checkpoint
@@ -2428,7 +2910,7 @@ class ProviderService:
                 artifact_path.write_bytes(source_content)
                 default_role = (
                     "reference"
-                    if profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND
+                    if profile.adapter in COMFYUI_IMAGE_ADAPTER_KINDS
                     else ("first_frame" if source_index == 0 else "subject")
                 )
                 role = str(source.get("role") or default_role)
@@ -2436,15 +2918,15 @@ class ProviderService:
                     source_path = artifact_path
                 if profile.adapter in {
                     COMFYUI_WAN22_ADAPTER_KIND,
-                    COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND,
+                    *COMFYUI_IMAGE_ADAPTER_KINDS,
                     *COMFYUI_H3_ADAPTER_KINDS,
                 }:
-                    if self.comfyui is None:
+                    if backend is None:
                         raise ProviderJobError(
                             "comfyui_unavailable",
                             "platform generation backend is unavailable",
                         )
-                    uploaded_ref = self.comfyui.upload_input(
+                    uploaded_ref = backend.upload_input(
                         source_content,
                         source_filename,
                         f"ydc_generated_media/{job_id}",
@@ -2478,7 +2960,19 @@ class ProviderService:
                 sample_id = "gms_" + sample_hash[:32]
                 configured_seed = parameters.get("seed")
                 seed = int(configured_seed) + index if configured_seed is not None else int(sample_hash[:16], 16)
-                if profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
+                if profile.adapter == COMFYUI_H3_IMAGE_ADAPTER_KIND:
+                    prompt = _build_comfyui_h3_image_prompt(
+                        profile,
+                        reference_image_refs=reference_image_refs,
+                        positive=str(parameters["behavior_prompts"][label]),
+                        negative=str(parameters["negative_prompt"]),
+                        width=int(parameters["width"]),
+                        height=int(parameters["height"]),
+                        seed=seed,
+                        filename_prefix=f"ydc_generated_media/{job_id}/{sample_id}",
+                    )
+                    content = self._run_or_resume_comfyui_prompt(job_id, prompt)
+                elif profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND:
                     if self.comfyui is None:
                         raise ProviderJobError(
                             "comfyui_unavailable",
@@ -2557,8 +3051,11 @@ class ProviderService:
                         reference_mode=str(parameters.get("reference_mode", "edit")),
                     )
                     content = self._run_or_resume_comfyui_prompt(job_id, prompt)
-                elif profile.adapter == COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND:
-                    if self.comfyui is None:
+                elif profile.adapter in {
+                    COMFYUI_H3_OFFICIAL_I2V_ADAPTER_KIND,
+                    COMFYUI_H3_HYPERFLOW_ADAPTER_KIND,
+                }:
+                    if backend is None:
                         raise ProviderJobError(
                             "comfyui_unavailable", "platform H3 generation backend is unavailable"
                         )
@@ -2576,7 +3073,7 @@ class ProviderService:
                         fps=float(parameters["fps"]),
                         continuation_video_ref=continuation_video_ref or None,
                     )
-                    content = self._run_or_resume_comfyui_prompt(job_id, prompt)
+                    content = self._run_or_resume_comfyui_prompt(job_id, prompt, backend)
                 elif profile.adapter == COMFYUI_H3_ADAPTER_KIND:
                     if self.comfyui is None:
                         raise ProviderJobError(
@@ -2617,9 +3114,7 @@ class ProviderService:
                         fps=float(parameters["fps"]),
                     )
                     content = self._run_or_resume_comfyui_prompt(job_id, prompt)
-                is_image_output = (
-                    profile.adapter == COMFYUI_HIDREAM_O1_IMAGE_ADAPTER_KIND
-                )
+                is_image_output = profile.adapter in COMFYUI_IMAGE_ADAPTER_KINDS
                 extension = "png" if is_image_output else "mp4"
                 content_type = "image/png" if is_image_output else "video/mp4"
                 contract = IMAGE_SAMPLE_CONTRACT if is_image_output else SAMPLE_CONTRACT
@@ -2685,7 +3180,7 @@ class ProviderService:
             )
         finally:
             with self._lock:
-                self._scheduled.discard(job_id)
+                self._scheduled.pop(job_id, None)
                 job = self._read_job(job_id)
                 if job is not None and self._is_h3_job(job):
                     self._arm_idle_unload_locked(reset_deadline=True)
@@ -2824,6 +3319,12 @@ def create_app(service: ProviderService | None = None) -> FastAPI:
         current = resolved_service()
         authorize(request, current)
         return current.resource_lifecycle()
+
+    @provider.get("/v1/generated-media/queue")
+    def queue(request: FastApiRequest) -> dict[str, Any]:
+        current = resolved_service()
+        authorize(request, current)
+        return current.queue_snapshot()
 
     @provider.post("/v1/generated-media/resources:unload")
     def unload_resources(request: FastApiRequest) -> dict[str, Any]:

@@ -23,6 +23,7 @@ import { requestGenerationProvider } from "./provider-request";
 import { isMediaGenerationWorkerEnabled } from "./worker-config";
 
 export const HIDREAM_IMAGE_PROFILE = "platform-hidream-o1-image-v1";
+export const H3_IMAGE_PROFILE = "platform-minimax-h3-image-v1";
 const PROVIDER_CONTRACT = "ydc_generated_media_provider_request.v1";
 const IMAGE_QUEUE_SWEEP_INTERVAL_MS = 5_000;
 const MAX_IMAGE_OUTPUT_BYTES = 25_000_000;
@@ -49,8 +50,20 @@ let recoveryStarted = false;
 let imageRunChain: Promise<void> = Promise.resolve();
 let imageQueueSweepRunning = false;
 
-function providerConfig() {
-  const baseUrl = process.env.MEDIA_HUB_GENERATION_PROVIDER_URL?.trim();
+export function defaultMediaImageProfile() {
+  return process.env.MEDIA_HUB_IMAGE_PROFILE?.trim() === H3_IMAGE_PROFILE
+    ? H3_IMAGE_PROFILE
+    : HIDREAM_IMAGE_PROFILE;
+}
+
+function providerConfig(profile: string) {
+  const imageUrl =
+    profile === H3_IMAGE_PROFILE
+      ? process.env.MEDIA_HUB_H3_IMAGE_PROVIDER_URL?.trim()
+      : undefined;
+  const baseUrl = imageUrl?.length
+    ? imageUrl
+    : process.env.MEDIA_HUB_GENERATION_PROVIDER_URL?.trim();
   const token = process.env.MEDIA_HUB_GENERATION_PROVIDER_TOKEN?.trim();
   if (!baseUrl || !token) {
     throw new Error(
@@ -61,10 +74,11 @@ function providerConfig() {
 }
 
 async function providerRequest<T>(
+  profile: string,
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
-  const { baseUrl, token } = providerConfig();
+  const { baseUrl, token } = providerConfig(profile);
   return requestGenerationProvider<T>({
     baseUrl,
     token,
@@ -115,7 +129,7 @@ async function createProviderJob(job: typeof mediaImageJob.$inferSelect) {
     }),
   );
   const generationSpec = {
-    profile: HIDREAM_IMAGE_PROFILE,
+    profile: job.profile,
     parameters: {
       behavior_prompts: {
         main: imageVariationPrompt(
@@ -127,12 +141,11 @@ async function createProviderJob(job: typeof mediaImageJob.$inferSelect) {
       negative_prompt: job.negativePrompt,
       width: job.width,
       height: job.height,
-      steps: 20,
-      cfg: 5,
+      ...(job.profile === HIDREAM_IMAGE_PROFILE ? { steps: 20, cfg: 5 } : {}),
       ...(job.seed === null ? {} : { seed: job.seed }),
     },
   };
-  return providerRequest<ProviderJob>("/v1/generated-media/jobs", {
+  return providerRequest<ProviderJob>(job.profile, "/v1/generated-media/jobs", {
     method: "POST",
     body: JSON.stringify({
       schema_version: PROVIDER_CONTRACT,
@@ -151,10 +164,14 @@ async function createProviderJob(job: typeof mediaImageJob.$inferSelect) {
   });
 }
 
-async function waitForProviderJob(providerJobId: string): Promise<ProviderJob> {
+async function waitForProviderJob(
+  profile: string,
+  providerJobId: string,
+): Promise<ProviderJob> {
   const deadline = Date.now() + 60 * 60 * 1000;
   while (Date.now() < deadline) {
     const current = await providerRequest<ProviderJob>(
+      profile,
       `/v1/generated-media/jobs/${encodeURIComponent(providerJobId)}`,
     );
     if (current.status === "succeeded") return current;
@@ -163,7 +180,7 @@ async function waitForProviderJob(providerJobId: string): Promise<ProviderJob> {
     }
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
-  throw new Error("HiDream 图片生成超时");
+  throw new Error("图片生成超时");
 }
 
 async function runImageJob(jobId: string): Promise<void> {
@@ -187,7 +204,7 @@ async function runImageJob(jobId: string): Promise<void> {
       .update(mediaImageJob)
       .set({ providerJobId: submitted.job_id, updatedAt: new Date() })
       .where(eq(mediaImageJob.id, job.id));
-    const completed = await waitForProviderJob(submitted.job_id);
+    const completed = await waitForProviderJob(job.profile, submitted.job_id);
     const latest = await db.query.mediaImageJob.findFirst({
       where: eq(mediaImageJob.id, job.id),
       columns: { status: true },
@@ -196,18 +213,18 @@ async function runImageJob(jobId: string): Promise<void> {
     const samples = completed.samples ?? [];
     if (samples.length < job.outputCount) {
       throw new Error(
-        `HiDream Provider 仅返回 ${samples.length}/${job.outputCount} 张图片`,
+        `图片服务仅返回 ${samples.length}/${job.outputCount} 张图片`,
       );
     }
     const outputAssets: (typeof mediaImageAsset.$inferInsert)[] = [];
     for (const sample of samples.slice(0, job.outputCount)) {
       const contentType = sample.content_type ?? "";
       if (!sample.content_base64 || !IMAGE_CONTENT_TYPES.has(contentType)) {
-        throw new Error("HiDream Provider 未返回有效图片");
+        throw new Error("图片服务未返回有效图片");
       }
       const content = Buffer.from(sample.content_base64, "base64");
       if (content.length <= 0 || content.length > MAX_IMAGE_OUTPUT_BYTES) {
-        throw new Error("HiDream Provider 返回的图片大小无效");
+        throw new Error("图片服务返回的图片大小无效");
       }
       const assetId = crypto.randomUUID();
       const extension = contentTypeExtension(contentType);
@@ -270,9 +287,10 @@ async function runImageJob(jobId: string): Promise<void> {
         updatedAt: finishedAt,
       })
       .where(eq(mediaImageJob.id, job.id));
-    log.error("HiDream image generation failed", {
+    log.error("Image generation failed", {
       code: "MEDIA_IMAGE_GENERATION_FAILED",
       job_id: job.id,
+      profile: job.profile,
       err: error instanceof Error ? error : new Error(String(error)),
     });
   }
@@ -353,6 +371,7 @@ export async function cancelMediaImageJob(jobId: string): Promise<void> {
   timers.delete(jobId);
   if (job.providerJobId) {
     await providerRequest(
+      job.profile,
       `/v1/generated-media/jobs/${encodeURIComponent(job.providerJobId)}:cancel`,
       { method: "POST", body: "{}" },
     ).catch(() => undefined);
@@ -364,18 +383,19 @@ export async function cancelMediaImageJob(jobId: string): Promise<void> {
 }
 
 export async function getMediaImageProviderHealth() {
+  const profile = defaultMediaImageProfile();
   const health = await providerRequest<{
     status?: string;
     profiles?: string[];
     provider_version?: string;
-  }>("/healthz");
+  }>(profile, "/healthz");
   return {
     status:
-      health.status === "healthy" &&
-      health.profiles?.includes(HIDREAM_IMAGE_PROFILE)
+      health.status === "healthy" && health.profiles?.includes(profile)
         ? ("healthy" as const)
         : ("misconfigured" as const),
     providerVersion: health.provider_version ?? null,
-    profile: HIDREAM_IMAGE_PROFILE,
+    profile,
+    modelName: profile === H3_IMAGE_PROFILE ? "MiniMax H3 Image" : "HiDream-O1",
   };
 }

@@ -123,7 +123,7 @@ export function buildImagePromptOptimizationPrompt(
   const isEdit = input.referenceImageCount > 0;
   const preservedLanguage = requestedTextLanguage(input.language);
   return compactLines([
-    `You are optimizing a production prompt for HiDream image ${isEdit ? "editing" : "generation"}.`,
+    `You are optimizing a production prompt for still image ${isEdit ? "editing" : "generation"}.`,
     "Do not inspect files, browse, or use tools. Work only from the content below.",
     "Preserve the user's subject, intent, requested count, identity, and factual constraints.",
     "Translate the user's descriptive prose into precise natural English and return the entire optimized production prompt in English. The only non-English content allowed is text explicitly requested to appear inside the image; preserve that visible text verbatim in the requested language.",

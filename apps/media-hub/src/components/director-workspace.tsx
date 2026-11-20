@@ -11,6 +11,7 @@ import {
   AlertDialogTrigger,
 } from "@acme/ui/alert-dialog";
 import {
+  MEDIA_H3_REFERENCE_VIDEO_MAX_FRAMES,
   MEDIA_H3_SCRIPT_SHOT_SECONDS,
   MEDIA_H3_SCRIPT_TARGET_DURATIONS,
 } from "@acme/validators";
@@ -1081,7 +1082,8 @@ function AuthenticatedVideoScriptStudio({
             >
               <h2 className="text-sm font-semibold">镜头参考素材</h2>
               <p className="mt-2 text-xs leading-5 text-slate-500">
-                在镜头中选择私有素材作为首帧。当前已加载 {assets.length} 张。
+                写实镜头优先选符合开场构图的原始实拍图。缺少合适照片时，先按白模的构图和摆位做一张写实图，再选为首帧。当前已加载{" "}
+                {assets.length} 张图片。
               </p>
               {shots.map((shot, index) => (
                 <label
@@ -1107,12 +1109,13 @@ function AuthenticatedVideoScriptStudio({
                     ))}
                   </select>
                   <span className="mt-2 block">
-                    白模视频产物 ID（与首帧二选一）
+                    运动参考（选填，最多 {MEDIA_H3_REFERENCE_VIDEO_MAX_FRAMES}{" "}
+                    帧，约 5 秒，与首帧二选一）
                   </span>
                   <input
                     aria-label={`${shot.title} 白模视频产物 ID`}
                     value={shot.referenceArtifactId ?? ""}
-                    placeholder="从白模工作台复制 H3 参考视频 ID"
+                    placeholder="仅复刻已有运镜或动作时填视频 ID"
                     onChange={(event) =>
                       updateShot(shot.id, {
                         referenceArtifactId:

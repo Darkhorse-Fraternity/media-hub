@@ -3,6 +3,12 @@ import { describe, expect, it } from "vitest";
 import { resolveMediaSystemSettingValues } from "./system-settings-policy";
 
 describe("Media Hub system settings precedence", () => {
+  it("keeps inline video generation on deployments without a configured profile", () => {
+    expect(
+      resolveMediaSystemSettingValues(undefined, {}).h3GenerationProfile,
+    ).toBe("platform-h3-i2v-inline-v1");
+  });
+
   it("prefers stored administrator settings over environment defaults", () => {
     expect(
       resolveMediaSystemSettingValues(

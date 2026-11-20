@@ -23,7 +23,7 @@ const imageSizes = [
   { label: "方形 · 1024", width: 1024, height: 1024 },
   { label: "横向 · 1344×768", width: 1344, height: 768 },
   { label: "竖向 · 768×1344", width: 768, height: 1344 },
-  { label: "HiDream 原生方形 · 2048", width: 2048, height: 2048 },
+  { label: "方形 · 2048", width: 2048, height: 2048 },
 ] as const;
 
 function ImageStudioPage() {
@@ -265,8 +265,7 @@ function AuthenticatedImageStudio({
               从一张静帧，开始一段影像。
             </h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
-              用 HiDream 生成或修改图片，结果自动保存到 {userName}{" "}
-              的私有素材库。
+              生成或修改图片，结果自动保存到 {userName} 的私有素材库。
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -284,8 +283,12 @@ function AuthenticatedImageStudio({
                   : "border-amber-400/30 bg-amber-400/10 text-amber-300"
               }`}
             >
-              HiDream ·{" "}
-              {healthQuery.data?.status === "healthy" ? "READY" : "CHECKING"}
+              {healthQuery.data?.modelName ?? "图片模型"} ·{" "}
+              {healthQuery.isPending
+                ? "检查中"
+                : healthQuery.data?.status === "healthy"
+                  ? "可用"
+                  : "暂不可用"}
             </span>
             <Link
               to="/"

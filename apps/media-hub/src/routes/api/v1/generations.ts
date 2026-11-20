@@ -97,7 +97,7 @@ const createGenerationBody = z.object({
     .default([]),
 });
 
-async function handleGet(request: Request): Promise<Response> {
+export async function handleGet(request: Request): Promise<Response> {
   try {
     const { caller } = await createAgentApiCaller(request);
     const url = new URL(request.url);

@@ -75,11 +75,43 @@ let handleCaptions: HandleShotRequest;
 let providerServer: Server;
 let createdEditJobId: string | null = null;
 let handleGenerate: (request: Request) => Promise<Response>;
+let handleListJobs: (request: Request) => Promise<Response>;
+let handleGetJob: (request: Request, jobId: string) => Promise<Response>;
 let handleRetry: (request: Request, jobId: string) => Promise<Response>;
 let handleUpload: (request: Request) => Promise<Response>;
 let createdReferenceJobId: string | null = null;
 const recoveryRequests: string[] = [];
 let recoveryPolls = 0;
+let providerQueueSnapshot: Record<string, unknown> | null = null;
+let providerAdmissionBlocked = false;
+
+async function referenceFixture(frameCount: number) {
+  const { stdout } = await promisify(execFile)(
+    process.env.FFMPEG_PATH ?? "ffmpeg",
+    [
+      "-v",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=gray:s=96x64:r=24",
+      "-frames:v",
+      String(frameCount),
+      "-an",
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      "-movflags",
+      "frag_keyframe+empty_moov",
+      "-f",
+      "mp4",
+      "pipe:1",
+    ],
+    { encoding: "buffer" },
+  );
+  return stdout;
+}
 
 function referenceRequest(overrides: Record<string, unknown> = {}) {
   return new Request("http://media-hub.test/api/v1/generations", {
@@ -183,6 +215,14 @@ describe("Agent video edit and director REST API", () => {
     providerServer = createServer((request, response) => {
       recoveryRequests.push(`${request.method} ${request.url}`);
       if (
+        request.url === "/v1/generated-media/queue" &&
+        providerQueueSnapshot
+      ) {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(providerQueueSnapshot));
+        return;
+      }
+      if (
         request.url === "/v1/generated-media/jobs/existing-recovery-job" &&
         request.method === "GET"
       ) {
@@ -206,6 +246,18 @@ describe("Agent video edit and director REST API", () => {
       }
       if (request.url !== "/healthz") {
         response.writeHead(404).end();
+        return;
+      }
+      if (providerAdmissionBlocked) {
+        response.writeHead(503, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            detail: {
+              message:
+                "GPU resource cleanup is pending; generation admission is blocked",
+            },
+          }),
+        );
         return;
       }
       response.writeHead(200, { "content-type": "application/json" });
@@ -246,36 +298,16 @@ describe("Agent video edit and director REST API", () => {
     const routeModule =
       await import("../routes/api/v1/generations/$jobId/edits");
     handlePost = routeModule.handlePost;
-    handleGenerate = (await import("../routes/api/v1/generations")).handlePost;
+    const generations = await import("../routes/api/v1/generations");
+    handleGenerate = generations.handlePost;
+    handleListJobs = generations.handleGet;
+    handleGetJob = (await import("../routes/api/v1/generations/$jobId"))
+      .handleGet;
     handleRetry = (await import("../routes/api/v1/generations/$jobId/retry"))
       .handlePost;
     handleUpload = (await import("../routes/api/v1/uploads/presign"))
       .handlePost;
-    const { stdout: previs } = await promisify(execFile)(
-      process.env.FFMPEG_PATH ?? "ffmpeg",
-      [
-        "-v",
-        "error",
-        "-f",
-        "lavfi",
-        "-i",
-        "color=c=gray:s=96x64:r=24",
-        "-frames:v",
-        "124",
-        "-an",
-        "-c:v",
-        "libx264",
-        "-pix_fmt",
-        "yuv420p",
-        "-movflags",
-        "frag_keyframe+empty_moov",
-        "-f",
-        "mp4",
-        "pipe:1",
-      ],
-      { encoding: "buffer" },
-    );
-    storage.get.mockResolvedValue(previs);
+    storage.get.mockResolvedValue(await referenceFixture(124));
     handleEditPlan = (
       await import("../routes/api/v1/scripts/$scriptId/shots/$shotId/edit-plan")
     ).handlePatch;
@@ -447,8 +479,27 @@ describe("Agent video edit and director REST API", () => {
     });
   });
 
-  it("creates a reference generation from an uploaded MP4 without a source job", async () => {
-    const response = await handleGenerate(referenceRequest());
+  it("accepts a 124-frame upload for a 15-second generation and fixes legacy image tags", async () => {
+    const body = (await referenceRequest().json()) as { prompt: string };
+    const referenceImages = [
+      {
+        storage_key: `media-hub/cover/${ownerId}/look.jpg`,
+        name: "look.jpg",
+        content_type: "image/jpeg",
+        role: "subject",
+      },
+    ];
+    const prompt = body.prompt.replace(
+      "is the red proxy",
+      "uses <Image 1> as the appearance for the red proxy",
+    );
+    const response = await handleGenerate(
+      referenceRequest({
+        duration_seconds: 15,
+        prompt,
+        reference_images: referenceImages,
+      }),
+    );
     const result = (await response.json()) as { id: string };
     expect(response.status).toBe(201);
     createdReferenceJobId = result.id;
@@ -460,6 +511,7 @@ describe("Agent video edit and director REST API", () => {
       sourceGenerationJobId: null,
       profile: "platform-h3-ref2va-edit-v1",
       steps: 20,
+      durationSeconds: 15,
       preserveSourceAudio: false,
       referenceVideo: {
         frameCount: 124,
@@ -470,6 +522,146 @@ describe("Agent video edit and director REST API", () => {
       },
     });
     expect(saved?.referenceVideo?.checksum).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(saved?.prompt).toContain("uses <Picture 1> as the appearance");
+    expect(saved?.prompt).not.toContain("<Image 1>");
+
+    const before = await database.$count(mediaGenerationJob);
+    const missingImage = await handleGenerate(
+      referenceRequest({
+        prompt: prompt.replace("<Image 1>", "<Image 2>"),
+        reference_images: referenceImages,
+      }),
+    );
+    expect(missingImage.status).toBe(400);
+    await expect(missingImage.json()).resolves.toMatchObject({
+      error: { message: expect.stringContaining("未提供的 <Picture 2>") },
+    });
+    expect(await database.$count(mediaGenerationJob)).toBe(before);
+  });
+
+  it("keeps a static white-model first frame in base generation", async () => {
+    const storageKey = `media-hub/cover/${ownerId}/white-model.png`;
+    const response = await handleGenerate(
+      referenceRequest({
+        generation_mode: "base",
+        generation_profile: "recovery-i2v",
+        duration_seconds: 15,
+        prompt: "The camera advances slowly along the track.",
+        reference_video: undefined,
+        first_frame: {
+          storage_key: storageKey,
+          name: "white-model.png",
+          content_type: "image/png",
+        },
+      }),
+    );
+    expect(response.status).toBe(201);
+    const { id } = (await response.json()) as { id: string };
+    const saved = await database.query.mediaGenerationJob.findFirst({
+      where: eq(mediaGenerationJob.id, id),
+    });
+    expect(saved).toMatchObject({
+      profile: "recovery-i2v",
+      sourceImageStorageKey: storageKey,
+      referenceVideo: null,
+      durationSeconds: 15,
+    });
+  });
+
+  it("rejects a longer H3 reference even when its frames match the output", async () => {
+    const before = await database.$count(mediaGenerationJob);
+    storage.get.mockResolvedValueOnce(await referenceFixture(362));
+    const response = await handleGenerate(
+      referenceRequest({ duration_seconds: 15 }),
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { message: expect.stringContaining("最多 124 帧") },
+    });
+    expect(await database.$count(mediaGenerationJob)).toBe(before);
+  });
+
+  it("applies the same short-reference limit to white-model artifacts", async () => {
+    const { handlePrevisCreate } = await import("../lib/agent-previs");
+    const { handlePrevisRenderCreate, handlePrevisRenderItems } =
+      await import("../lib/agent-previs-render");
+    const { runPrevisWorkerTick } =
+      await import("../../../../packages/api/src/router/media-hub/previs-render-worker");
+    const request = (body?: Record<string, unknown>) =>
+      new Request("http://media-hub.test/api/v1/previs", {
+        method: body ? "POST" : "GET",
+        headers: {
+          authorization: `Bearer ${agentToken}`,
+          "content-type": "application/json",
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+    const sceneResponse = await handlePrevisCreate(
+      request({ title: "Reference duration fixture" }),
+    );
+    expect(sceneResponse.status).toBe(201);
+    const { scene, revision } = (await sceneResponse.json()) as {
+      scene: { id: string };
+      revision: { id: string };
+    };
+    for (const [seconds, frameCount] of [
+      [5, 124],
+      [15, 362],
+    ] as const) {
+      const content = await referenceFixture(frameCount);
+      const render = await handlePrevisRenderCreate(
+        request({
+          revision_id: revision.id,
+          output_type: "video",
+          profile: "h3_reference",
+          duration_seconds: seconds,
+          width: 96,
+          height: 64,
+        }),
+        scene.id,
+      );
+      expect(render.status).toBe(202);
+      const { id } = (await render.json()) as { id: string };
+      await runPrevisWorkerTick(database, {
+        render: () =>
+          Promise.resolve({
+            content,
+            contentType: "video/mp4",
+            checksum: `sha256:${createHash("sha256").update(content).digest("hex")}`,
+            width: 96,
+            height: 64,
+            frameCount,
+            fps: 24,
+            durationSeconds: frameCount / 24,
+            metadata: {},
+          }),
+        put: () => Promise.resolve(),
+        remove: () => Promise.resolve(),
+      });
+      const result = await handlePrevisRenderItems(request(), id);
+      expect(result.status).toBe(200);
+      const { items } = (await result.json()) as {
+        items: { artifact: { id: string } }[];
+      };
+      const artifactId = items[0]!.artifact.id;
+      if (seconds === 5) storage.get.mockResolvedValueOnce(content);
+      const response = await handleGenerate(
+        referenceRequest({
+          reference_video: undefined,
+          reference_artifact_id: artifactId,
+          duration_seconds: 15,
+        }),
+      );
+      const body: unknown = await response.json();
+      expect(response.status, JSON.stringify(body)).toBe(
+        seconds === 5 ? 201 : 400,
+      );
+      if (seconds === 15) {
+        expect(body).toMatchObject({
+          error: { message: expect.stringContaining("最多 124 帧") },
+        });
+      }
+    }
   });
 
   it("rejects temporal-reference misuse before creating a GPU job", async () => {
@@ -649,7 +841,77 @@ describe("Agent video edit and director REST API", () => {
     });
   });
 
-  it("reattaches after worker restart without canceling or resubmitting GPU work", async () => {
+  it("exposes the same live queue details in Agent list and detail responses", async () => {
+    const id = "integration-waiting-for-second-segment";
+    await database.insert(mediaGenerationJob).values({
+      id,
+      prompt: "A long video.",
+      status: "waiting_for_gpu",
+      durationSeconds: 42,
+      providerJobId: "second-segment",
+      providerJobIds: [
+        "first-segment",
+        "second-segment",
+        "saved-third-segment",
+      ],
+      createdBy: ownerId,
+    });
+    const headers = { authorization: `Bearer ${agentToken}` };
+    const detailRequest = () =>
+      new Request(`http://media-hub.test/api/v1/generations/${id}`, {
+        headers,
+      });
+    const queue = {
+      phase: "provider_queue",
+      aheadSegments: 7,
+      blockingPhase: "processing",
+      segmentIndex: 2,
+      segmentCount: 3,
+    };
+    providerQueueSnapshot = {
+      active_phase: "processing",
+      jobs: {
+        "second-segment": { phase: "provider_queue", ahead_segments: 7 },
+      },
+    };
+    try {
+      const list = await handleListJobs(
+        new Request(
+          "http://media-hub.test/api/v1/generations?status=waiting_for_gpu",
+          { headers },
+        ),
+      );
+      expect(list.status).toBe(200);
+      await expect(list.json()).resolves.toMatchObject({
+        rows: [{ id, queue }],
+      });
+
+      const detail = await handleGetJob(detailRequest(), id);
+      expect(detail.status).toBe(200);
+      await expect(detail.json()).resolves.toMatchObject({ id, queue });
+
+      providerQueueSnapshot = null;
+      const olderProvider = await handleGetJob(detailRequest(), id);
+      expect(olderProvider.status).toBe(200);
+      await expect(olderProvider.json()).resolves.toMatchObject({
+        id,
+        queue: {
+          phase: "provider_status_unavailable",
+          aheadSegments: null,
+          blockingPhase: null,
+          segmentIndex: 2,
+          segmentCount: 3,
+        },
+      });
+    } finally {
+      providerQueueSnapshot = null;
+      await database
+        .delete(mediaGenerationJob)
+        .where(eq(mediaGenerationJob.id, id));
+    }
+  });
+
+  it("reattaches existing GPU work while Provider admission is blocked", async () => {
     // Keep the earlier API-only test jobs scheduled while recovery starts.
     await database
       .update(mediaGenerationJob)
@@ -678,22 +940,31 @@ describe("Agent video edit and director REST API", () => {
     const { startMediaGenerationScheduler } =
       await import("../../../../packages/api/src/router/media-hub/generation");
     process.env.MEDIA_HUB_GENERATION_WORKER_ENABLED = "true";
-    startMediaGenerationScheduler();
-    await vi.waitFor(
-      async () => {
-        const job = await database.query.mediaGenerationJob.findFirst({
-          where: eq(mediaGenerationJob.id, id),
-        });
-        expect(job?.errorMessage).toBeNull();
-        expect(job?.status).toBe("succeeded");
-        expect(job?.providerJobIds).toEqual(["existing-recovery-job"]);
-        expect(job?.startedAt).toEqual(enqueuedAt);
-      },
-      { timeout: 10_000 },
-    );
+    providerAdmissionBlocked = true;
+    try {
+      startMediaGenerationScheduler();
+      await vi.waitFor(
+        async () => {
+          const job = await database.query.mediaGenerationJob.findFirst({
+            where: eq(mediaGenerationJob.id, id),
+          });
+          expect(job?.errorMessage).toBeNull();
+          expect(job?.status).toBe("succeeded");
+          expect(job?.providerJobIds).toEqual(["existing-recovery-job"]);
+          expect(job?.generationStartedAt!.getTime()).toBeGreaterThan(
+            enqueuedAt.getTime(),
+          );
+          expect(job?.startedAt).toEqual(enqueuedAt);
+        },
+        { timeout: 10_000 },
+      );
+    } finally {
+      providerAdmissionBlocked = false;
+    }
     expect(
       recoveryRequests.filter((request) => request.startsWith("POST")),
     ).toEqual([]);
+    expect(recoveryRequests).not.toContain("GET /healthz");
     expect(recoveryPolls).toBeGreaterThanOrEqual(2);
   }, 20_000);
 

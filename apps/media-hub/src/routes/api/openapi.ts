@@ -6,10 +6,13 @@ import {
   MEDIA_H3_DEFAULT_QUALITY_PRESET,
   MEDIA_H3_DEFAULT_WIDTH,
   MEDIA_H3_PROMPT_MAX_LENGTH,
+  MEDIA_H3_REFERENCE_VIDEO_MAX_FRAMES,
+  MEDIA_H3_REFERENCE_VIDEO_MIN_FRAMES,
   MEDIA_H3_SCRIPT_SHOT_SECONDS,
   MEDIA_H3_SCRIPT_TARGET_DURATIONS,
 } from "@acme/validators";
 
+import { env } from "~/env";
 import { previsOpenApiPaths, previsOpenApiSchemas } from "~/lib/previs-openapi";
 import {
   previsRenderOpenApiPaths,
@@ -17,7 +20,8 @@ import {
 } from "~/lib/previs-render-openapi";
 
 function openApiDocument(request: Request) {
-  const origin = new URL(request.url).origin;
+  const publicUrl = env.MEDIA_HUB_AGENT_PUBLIC_URL?.trim();
+  const origin = new URL(publicUrl?.length ? publicUrl : request.url).origin;
   const bearerSecurity = [{ bearerAuth: [] }];
   const errorResponses = {
     "400": { description: "Invalid request" },
@@ -48,6 +52,70 @@ function openApiDocument(request: Request) {
       schemas: {
         ...previsOpenApiSchemas,
         ...previsRenderOpenApiSchemas,
+        GenerationQueue: {
+          type: ["object", "null"],
+          description:
+            "Current queue state for an active video generation or edit. Null for scheduled, terminal, and assembly jobs.",
+          required: [
+            "phase",
+            "aheadSegments",
+            "blockingPhase",
+            "segmentIndex",
+            "segmentCount",
+          ],
+          properties: {
+            phase: {
+              type: "string",
+              enum: [
+                "scheduler",
+                "provider_queue",
+                "provider_starting",
+                "gpu_admission",
+                "processing",
+                "gpu_cleanup",
+                "provider_status_unavailable",
+              ],
+              description:
+                "Waiting for Media Hub scheduling, waiting in the Provider queue, preparing to start, waiting for a GPU lease, processing, releasing GPU resources, or live Provider status unavailable.",
+            },
+            aheadSegments: {
+              type: ["integer", "null"],
+              minimum: 0,
+              description:
+                "Number of earlier segments in this Provider's queue, including the segment occupying the worker. Null when unavailable. Zero does not imply a GPU lease was granted.",
+            },
+            blockingPhase: {
+              enum: [
+                "provider_starting",
+                "gpu_admission",
+                "processing",
+                "gpu_cleanup",
+                null,
+              ],
+              description:
+                "Phase of the segment occupying the worker while this job is queued. Null if no worker phase is available.",
+            },
+            segmentIndex: {
+              type: ["integer", "null"],
+              minimum: 1,
+              description: "One-based current segment, or null if unknown.",
+            },
+            segmentCount: {
+              type: ["integer", "null"],
+              minimum: 1,
+              description: "Total planned segments, or null if unknown.",
+            },
+          },
+        },
+        GenerationJob: {
+          type: "object",
+          required: ["id", "status", "queue"],
+          properties: {
+            id: { type: "string" },
+            status: { type: "string" },
+            queue: { $ref: "#/components/schemas/GenerationQueue" },
+          },
+        },
         GenerationDialogue: {
           type: "object",
           required: ["segment", "speaker_id", "language", "text"],
@@ -120,13 +188,12 @@ function openApiDocument(request: Request) {
               enum: ["base", "reference"],
               default: "base",
               description:
-                "reference generates a new video from full Blender/previs motion using Ref2VA, independent of existing generation jobs. Requires reference_artifact_id or reference_video, duration_seconds 5–15, and the six-field H3 reference prompt. first_frame is not supported in this mode.",
+                "Use base with first_frame for white-model composition and placement. For a photorealistic output, reuse an original photo that fits the opening or first make and review a photorealistic still using the white-model layout. Omit reference_video and reference_artifact_id for still guidance. Use reference only when the user explicitly requests motion from a clip and permits video input. Reference mode uses either reference_video or reference_artifact_id and the six-field H3 reference prompt, with an independent output duration of 5–15 seconds.",
             },
             reference_video: {
               type: "object",
               required: ["storage_key", "name", "content_type"],
-              description:
-                "One uploaded H.264 MP4, max 50 MB, 24 FPS, matching output aspect. Frames must equal min(362, ceil((ceil(duration_seconds*24)-5)/17)*17+5), e.g. 124 at 5 seconds. Video supplies blocking, camera and occlusion; proxy audio is ignored. Source ownership and checksum are verified. Reference conditioning does not guarantee exact geometric reproduction.",
+              description: `One uploaded H.264 MP4, max 50 MB, 24 FPS, matching output aspect. The clip must contain ${MEDIA_H3_REFERENCE_VIDEO_MIN_FRAMES}–${MEDIA_H3_REFERENCE_VIDEO_MAX_FRAMES} frames on the 17n+5 grid (up to about 5 seconds). Video supplies blocking, camera and occlusion; proxy audio is ignored. Source ownership and checksum are verified. Reference conditioning does not guarantee exact geometric reproduction.`,
               properties: {
                 storage_key: { type: "string" },
                 name: { type: "string", minLength: 1, maxLength: 255 },
@@ -136,8 +203,7 @@ function openApiDocument(request: Request) {
             reference_artifact_id: {
               type: "string",
               format: "uuid",
-              description:
-                "Owned successful previs h3_reference MP4 artifact. Set generation_mode=reference. Mutually exclusive with reference_video. Actual media is probed and its checksum pinned with artifact/revision provenance.",
+              description: `Owned successful previs h3_reference MP4 artifact with at most ${MEDIA_H3_REFERENCE_VIDEO_MAX_FRAMES} frames. Set generation_mode=reference. Mutually exclusive with reference_video. Actual media is probed and its checksum pinned with artifact/revision provenance.`,
             },
             language: {
               type: "string",
@@ -186,6 +252,8 @@ function openApiDocument(request: Request) {
             },
             first_frame: {
               type: ["object", "null"],
+              description:
+                "The opening picture for a base-mode shot. For photorealistic footage, supply the selected original photo or a finished photorealistic still. H3 can carry the opening image's textures and lighting through the shot.",
               properties: {
                 storage_key: { type: "string" },
                 name: { type: "string" },
@@ -198,6 +266,8 @@ function openApiDocument(request: Request) {
             reference_images: {
               type: "array",
               maxItems: 4,
+              description:
+                "Subject or style images within the selected profile's maxReferenceImages limit. In reference mode, use the exact tags <Picture 1>, <Picture 2>, and so on in submitted array order.",
               items: {
                 type: "object",
                 required: ["storage_key", "name", "content_type", "role"],
@@ -345,13 +415,13 @@ function openApiDocument(request: Request) {
             },
             first_frame_asset_id: {
               type: ["string", "null"],
-              description: "Set null to clear the first-frame reference.",
+              description:
+                "Select the opening image asset. For photorealistic white-model guidance, choose a suitable original photo or a finished photorealistic still. Selecting this image clears any pinned video reference. Set null to clear the first-frame reference.",
             },
             reference_artifact_id: {
               type: ["string", "null"],
               format: "uuid",
-              description:
-                "Fixed successful H3-reference MP4 from the white-model workbench; mutually exclusive with first_frame_asset_id. Set null to clear. Generate these shots in independent mode and assemble later.",
+              description: `Use this field only for explicitly requested motion guidance when video input is allowed. Select a successful H3-reference MP4 with at most ${MEDIA_H3_REFERENCE_VIDEO_MAX_FRAMES} frames. Selecting this video clears the first-frame image. Set null to clear. Generate these shots in independent mode and assemble later.`,
             },
           },
         },
@@ -609,13 +679,44 @@ function openApiDocument(request: Request) {
             },
           ],
           responses: {
-            "200": { description: "Generation job page" },
+            "200": {
+              description: "Generation job page",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    required: ["rows", "total", "page", "pageSize"],
+                    properties: {
+                      rows: {
+                        type: "array",
+                        items: {
+                          anyOf: [
+                            { $ref: "#/components/schemas/GenerationJob" },
+                            {
+                              type: "object",
+                              required: ["id", "isPrivate"],
+                              properties: {
+                                id: { type: "string" },
+                                isPrivate: { const: true },
+                              },
+                            },
+                          ],
+                        },
+                      },
+                      total: { type: "integer" },
+                      page: { type: "integer" },
+                      pageSize: { type: "integer" },
+                    },
+                  },
+                },
+              },
+            },
             ...errorResponses,
           },
         },
         post: {
           operationId: "createGenerationJob",
-          summary: "Create or schedule a text-to-video generation job",
+          summary: "Create or schedule a video generation job",
           requestBody: {
             required: true,
             content: {
@@ -636,7 +737,7 @@ function openApiDocument(request: Request) {
           summary:
             "List available H3 generation workflows and the admin default",
           description:
-            "Includes base profiles and profiles advertising supportsReferenceVideo. default_reference_generation_profile selects the configured Ref2VA workflow. reference_video_constraints describes the initial single-video reference contract; older providers without the capability are rejected with 412.",
+            "Includes base profiles and profiles advertising supportsReferenceVideo. default_reference_generation_profile selects the configured Ref2VA workflow. reference_video_constraints reports the uploaded clip and output duration limits separately. Older providers without the capability are rejected with 412.",
           responses: {
             "200": { description: "H3 generation profiles" },
             ...errorResponses,
@@ -1068,7 +1169,7 @@ function openApiDocument(request: Request) {
         get: {
           operationId: "listVideoScriptFrameCandidates",
           summary:
-            "List private HiDream first-frame jobs and candidates for one script shot",
+            "List private first-frame jobs and candidates for one script shot",
           responses: {
             "200": { description: "First-frame jobs and candidate assets" },
             ...errorResponses,
@@ -1077,7 +1178,8 @@ function openApiDocument(request: Request) {
         post: {
           operationId: "createVideoScriptFrameCandidates",
           summary:
-            "Queue 1–4 HiDream first-frame candidates after the script copy is approved",
+            "Queue 1–4 first-frame candidates after the script copy is approved",
+          description: "Uses the same configured image model as Image Studio.",
           requestBody: {
             required: true,
             content: {
@@ -1089,7 +1191,7 @@ function openApiDocument(request: Request) {
             },
           },
           responses: {
-            "201": { description: "HiDream image job queued" },
+            "201": { description: "First-frame image job queued" },
             ...errorResponses,
           },
         },
@@ -1185,8 +1287,17 @@ function openApiDocument(request: Request) {
         get: {
           operationId: "getGenerationJob",
           summary: "Get a generation job",
+          description:
+            "A succeeded job has a processed video file. Review the actual video frames before accepting or delivering the result.",
           responses: {
-            "200": { description: "Generation job" },
+            "200": {
+              description: "Generation job",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/GenerationJob" },
+                },
+              },
+            },
             ...errorResponses,
           },
         },

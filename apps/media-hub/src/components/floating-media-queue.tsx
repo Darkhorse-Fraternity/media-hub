@@ -2,7 +2,11 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { authClient } from "~/auth/client";
-import { formatGenerationElapsed } from "~/lib/generation-display";
+import {
+  formatGenerationElapsed,
+  formatVideoJobTiming,
+  videoJobDisplayStatus,
+} from "~/lib/generation-display";
 import { useTRPC } from "~/lib/trpc";
 
 const activeVideoStatuses = [
@@ -164,7 +168,7 @@ export function FloatingMediaQueue() {
               checking={videoHealthQuery.isFetching}
             />
             <HealthChip
-              label="HiDream 图片"
+              label="图片"
               healthy={imageHealthQuery.data?.status === "healthy"}
               checking={imageHealthQuery.isFetching}
             />
@@ -200,10 +204,7 @@ export function FloatingMediaQueue() {
             const canceling =
               cancelVideoMutation.isPending &&
               cancelVideoMutation.variables.id === job.id;
-            const elapsed = formatGenerationElapsed(
-              job.startedAt,
-              job.finishedAt,
-            );
+            const timing = formatVideoJobTiming(job);
             const videoTitle = job.title?.trim();
             return (
               <article
@@ -219,14 +220,10 @@ export function FloatingMediaQueue() {
                     <p className="mt-1 text-[10px] text-slate-500">
                       {job.status === "scheduled" && job.scheduledAt
                         ? `定于 ${new Date(job.scheduledAt).toLocaleString()}`
-                        : job.status === "waiting_for_gpu"
-                          ? "等待统一 GPU 调度"
-                          : job.status === "running"
-                            ? `正在生成${elapsed ? ` · ${elapsed}` : ""}`
-                            : "等待 GPU 队列执行"}
+                        : timing}
                     </p>
                   </div>
-                  <QueueStatus status={job.status} />
+                  <QueueStatus status={videoJobDisplayStatus(job)} />
                 </div>
                 <div className="mt-3 flex justify-end border-t border-slate-800 pt-2.5">
                   <button
@@ -398,17 +395,11 @@ function MediaTypeBadge({ type }: { type: "image" | "video" }) {
   );
 }
 
-function QueueStatus({
-  status,
-  label,
-}: {
-  status: string;
-  label?: string;
-}) {
+function QueueStatus({ status, label }: { status: string; label?: string }) {
   const labels: Record<string, string> = {
     scheduled: "已定时",
     queued: "排队中",
-    waiting_for_gpu: "等待 GPU",
+    waiting_for_gpu: "排队中",
     running: "生成中",
     failed: "失败",
   };

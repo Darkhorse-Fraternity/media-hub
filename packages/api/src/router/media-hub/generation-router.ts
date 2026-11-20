@@ -22,6 +22,7 @@ import {
   createMediaGenerationSchema,
   createMediaVideoEditSchema,
   MEDIA_H3_PROMPT_MAX_LENGTH,
+  MEDIA_H3_REFERENCE_VIDEO_MAX_FRAMES,
   mediaGenerationIdSchema,
   mediaGenerationListSchema,
   publishMediaGenerationSchema,
@@ -34,6 +35,7 @@ import { sendGenerationCancellationAlert } from "./feishu-notify";
 import {
   cancelMediaGenerationJob,
   getMediaGenerationProviderHealth,
+  getMediaGenerationQueueSnapshot,
   prepareMediaGenerationRetry,
   rescheduleMediaGenerationJob,
   scheduleMediaGenerationJob,
@@ -53,11 +55,13 @@ import {
   resendGenerationResultNotification,
   startMediaGenerationNotificationScheduler,
 } from "./generation-notification";
+import { videoJobQueue, videoJobUsesProviderQueue } from "./generation-queue";
 import {
   compileH3StructuredDialoguePrompt,
   formatH3PromptIssues,
   h3StepsForPreset,
   isH3SpeechIssue,
+  normalizeH3ReferencePrompt,
   repairH3NoDialoguePrompt,
   validateH3GenerationPrompt,
   validateH3ReferencePrompt,
@@ -80,9 +84,11 @@ import { runPublishForTask, startMediaPublishScheduler } from "./runner";
 import { resolveMediaSystemSetting } from "./system-settings";
 import { buildXiaohongshuPublishPackage } from "./xiaohongshu-package";
 
-startMediaGenerationScheduler();
-startMediaGenerationNotificationScheduler();
-startMediaPublishScheduler();
+if (process.env.MEDIA_HUB_PREVIS_WORKER_ONLY !== "true") {
+  startMediaGenerationScheduler();
+  startMediaGenerationNotificationScheduler();
+  startMediaPublishScheduler();
+}
 
 function fireAndForgetGenerationPublish(taskId: string): void {
   setImmediate(() => {
@@ -132,7 +138,9 @@ export const mediaGenerationRouter = {
       >;
       try {
         compiledDialogue = compileH3StructuredDialoguePrompt(
-          input.prompt,
+          input.generationMode === "reference"
+            ? normalizeH3ReferencePrompt(input.prompt)
+            : input.prompt,
           input.durationSeconds,
           input.dialogues,
         );
@@ -490,6 +498,9 @@ export const mediaGenerationRouter = {
           ownerUserId: row.createdBy,
         }),
       );
+      const queueSnapshot = detailedRows.some(videoJobUsesProviderQueue)
+        ? getMediaGenerationQueueSnapshot()
+        : null;
       const creatorIds = [...new Set(detailedRows.map((row) => row.createdBy))];
       const creators = creatorIds.length
         ? await ctx.db.query.user.findMany({
@@ -538,6 +549,7 @@ export const mediaGenerationRouter = {
         list.push(target);
         targetsByTaskId.set(target.taskId, list);
       }
+      const snapshot = await queueSnapshot;
       return {
         rows: rows.map((row, index) => {
           const canManage = canManageMediaGenerationJob({
@@ -577,6 +589,7 @@ export const mediaGenerationRouter = {
 
           return {
             ...row,
+            queue: videoJobQueue(row, snapshot),
             isPrivate: false as const,
             creator: creatorById.get(row.createdBy) ?? null,
             canManage,
@@ -611,7 +624,10 @@ export const mediaGenerationRouter = {
       ) {
         throw new TRPCError({ code: "NOT_FOUND", message: "生成任务不存在" });
       }
-      return job;
+      const snapshot = videoJobUsesProviderQueue(job)
+        ? await getMediaGenerationQueueSnapshot()
+        : null;
+      return { ...job, queue: videoJobQueue(job, snapshot) };
     }),
 
   update: protectedProcedure
@@ -651,12 +667,23 @@ export const mediaGenerationRouter = {
           message: "定点执行时间必须晚于当前时间",
         });
       }
+      const prompt =
+        job.kind === "generate" && job.referenceVideo
+          ? normalizeH3ReferencePrompt(input.prompt)
+          : input.prompt;
       if (job.kind === "generate") {
+        if (job.referenceVideo && input.durationSeconds > 15) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "参考生成的成片时长必须在 5–15 秒之间",
+          });
+        }
+        // Preserve the duration contract for tasks accepted with longer clips.
         if (
           job.referenceVideo &&
-          (input.durationSeconds > 15 ||
-            h3ReferenceFrameCount(input.durationSeconds) !==
-              job.referenceVideo.frameCount)
+          job.referenceVideo.frameCount > MEDIA_H3_REFERENCE_VIDEO_MAX_FRAMES &&
+          h3ReferenceFrameCount(input.durationSeconds) !==
+            job.referenceVideo.frameCount
         ) {
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -664,8 +691,8 @@ export const mediaGenerationRouter = {
           });
         }
         const promptIssues = job.referenceVideo
-          ? validateH3ReferencePrompt(input.prompt, job.referenceImages.length)
-          : validateH3GenerationPrompt(input.prompt, input.durationSeconds);
+          ? validateH3ReferencePrompt(prompt, job.referenceImages.length)
+          : validateH3GenerationPrompt(prompt, input.durationSeconds);
         if (promptIssues.length) {
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -686,7 +713,7 @@ export const mediaGenerationRouter = {
       const [updated] = await ctx.db
         .update(mediaGenerationJob)
         .set({
-          prompt: input.prompt,
+          prompt,
           title: trimmedTitle ?? null,
           language: input.language,
           durationSeconds: input.durationSeconds,
@@ -1244,6 +1271,14 @@ export const mediaGenerationRouter = {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
           message: `H3 生成链路异常，暂时不能重试：${providerHealth.message}`,
+        });
+      }
+      if (
+        !providerHealth.profiles.some((profile) => profile.id === job.profile)
+      ) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "原生成工作流已下架，请选择当前可用的工作流重新生成。",
         });
       }
       let retryState: Awaited<ReturnType<typeof prepareMediaGenerationRetry>>;

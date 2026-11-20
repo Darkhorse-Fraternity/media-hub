@@ -13,7 +13,7 @@ overall_soundscape: No dialogue. Generate the requested synchronized physical so
 non_diegetic_music: N/A
 ```
 
-Replace example objects/actions with the brief and actual scene recipe/manifest. Images are numbered in submitted `reference_images` order: `<Picture 1>` is the first uploaded image. `<Video 1>` is the whole clip, whether supplied as a stored white-model `reference_artifact_id` or an uploaded `reference_video`; use only one input mechanism. Never mention an unprovided Picture/Video/Audio number. Standalone audio references and proxy soundtrack conditioning are unavailable in this path.
+Replace the example objects and actions with the brief and actual scene recipe or manifest. Use the exact image tags `<Picture 1>`, `<Picture 2>` and so on in the submitted `reference_images` order. If a draft uses `<Image 1>` or another `<Image N>` tag for a supplied image, correct it to the corresponding `<Picture N>` before submitting. `<Video 1>` is the clip identified by either `reference_artifact_id` or `reference_video`. Check each tag against the inputs. Standalone audio references and proxy soundtrack conditioning are unavailable in this path.
 
 For requested exact dialogue, prefer `dialogues[]` in the API; it compiles stable `(S1) <d>[Language] exact words</d>` into `detailed_description` without adding a base-mode field. Preserve requested dialogue/visible-text language. With no dialogue, explicitly state `No dialogue` and avoid speech directions. The API does not run the base-mode prompt optimizer for reference generation; write this contract directly.
 

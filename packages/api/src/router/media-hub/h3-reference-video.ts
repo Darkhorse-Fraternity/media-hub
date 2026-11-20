@@ -8,7 +8,12 @@ import { TRPCError } from "@trpc/server";
 
 import type { MediaGenerationReferenceVideo } from "@acme/db/schema";
 import { getMediaHubObject } from "@acme/storage";
-import { MEDIA_H3_REFERENCE_VIDEO_MAX_BYTES } from "@acme/validators";
+import {
+  MEDIA_H3_REFERENCE_VIDEO_FPS,
+  MEDIA_H3_REFERENCE_VIDEO_MAX_BYTES,
+  MEDIA_H3_REFERENCE_VIDEO_MAX_FRAMES,
+  MEDIA_H3_REFERENCE_VIDEO_MIN_FRAMES,
+} from "@acme/validators";
 
 const execFileAsync = promisify(execFile);
 
@@ -40,13 +45,23 @@ export async function loadVerifiedH3ReferenceVideo(
 }
 
 export function h3ReferenceFrameCount(durationSeconds: number): number {
+  const frames = Math.ceil(durationSeconds * MEDIA_H3_REFERENCE_VIDEO_FPS);
   return Math.min(
     362,
     Math.max(
-      56,
-      Math.ceil((Math.ceil(durationSeconds * 24) - 5) / 17) * 17 + 5,
+      MEDIA_H3_REFERENCE_VIDEO_MIN_FRAMES,
+      Math.ceil((frames - 5) / 17) * 17 + 5,
     ),
   );
+}
+
+export function assertH3ReferenceVideoLength(frameCount: number): void {
+  if (frameCount > MEDIA_H3_REFERENCE_VIDEO_MAX_FRAMES) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `参考视频最多 ${MEDIA_H3_REFERENCE_VIDEO_MAX_FRAMES} 帧（约 5 秒，24 FPS），请选择较短的片段。成片仍可设为 5–15 秒。`,
+    });
+  }
 }
 
 interface ReferenceProbe {
@@ -64,7 +79,7 @@ interface ReferenceProbe {
 
 export function referenceVideoProbeMetadata(
   probe: ReferenceProbe,
-  expected: { width: number; height: number; durationSeconds: number },
+  expected: { width: number; height: number },
 ): Omit<
   MediaGenerationReferenceVideo,
   "storageKey" | "name" | "contentType" | "checksum"
@@ -81,12 +96,15 @@ export function referenceVideoProbeMetadata(
   if (
     video?.codec_name !== "h264" ||
     !Number.isFinite(fps) ||
-    Math.abs(fps - 24) > 0.001 ||
-    frameCount !== h3ReferenceFrameCount(expected.durationSeconds) ||
+    Math.abs(fps - MEDIA_H3_REFERENCE_VIDEO_FPS) > 0.001 ||
+    frameCount < MEDIA_H3_REFERENCE_VIDEO_MIN_FRAMES ||
+    frameCount > 362 ||
+    (frameCount - 5) % 17 !== 0 ||
     !Number.isFinite(durationSeconds) ||
     durationSeconds < 2 ||
     durationSeconds > 15.1 ||
-    Math.abs(durationSeconds - frameCount / 24) > 1 / 24 ||
+    Math.abs(durationSeconds - frameCount / MEDIA_H3_REFERENCE_VIDEO_FPS) >
+      1 / MEDIA_H3_REFERENCE_VIDEO_FPS ||
     width < 64 ||
     height < 64 ||
     width > 1344 ||
@@ -95,7 +113,8 @@ export function referenceVideoProbeMetadata(
   ) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: `参考视频必须为 H.264 MP4、24 FPS、${h3ReferenceFrameCount(expected.durationSeconds)} 帧，宽高各 64–1344 且画幅与输出一致；请先规范化白模预演`,
+      message:
+        "参考视频必须为 H.264 MP4、24 FPS、按 17n+5 帧对齐，宽高各 64–1344 且画幅与输出一致",
     });
   }
   return { width, height, fps, frameCount, durationSeconds };
@@ -121,7 +140,7 @@ export function assertReferenceStorageOwner(
 export async function inspectH3ReferenceVideo(
   input: { storageKey: string; name: string; contentType: "video/mp4" },
   ownerId: string,
-  expected: { width: number; height: number; durationSeconds: number },
+  expected: { width: number; height: number },
 ): Promise<MediaGenerationReferenceVideo> {
   assertReferenceStorageOwner(input.storageKey, ownerId, "video");
   return inspectStoredH3ReferenceVideo(input, expected);
@@ -130,7 +149,7 @@ export async function inspectH3ReferenceVideo(
 /** Internal: the caller must establish ownership before passing a stored artifact. */
 export async function inspectStoredH3ReferenceVideo(
   input: { storageKey: string; name: string; contentType: "video/mp4" },
-  expected: { width: number; height: number; durationSeconds: number },
+  expected: { width: number; height: number },
 ): Promise<MediaGenerationReferenceVideo> {
   let content: Buffer;
   try {
@@ -176,9 +195,11 @@ export async function inspectStoredH3ReferenceVideo(
         cause: error,
       });
     }
+    const metadata = referenceVideoProbeMetadata(probe, expected);
+    assertH3ReferenceVideoLength(metadata.frameCount);
     return {
       ...input,
-      ...referenceVideoProbeMetadata(probe, expected),
+      ...metadata,
       checksum: `sha256:${createHash("sha256").update(content).digest("hex")}`,
     };
   } finally {
