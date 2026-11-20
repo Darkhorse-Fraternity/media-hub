@@ -51,9 +51,9 @@ let imageRunChain: Promise<void> = Promise.resolve();
 let imageQueueSweepRunning = false;
 
 export function defaultMediaImageProfile() {
-  return process.env.MEDIA_HUB_IMAGE_PROFILE === HIDREAM_IMAGE_PROFILE
-    ? HIDREAM_IMAGE_PROFILE
-    : H3_IMAGE_PROFILE;
+  return process.env.MEDIA_HUB_IMAGE_PROFILE?.trim() === H3_IMAGE_PROFILE
+    ? H3_IMAGE_PROFILE
+    : HIDREAM_IMAGE_PROFILE;
 }
 
 function providerConfig(profile: string) {

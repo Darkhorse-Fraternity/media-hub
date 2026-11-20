@@ -1179,8 +1179,7 @@ function openApiDocument(request: Request) {
           operationId: "createVideoScriptFrameCandidates",
           summary:
             "Queue 1–4 first-frame candidates after the script copy is approved",
-          description:
-            "Uses the configured image model, which defaults to MiniMax H3 Image.",
+          description: "Uses the same configured image model as Image Studio.",
           requestBody: {
             required: true,
             content: {

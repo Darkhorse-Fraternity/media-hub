@@ -1,8 +1,7 @@
 import type { MediaH3Dialogue } from "@acme/validators";
 import { MEDIA_H3_PROMPT_MAX_LENGTH } from "@acme/validators";
 
-export const DEFAULT_H3_GENERATION_PROFILE =
-  "platform-h3-hyperflow-flash-gguf-v1";
+export const DEFAULT_H3_GENERATION_PROFILE = "platform-h3-i2v-inline-v1";
 export const DEFAULT_H3_EDIT_PROFILE = "platform-h3-ref2va-edit-v1";
 // Backward-compatible alias for callers that still use the original name.
 export const H3_PROFILE = DEFAULT_H3_GENERATION_PROFILE;

@@ -221,44 +221,50 @@ describe("director services with real PostgreSQL", () => {
     }
   });
 
-  it("queues approved director first frames with the same default image model as Image Studio", async () => {
-    vi.stubEnv("MEDIA_HUB_IMAGE_PROFILE", undefined);
-    try {
-      const f = await fixture();
-      await database
-        .update(mediaVideoScript)
-        .set({ copyStatus: "approved" })
-        .where(eq(mediaVideoScript.id, f.id));
-      const firstFrame = await caller.mediaHub.script.createFrameCandidates({
-        id: f.id,
-        shotId: f.shot.id,
-        outputCount: 4,
-      });
-      const image = await caller.mediaHub.image.create({
-        prompt: "Blue frame",
-      });
+  it.each([
+    [undefined, "platform-hidream-o1-image-v1"],
+    ["platform-minimax-h3-image-v1", "platform-minimax-h3-image-v1"],
+  ])(
+    "uses the shared image profile with MEDIA_HUB_IMAGE_PROFILE=%s",
+    async (configured, profile) => {
+      vi.stubEnv("MEDIA_HUB_IMAGE_PROFILE", configured);
+      try {
+        const f = await fixture();
+        await database
+          .update(mediaVideoScript)
+          .set({ copyStatus: "approved" })
+          .where(eq(mediaVideoScript.id, f.id));
+        const firstFrame = await caller.mediaHub.script.createFrameCandidates({
+          id: f.id,
+          shotId: f.shot.id,
+          outputCount: 4,
+        });
+        const image = await caller.mediaHub.image.create({
+          prompt: "Blue frame",
+        });
 
-      const [firstFrameJob, imageJob] = await Promise.all([
-        database.query.mediaImageJob.findFirst({
-          where: eq(mediaImageJob.id, firstFrame.id),
-        }),
-        database.query.mediaImageJob.findFirst({
-          where: eq(mediaImageJob.id, image.id),
-        }),
-      ]);
-      expect(firstFrameJob).toMatchObject({
-        profile: "platform-minimax-h3-image-v1",
-        purpose: "script-first-frame",
-        scriptId: f.id,
-        scriptShotId: f.shot.id,
-        outputCount: 4,
-        status: "queued",
-      });
-      expect(imageJob?.profile).toBe(firstFrameJob?.profile);
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
+        const [firstFrameJob, imageJob] = await Promise.all([
+          database.query.mediaImageJob.findFirst({
+            where: eq(mediaImageJob.id, firstFrame.id),
+          }),
+          database.query.mediaImageJob.findFirst({
+            where: eq(mediaImageJob.id, image.id),
+          }),
+        ]);
+        expect(firstFrameJob).toMatchObject({
+          profile,
+          purpose: "script-first-frame",
+          scriptId: f.id,
+          scriptShotId: f.shot.id,
+          outputCount: 4,
+          status: "queued",
+        });
+        expect(imageJob?.profile).toBe(firstFrameJob?.profile);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
 
   it("retries cleanup after soft deletion and rejects another owner's script", async () => {
     const f = await fixture();

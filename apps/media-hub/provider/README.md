@@ -92,16 +92,18 @@ and VAEs listed in the profile. On GPU Broker deployments, point the cleanup
 barrier at the HyperFlow backend's own service unit. The Provider advertises
 the workflow after verifying its nodes and model files.
 
-The director's workflow menu lists `platform-h3-hyperflow-flash-gguf-v1`,
-the default for new video generation. It uses independent shots with a text
-prompt and an optional first frame. The
-quality presets select 4, 6, or 8 steps. Use the Ref2VA or official I2V workflows
-for whole-video references or synchronized shot continuation.
+After the Provider advertises `platform-h3-hyperflow-flash-gguf-v1`, the
+director's workflow menu lists it. Select it as the default in Settings or set
+`MEDIA_HUB_H3_GENERATION_PROFILE=platform-h3-hyperflow-flash-gguf-v1` as the
+deployment default. It uses independent shots with a text prompt and an optional
+first frame. The quality presets select 4, 6, or 8 steps. Use the Ref2VA or
+official I2V workflows for whole-video references or synchronized shot continuation.
 
 ### Default image model
 
-Image Studio and director first-frame requests create new jobs with
-`platform-minimax-h3-image-v1`. Each job records its profile so retries
+Image Studio and director first-frame requests use HiDream-O1 by default.
+Set `MEDIA_HUB_IMAGE_PROFILE=platform-minimax-h3-image-v1` to use H3 Image
+after verifying Provider readiness. Each job records its profile so retries
 continue with the original model.
 
 1. Prepare ComfyUI 0.45.0 or newer and install the four files listed in
