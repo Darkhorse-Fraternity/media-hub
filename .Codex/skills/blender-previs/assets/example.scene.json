@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "duration_seconds": 5,
+  "width": 1344,
+  "height": 768,
+  "camera": {
+    "lens_mm": 45,
+    "keyframes": [
+      { "frame": 1, "location": [0, -9, 4], "target": [0, 0, 1] },
+      { "frame": 124, "location": [0.5, -8.5, 4], "target": [0, 0, 1] }
+    ]
+  },
+  "objects": [
+    {
+      "id": "moving_proxy",
+      "primitive": "cylinder",
+      "scale": [0.35, 0.35, 1],
+      "color": [0.8, 0.15, 0.1, 1],
+      "keyframes": [
+        { "frame": 1, "location": [-2, -0.5, 1] },
+        { "frame": 124, "location": [2, -0.5, 1] }
+      ]
+    },
+    {
+      "id": "stationary_proxy",
+      "primitive": "box",
+      "scale": [0.6, 0.5, 0.8],
+      "color": [0.1, 0.2, 0.8, 1],
+      "keyframes": [{ "frame": 1, "location": [0, 1, 0.8] }]
+    }
+  ]
+}

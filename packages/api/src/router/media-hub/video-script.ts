@@ -45,6 +45,7 @@ import {
 } from "./generation";
 import {
   h3StepsForPreset,
+  normalizeH3ReferencePrompt,
   validateH3GenerationPrompt,
   validateH3ReferencePrompt,
 } from "./h3-generation-config";
@@ -836,10 +837,13 @@ export const mediaVideoScriptRouter = {
       const now = new Date();
       const rows = await Promise.all(
         shots.map(async (shot) => {
-          const prompt = compileVideoScriptShotPrompt(
+          const compiledPrompt = compileVideoScriptShotPrompt(
             shot,
             script.continuityBible,
           );
+          const prompt = shot.referenceArtifactId
+            ? normalizeH3ReferencePrompt(compiledPrompt)
+            : compiledPrompt;
           const issues = shot.referenceArtifactId
             ? validateH3ReferencePrompt(prompt, 0)
             : validateH3GenerationPrompt(prompt, shot.durationSeconds);
@@ -857,7 +861,7 @@ export const mediaVideoScriptRouter = {
                 ctx.db,
                 ctx.session.user.id,
                 shot.referenceArtifactId,
-                { ...script, durationSeconds: shot.durationSeconds },
+                script,
               )
             : null;
           const shotProfileId =

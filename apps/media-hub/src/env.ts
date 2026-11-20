@@ -14,6 +14,7 @@ export const env = createEnv({
   },
   server: {
     APP_URL: z.url().optional(),
+    MEDIA_HUB_AGENT_PUBLIC_URL: z.url().optional(),
     TRUSTED_ORIGINS: z.string().optional(),
     AUTH_MIN_PASSWORD_LENGTH: z.coerce.number().int().min(8).default(8),
     AUTH_USE_SECURE_COOKIES: z

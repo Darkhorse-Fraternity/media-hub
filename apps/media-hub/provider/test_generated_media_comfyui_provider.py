@@ -193,6 +193,24 @@ class Ref2VAWorkflowTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.code, "profile_reference_images_unsupported")
 
+    def test_hyperflow_uses_gguf_loader_and_requested_sampling_steps(self) -> None:
+        profiles = json.loads(Path(__file__).with_name("hyperflow-profile.json").read_text())
+        name, config = next(iter(profiles.items()))
+        profile = provider.ProviderProfile.from_mapping(name, config)
+        workflow = provider._build_comfyui_h3_official_i2v_prompt(
+            profile, first_frame_ref="first.png", reference_image_refs=[],
+            positive="A red kite rises in the wind.", width=960, height=544,
+            length=124, seed=42, filename_prefix="flash-test", steps=4, fps=24,
+        )
+        self.assertEqual(profile.configured_models["HyperFlowLoader"], (profile.transformer,))
+        self.assertEqual(workflow["10"]["class_type"], "HyperFlowLoader")
+        self.assertEqual(workflow["30"]["inputs"]["first_frame"], ["20", 0])
+        self.assertEqual(
+            workflow["41"], {"class_type": "HyperFlowSigmas", "inputs": {"model": ["10", 0], "steps": 4}},
+        )
+        self.assertEqual(workflow["42"]["inputs"]["sampler_name"], "euler")
+        self.assertEqual(workflow["60"]["inputs"]["audio"], ["51", 0])
+
     def test_native_continuation_conditions_both_streams_and_anchors_new_scene(self) -> None:
         workflow = provider._build_comfyui_h3_official_i2v_prompt(
             official_i2v_profile(), first_frame_ref="next.png", reference_image_refs=[],
@@ -306,10 +324,11 @@ class Ref2VAWorkflowTests(unittest.TestCase):
         self.assertNotIn("ref_video_audios.ref_video_audio_0", conditioning)
 
     def test_reference_generation_conditions_entire_previs_without_edit_identity_or_audio(self) -> None:
+        profile = replace(ref2va_profile(), attention_backend="pytorch attention")
         workflow = provider._build_comfyui_h3_ref2va_prompt(
-            ref2va_profile(), source_video_ref="", reference_video_refs=["job/previs.mp4"],
+            profile, source_video_ref="", reference_video_refs=["job/previs.mp4"],
             reference_image_refs=["job/look.png"], reference_roles=["subject"],
-            positive="summary: [reference generation] Follow <Video 1>.",
+            positive="summary: [reference generation] Follow <Video 1> and the subject in <Image 1>.",
             width=960, height=544, length=124, seed=42, filename_prefix="test/previs",
             steps=20, fps=24, preserve_source_audio=False, reference_mode="generation",
         )
@@ -320,6 +339,14 @@ class Ref2VAWorkflowTests(unittest.TestCase):
         self.assertNotIn("ref_video_audios.ref_video_audio_0", conditioning)
         self.assertNotIn("source clip to edit", conditioning["prompt"])
         self.assertIn("Replace proxy geometry", conditioning["prompt"])
+        self.assertIn("the subject in <Picture 1>", conditioning["prompt"])
+        self.assertNotIn("<Image 1>", conditioning["prompt"])
+        self.assertEqual(workflow["15"], {
+            "class_type": "ModelAttentionBackend",
+            "inputs": {"model": ["11", 0], "attention": "pytorch attention"},
+        })
+        self.assertEqual(workflow["41"]["inputs"]["model"], ["15", 0])
+        self.assertEqual(workflow["43"]["inputs"]["model"], ["15", 0])
 
     def test_reference_generation_request_requires_reference_video_and_rejects_proxy_audio(self) -> None:
         profile = ref2va_profile()
@@ -684,6 +711,167 @@ class ComfyUiStepTimeoutTests(unittest.TestCase):
             ("POST", "/queue", {"delete": ["prompt"]}),
             ("POST", "/interrupt", {"prompt_id": "prompt"}),
         ])
+
+
+class ProviderQueueTests(unittest.TestCase):
+    def test_recovery_resumes_the_running_segment_then_preserves_submission_order(self) -> None:
+        submitted = []
+        executor = types.SimpleNamespace(submit=lambda _run, job_id: submitted.append(job_id))
+        with TemporaryDirectory() as root:
+            later, earlier, active = ["gmjob_" + char * 32 for char in "abf"]
+            for job_id, status, minute in (
+                (later, "queued", 2),
+                (earlier, "queued", 1),
+                (active, "running", 3),
+            ):
+                directory = Path(root) / job_id
+                directory.mkdir()
+                (directory / "job.json").write_text(json.dumps({
+                    "job_id": job_id,
+                    "status": status,
+                    "created_at": f"2026-11-18T04:{minute:02}:00Z",
+                }), encoding="utf-8")
+            service = provider.ProviderService(
+                provider.ProviderConfig(
+                    comfyui_url="http://comfyui",
+                    state_root=Path(root),
+                    token_file=Path(root) / "token",
+                    provider_version="test",
+                    profiles={},
+                    inline_core_idle_unload_seconds=0,
+                ),
+                executor=executor,
+            )
+            self.assertEqual(submitted, [active, earlier, later])
+            self.assertEqual(service.queue_snapshot()["jobs"][later]["ahead_segments"], 2)
+
+    def test_snapshot_preserves_execution_order_and_excludes_canceled_waiters(self) -> None:
+        pending = []
+        executor = types.SimpleNamespace(submit=lambda run, job_id: pending.append((run, job_id)))
+        with TemporaryDirectory() as root:
+            service = provider.ProviderService(
+                provider.ProviderConfig(
+                    comfyui_url="http://comfyui",
+                    state_root=Path(root),
+                    token_file=Path(root) / "token",
+                    provider_version="test",
+                    profiles={},
+                    inline_core_idle_unload_seconds=0,
+                ),
+                executor=executor,
+            )
+            active, canceled, waiting = ["gmjob_" + char * 32 for char in "fab"]
+            for job_id in (active, canceled, waiting):
+                job = {"job_id": job_id, "status": "queued"}
+                service._write_job(job)
+                service._schedule_if_needed(job_id, job)
+            self.assertEqual(service.queue_snapshot()["jobs"][waiting]["ahead_segments"], 2)
+            self.assertTrue(service._set_queue_phase(active, "gpu_admission"))
+            service.cancel(canceled)
+            run, job_id = pending[1]
+            run(job_id)
+            self.assertEqual(service.queue_snapshot(), {
+                "active_phase": "gpu_admission",
+                "jobs": {
+                    active: {"phase": "gpu_admission", "ahead_segments": 0},
+                    waiting: {"phase": "provider_queue", "ahead_segments": 1},
+                },
+            })
+
+
+class H3ImageWorkflowTests(unittest.TestCase):
+    def test_provider_runs_generation_and_ordered_edits_as_image_jobs(self) -> None:
+        profile_name, mapping = next(iter(json.loads(
+            MODULE_PATH.with_name("h3-image-profile.json").read_text()
+        ).items()))
+        profile = provider.ProviderProfile.from_mapping(profile_name, mapping)
+        prompts = []
+        image = b"image-fixture"
+
+        def wait_for_history(*_args, **_kwargs):
+            self.assertEqual(service.queue_snapshot()["active_phase"], "processing")
+            return {}
+
+        comfy = types.SimpleNamespace(
+            free_memory=lambda: None,
+            upload_input=lambda _content, filename, _subfolder: filename,
+            queue_prompt=lambda prompt, **_: prompts.append(prompt) or "prompt",
+            wait_for_history=wait_for_history,
+            download_output=lambda _history: image,
+        )
+        executor = types.SimpleNamespace(submit=lambda run, job_id: run(job_id))
+        with TemporaryDirectory() as root:
+            service = provider.ProviderService(
+                provider.ProviderConfig(
+                    comfyui_url="http://comfyui",
+                    state_root=Path(root),
+                    token_file=Path(root) / "token",
+                    provider_version="test",
+                    profiles={profile.name: profile},
+                    inline_core_idle_unload_seconds=0,
+                ),
+                comfyui=comfy,
+                executor=executor,
+            )
+            for refs in ([], ["subject.png", "style.png"]):
+                with self.subTest(refs=refs):
+                    spec = {
+                        "profile": profile.name,
+                        "parameters": {
+                            "behavior_prompts": {"main": "A red chair"},
+                            "negative_prompt": "watermark",
+                            "width": 1344,
+                            "height": 768,
+                            "seed": 17,
+                        },
+                    }
+                    job = service.submit({
+                        "schema_version": provider.REQUEST_CONTRACT,
+                        "orchestration_run_id": f"test-image-{len(refs)}",
+                        "project_id": "media-hub",
+                        "attempt": 1,
+                        "deficits": {"main": 1},
+                        "max_outputs": 1,
+                        "generation_spec": spec,
+                        "generation_spec_checksum": provider._checksum(
+                            provider._canonical_json(spec)
+                        ),
+                        "source_artifacts": [
+                            {
+                                "name": name,
+                                "content_type": "image/png",
+                                "checksum": provider._checksum(image),
+                                "content_base64": base64.b64encode(image).decode(),
+                            }
+                            for name in refs
+                        ],
+                    })
+                    result = service.get(job["job_id"])
+                    self.assertEqual(result["status"], "succeeded")
+                    sample = result["samples"][0]
+                    self.assertEqual(sample["contract"], provider.IMAGE_SAMPLE_CONTRACT)
+                    self.assertEqual(sample["content_type"], "image/png")
+                    self.assertEqual(base64.b64decode(sample["content_base64"]), image)
+
+                    graph = prompts[-1]
+                    conditioning = graph["4"]["inputs"]
+                    expansion = graph["9"]["inputs"]
+                    self.assertEqual(graph["4"]["class_type"], "MiniMaxH3ImageConditioning")
+                    self.assertEqual((conditioning["width"], conditioning["height"]), (1344, 768))
+                    self.assertEqual(conditioning["prompt"], ["9", 0])
+                    self.assertIn("watermark", expansion["prompt"])
+                    self.assertEqual(graph["6"]["inputs"]["seed"], 17)
+                    self.assertEqual(graph["6"]["inputs"]["steps"], 6)
+                    self.assertEqual(graph["6"]["inputs"]["cfg"], 1)
+                    self.assertEqual(
+                        [key for key in conditioning if key.startswith("images.")],
+                        [f"images.image_{index}" for index in range(1, len(refs) + 1)],
+                    )
+                    for index, filename in enumerate(refs, 1):
+                        node_id = str(20 + index)
+                        self.assertEqual(graph[node_id]["inputs"]["image"], f"{index:02d}_{filename}")
+                        self.assertEqual(conditioning[f"images.image_{index}"], [node_id, 0])
+                        self.assertEqual(expansion[f"images.image{index}"], [node_id, 0])
 
 
 if __name__ == "__main__":

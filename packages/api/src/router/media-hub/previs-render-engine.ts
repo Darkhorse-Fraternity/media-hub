@@ -367,7 +367,6 @@ export async function renderPrevisItem(input: {
         referenceVideoProbeMetadata(probe, {
           width: spec.width,
           height: spec.height,
-          durationSeconds: spec.nominalDurationSeconds,
         });
     }
     if (actual.width !== spec.width || actual.height !== spec.height)

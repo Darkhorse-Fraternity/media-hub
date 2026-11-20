@@ -13,7 +13,7 @@ import {
 } from "./codex-copy";
 
 describe("Media Hub Codex copy prompts", () => {
-  it("builds a still-image HiDream generation prompt", () => {
+  it("builds a still-image generation prompt", () => {
     const prompt = buildImagePromptOptimizationPrompt({
       prompt: "生成一张美女图片",
       title: "人物主视觉",
@@ -23,7 +23,7 @@ describe("Media Hub Codex copy prompts", () => {
       language: "zh",
     });
 
-    expect(prompt).toContain("HiDream image generation");
+    expect(prompt).toContain("still image generation");
     expect(prompt).toContain("Target canvas: 768 × 1344 pixels");
     expect(prompt).toContain("still image");
     expect(prompt).toContain("No reference image is supplied");
@@ -37,7 +37,7 @@ describe("Media Hub Codex copy prompts", () => {
     );
   });
 
-  it("builds a reference-aware HiDream edit prompt", () => {
+  it("builds a reference-aware image edit prompt", () => {
     const prompt = buildImagePromptOptimizationPrompt({
       prompt: "把背景改成雨夜东京",
       negativePrompt: "文字，水印",
@@ -47,7 +47,7 @@ describe("Media Hub Codex copy prompts", () => {
       language: "en",
     });
 
-    expect(prompt).toContain("HiDream image editing");
+    expect(prompt).toContain("still image editing");
     expect(prompt).toContain("2 reference images are supplied");
     expect(prompt).toContain("preserving all unrequested");
     expect(prompt).toContain("文字，水印");

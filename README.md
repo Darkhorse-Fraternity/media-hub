@@ -6,6 +6,8 @@ Pumpkii Media Hub 是独立的视频生成、审核与多平台发布服务。�
 
 镜头的局部修改复用现有 Ref2VA 流程；镜头排序与末帧接力也在同一脚本内完成。导演台还可用选定首帧生成静态分镜预演、裁切镜头、从台词生成可修改的字幕草稿，并选择是否把字幕烧录到成片。
 
+用白模定构图和摆位时，优先选合适的原始实拍图做首帧。缺少合适照片时，先照白模布局做一张写实静帧，再用它生成视频。操作步骤见 [白模到写实视频的制作指引](docs/previs-scenes.md#从白模到写实视频)。
+
 远程 Agent 可使用 Bearer Token 调用相同流程，完整接口见 `GET /api/openapi`：
 
 - `PATCH /api/v1/scripts/{scriptId}/shots/{shotId}/take` 选定成片采用的视频版本，提交 `job_id` 和当前脚本 `version`。

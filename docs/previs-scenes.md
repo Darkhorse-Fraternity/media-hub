@@ -2,6 +2,18 @@
 
 Issue #12：场景创建与修正、版本、归档、复制、浏览器预览、异步批量 PNG/MP4、素材入库和视频引用。工作台入口为 `/previs`。固定使用 Crucible `0.20.0`；场景校验使用 CPU authoring API，服务端渲染通过受控 Chromium 软件渲染，不占用共享 GPU。
 
+## 从白模到写实视频
+
+在写实视频流程里，白模只用于确定机位、构图、人物和物体的相对位置。H3 会沿用首帧的外观，写实成片从写实静帧起步。
+
+1. **有合适的原始实拍图时直接用。** 核对照片的机位、构图、摆位和光线是否符合预定开场。符合就把原图选为镜头首帧。
+2. **缺少合适照片时先做一张写实首帧。** 在白模工作台导出一张对应机位的 PNG，导入图片素材库。用它在图片素材模块生成或修改一张写实静帧，保留构图、远近关系和摆位。有原始实拍素材时，可用它参考现场的外观。先看静帧，确认材质、光线和布局符合要求，再把这张成品图选为镜头首帧。
+3. **按首帧生成视频。** 在导演台把这张图选为镜头首帧，在提示词里写镜头和人物怎么动。Agent API 使用 `generation_mode: base` 和 `first_frame`，省略 `reference_video` 和 `reference_artifact_id`。给已有视频参考的镜头换首帧时，确认旧视频参考已清空。出片后检查开头、中段和结尾的真实质感和位置关系。
+
+15 秒是成片时长，首帧仍然只需一张图。只有需求明确要复刻白模动画已有的运镜、动作时序或遮挡变化，且允许使用视频素材时，才导出短参考视频。
+
+以「夜间轨道维修」为例，原始实拍图已经有中央轨道、左侧工灯和远处维修人员的布局。直接选这张图做首帧，再在提示词里描述镜头沿轨道缓慢推进。
+
 ## 启用
 
 部署应用前执行数据库迁移 `pnpm db:migrate`，包括 `0028_previs_scene_versions.sql` 和 `0029_previs_render_workbench.sql`。REST 请求沿用现有 Agent Bearer Token，场景、版本、批次、产物和素材按用户隔离。
@@ -12,6 +24,7 @@ Issue #12：场景创建与修正、版本、归档、复制、浏览器预览�
 
 - `MEDIA_HUB_PREVIS_ENABLED=true`：默认开启；设为 `false` 暂停新入口及领取，不删除历史文件或引用。
 - `MEDIA_HUB_PREVIS_WORKER_ENABLED=true`：在渲染实例开启；未设置时沿用通用生成 worker 开关。网页实例可以设为 `false`，共享同一数据库和 S3。
+- 独立渲染实例同时设置 `MEDIA_HUB_GENERATION_WORKER_ENABLED=false` 和 `MEDIA_HUB_PREVIS_WORKER_ONLY=true`，由网页实例继续运行视频、图片、生成通知和发布调度。
 - `MEDIA_HUB_PREVIS_BROWSER`：可选 Chromium 可执行文件绝对路径。已验证本机 Chromium 159；Chromium 140/SwiftShader 存在 shader 兼容问题，部署需固定并验收浏览器版本。
 - `MEDIA_HUB_PREVIS_CRUCIBLE_CLI`：可选固定包的 CLI 绝对路径，默认从安装包解析。生产构建包含 CLI、浏览器模块和资源。
 - 沿用 `MEDIA_HUB_S3_*`、`FFMPEG_PATH`、`FFPROBE_PATH`。worker 需要 Chromium、FFmpeg/ffprobe，非 root 账户要能启动浏览器和写入私有临时目录。
@@ -150,6 +163,8 @@ ID 字段必须替换为实际 UUID。每次保存都新增不可变版本；`re
 
 视频使用 `output_type=video`、`fps`、`start_seconds`、`duration_seconds`。`profile=preview` 用于低像素预算预览；普通视频不套用 H3 帧网格。`profile=h3_reference` 仅支持 24 FPS、5–15 整数名义秒，5 秒直接渲染 124 帧，实际时长约 5.166667 秒。若帧网格超过非循环动作的结尾，执行器显式延长动作时长并保持最后姿态，记录 `motionPaddingSeconds`，不修改源版本。实际 MP4 通过 ffprobe 验证编码、尺寸、帧率、帧数和时长；产物还包含引擎版本、实际参数、checksum 和来源 attempt。
 
+需要复刻既有运动且允许视频参考时，新 H3 任务可接收最多 124 帧参考视频。用 `profile=h3_reference` 导出名义 5 秒的片段，再将其产物 ID 传给导演台镜头或 Agent API。成片时长可单独设为 5–15 秒。
+
 轮询批次和 `/items`。条目状态为 `queued|running|succeeded|failed|canceled|interrupted`；批次有成功项和失败项时为 `partial`。`completed` 表示终态数，具体成功数见 `counts.succeeded`。
 
 取消或重试请求可以提交 `{ "item_ids": ["条目 UUID"] }`，省略表示全部符合条件的项。取消执行中的任务需等待引擎停止后变为终态；成功项保留且不会被重试。每次执行保留独立 attempt。进程心跳超时会标记为 interrupted，本地 stdio 引擎不可续跑，需要显式重试；旧 fencing token 不能上传后发布成有效产物。取消和失败会清理自有进程及临时文件，未发布的 S3 对象会清理。
@@ -160,7 +175,7 @@ ID 字段必须替换为实际 UUID。每次保存都新增不可变版本；`re
 
 ## 视频与分镜引用
 
-`POST /api/v1/generations` 支持 `generation_mode=reference` 和 `reference_artifact_id`，与原 `reference_video` 二选一；仍使用原六字段参考提示词和实际媒体校验。已创建任务保存文件校验和及 artifact/revision 来源。
+构图和摆位默认走 [图片首帧流程](#从白模到写实视频)。明确选择运动参考时，`POST /api/v1/generations` 使用 `generation_mode=reference`，并在 `reference_artifact_id` 与 `reference_video` 中选一个。仍使用六字段参考提示词和实际媒体校验。已创建任务保存文件校验和及 artifact/revision 来源。
 
 分镜的 `reference_artifact_id` 与 `first_frame_asset_id` 二选一。引用白模视频的脚本使用 `continuity_mode=independent`，可混合普通镜头；服务端按镜头选择基础/参考工作流并编译对应提示词。生成完成后沿用原合成接口。导演台提供产物 ID 输入框，白模工作台可复制 ID。
 

@@ -80,6 +80,7 @@ RUN apk add --no-cache chromium
 ENV MEDIA_HUB_PREVIS_BROWSER=/usr/bin/chromium
 ENV MEDIA_HUB_PREVIS_WORKER_ENABLED=true
 ENV MEDIA_HUB_GENERATION_WORKER_ENABLED=false
+ENV MEDIA_HUB_PREVIS_WORKER_ONLY=true
 USER nodejs
 
 FROM runner AS production

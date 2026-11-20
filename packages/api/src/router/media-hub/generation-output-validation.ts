@@ -5,6 +5,11 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const SAMPLE_WIDTH = 176;
+const SAMPLE_HEIGHT = 100;
+const SAMPLE_COUNT = 5;
+const SAMPLE_PIXELS = SAMPLE_WIDTH * SAMPLE_HEIGHT;
+const SAMPLE_BYTES = SAMPLE_PIXELS * 3;
 
 interface ProbeStream {
   codec_name?: string;
@@ -109,6 +114,105 @@ export function generationMediaProbeIssues(
   return issues;
 }
 
+// Check for the low-contrast, nearly colorless texture seen in failed H3 renders.
+// A frame with visible edges or chroma is allowed even in a mostly dark shot.
+function hasNoVisibleDetail(rgb: Buffer): boolean {
+  const luma = Buffer.alloc(SAMPLE_PIXELS);
+  const edgeCount = 2 * SAMPLE_PIXELS - SAMPLE_WIDTH - SAMPLE_HEIGHT;
+  let sum = 0;
+  let squares = 0;
+  let distinctEdges = 0;
+  let colorfulPixels = 0;
+  for (let pixel = 0; pixel < SAMPLE_PIXELS; pixel++) {
+    const offset = pixel * 3;
+    const red = rgb.readUInt8(offset);
+    const green = rgb.readUInt8(offset + 1);
+    const blue = rgb.readUInt8(offset + 2);
+    const value = (77 * red + 150 * green + 29 * blue) >> 8;
+    luma[pixel] = value;
+    sum += value;
+    squares += value * value;
+    if (Math.max(red, green, blue) - Math.min(red, green, blue) >= 24) {
+      colorfulPixels++;
+    }
+    if (
+      pixel % SAMPLE_WIDTH > 0 &&
+      Math.abs(value - luma.readUInt8(pixel - 1)) >= 12
+    ) {
+      distinctEdges++;
+    }
+    if (
+      pixel >= SAMPLE_WIDTH &&
+      Math.abs(value - luma.readUInt8(pixel - SAMPLE_WIDTH)) >= 12
+    ) {
+      distinctEdges++;
+    }
+  }
+  const variance = squares / SAMPLE_PIXELS - (sum / SAMPLE_PIXELS) ** 2;
+  return (
+    variance <= 8 ** 2 &&
+    distinctEdges / edgeCount <= 0.002 &&
+    colorfulPixels / SAMPLE_PIXELS <= 0.002
+  );
+}
+
+export async function validateGeneratedVideoPicture(
+  inputPath: string,
+  durationSeconds: number,
+): Promise<void> {
+  let samples: Buffer;
+  try {
+    ({ stdout: samples } = await execFileAsync(
+      process.env.FFMPEG_PATH ?? "ffmpeg",
+      [
+        "-nostdin",
+        "-v",
+        "error",
+        "-xerror",
+        "-threads",
+        "1",
+        "-filter_threads",
+        "1",
+        "-i",
+        inputPath,
+        "-map",
+        "0:v:0",
+        "-vf",
+        `fps=${SAMPLE_COUNT}/${durationSeconds},scale=${SAMPLE_WIDTH}:${SAMPLE_HEIGHT}:flags=area`,
+        "-pix_fmt",
+        "rgb24",
+        "-threads",
+        "1",
+        "-frames:v",
+        String(SAMPLE_COUNT),
+        "-f",
+        "rawvideo",
+        "pipe:1",
+      ],
+      {
+        encoding: "buffer",
+        maxBuffer: SAMPLE_COUNT * SAMPLE_BYTES,
+        timeout: 30_000,
+      },
+    ));
+  } catch (error) {
+    throw new GenerationOutputValidationError("无法抽取成片画面进行验收", {
+      cause: error,
+    });
+  }
+  if (samples.length < 3 * SAMPLE_BYTES || samples.length % SAMPLE_BYTES) {
+    throw new GenerationOutputValidationError("成片可解码的画面不足");
+  }
+  for (let start = 0; start < samples.length; start += SAMPLE_BYTES) {
+    if (!hasNoVisibleDetail(samples.subarray(start, start + SAMPLE_BYTES))) {
+      return;
+    }
+  }
+  throw new GenerationOutputValidationError(
+    "成片抽查画面均为空白或低对比度灰纹，没有可辨认画面",
+  );
+}
+
 export async function validateGeneratedVideoOutput(
   video: Buffer,
   expected: ExpectedGenerationMedia,
@@ -150,6 +254,14 @@ export async function validateGeneratedVideoOutput(
     if (issues.length) {
       throw new GenerationOutputValidationError(issues.join("；"));
     }
+    const videoStream = probe.streams?.find(
+      (stream) => stream.codec_type === "video",
+    );
+    const duration = finiteNumber(videoStream?.duration);
+    await validateGeneratedVideoPicture(
+      inputPath,
+      duration && duration > 0 ? duration : expected.durationSeconds,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

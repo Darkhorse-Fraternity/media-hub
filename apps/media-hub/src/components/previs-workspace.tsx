@@ -7,6 +7,7 @@ import { Link } from "@tanstack/react-router";
 import type { MediaHubAppRouter } from "@acme/api";
 import type { MediaPrevisRecipe, MediaPrevisView } from "@acme/validators";
 import {
+  MEDIA_H3_REFERENCE_VIDEO_MAX_FRAMES,
   mediaPrevisRecipeSchema,
   mediaPrevisViewsSchema,
 } from "@acme/validators";
@@ -1421,7 +1422,8 @@ function RenderPanel({
     <section className="mt-6 border-t border-slate-800 pt-5">
       <h3 className="font-semibold">导出与渲染</h3>
       <p className="mt-1 text-xs text-slate-400">
-        使用已保存版本。草稿修改需先保存；图片生成在图片创作台中继续。
+        用白模确认机位、构图和摆位。做写实视频时，优先用符合开场的原始实拍图做首帧；缺少合适照片时，从已保存版本导出
+        PNG，在图片素材里按该布局做一张写实首帧，再生成视频。
       </p>
       <form
         className="mt-4 grid gap-3 md:grid-cols-4"
@@ -1515,6 +1517,13 @@ function RenderPanel({
             step={profile === "h3_reference" ? 1 : "any"}
             onChange={setDuration}
           />
+        )}
+        {profile === "h3_reference" && (
+          <p className="text-xs text-slate-400 md:col-span-4">
+            只有要复刻这段白模动画的运镜或动作时序时，才给 H3
+            加入参考视频。请选择 5 秒导出（
+            {MEDIA_H3_REFERENCE_VIDEO_MAX_FRAMES} 帧）。
+          </p>
         )}
         <fieldset className="md:col-span-2">
           <legend className="mb-2 text-xs text-slate-400">
@@ -1736,7 +1745,13 @@ function RenderItems({
                     </button>
                   )}
                   {item.artifact.contentType === "video/mp4" &&
-                    item.spec.profile === "h3_reference" && (
+                    item.spec.profile === "h3_reference" &&
+                    (item.artifact.frameCount >
+                    MEDIA_H3_REFERENCE_VIDEO_MAX_FRAMES ? (
+                      <span className="text-slate-400">
+                        用作 H3 参考时请重新导出 5 秒片段
+                      </span>
+                    ) : (
                       <button
                         onClick={() => {
                           void navigator.clipboard
@@ -1755,7 +1770,7 @@ function RenderItems({
                       >
                         复制视频产物 ID
                       </button>
-                    )}
+                    ))}
                   <span className="text-slate-500">
                     {item.artifact.width}×{item.artifact.height} ·{" "}
                     {item.artifact.frameCount} 帧

@@ -9,7 +9,7 @@ For text/first-frame generation, use [references/base-mode.md](references/base-m
 
 ## Workflow
 
-1. Determine whether generation uses text, a first frame, or a whole reference video. Route whole-video input to reference mode; do not reduce its temporal information to a first-frame prompt. Use the remaining workflow below for base text/image generation.
+1. Determine what the user wants the input to control. For white-model composition and placement, follow the [still-image workflow](../media-hub-video/SKILL.md#generate-from-white-modelprevis). Use reference mode when the brief explicitly calls for motion from a supplied clip and allows video input. Use the remaining workflow below for base text/image generation.
 2. Rewrite the user's intent into a concrete, chronological shot plan. Do not add unrelated subjects, dialogue, text, or plot events.
 3. Write the structural keys and descriptive prose in English. Preserve dialogue, lyrics, signs, and other visible text in the language requested by the user.
 4. Include official shot timing, camera movement, subject motion, lighting, spatial relations, sound effects, ambience, and music intent.

@@ -9,6 +9,7 @@ import { createMediaGenerationSchema } from "@acme/validators";
 
 import {
   compileH3StructuredDialoguePrompt,
+  normalizeH3ReferencePrompt,
   validateH3ReferencePrompt,
 } from "./h3-generation-config";
 import {
@@ -87,6 +88,20 @@ describe("whole-video reference generation", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("canonicalizes legacy image tags and rejects references to missing images", () => {
+    const normalized = normalizeH3ReferencePrompt(
+      prompt.replace("<Picture 1>", "<Image 01>"),
+    );
+    expect(normalized).toBe(prompt);
+    expect(validateH3ReferencePrompt(normalized, 1)).toEqual([]);
+    expect(
+      validateH3ReferencePrompt(
+        normalizeH3ReferencePrompt(prompt.replace("<Picture 1>", "<Image 2>")),
+        1,
+      ),
+    ).toContain("引用了未提供的 <Picture 2>");
+  });
+
   it("checks frame grid, aspect and actual frame rate", () => {
     expect([5, 10, 15].map(h3ReferenceFrameCount)).toEqual([124, 243, 362]);
     const probe = {
@@ -102,11 +117,12 @@ describe("whole-video reference generation", () => {
         },
       ],
     };
-    const expected = { width: 1344, height: 768, durationSeconds: 5 };
+    const expected = { width: 1344, height: 768 };
     expect(referenceVideoProbeMetadata(probe, expected).frameCount).toBe(124);
     for (const patch of [
       { avg_frame_rate: "30/1" },
       { nb_read_frames: "120" },
+      { nb_read_frames: "NaN" },
       { codec_name: "hevc" },
       { height: 1344 },
       { duration: "NaN" },
@@ -167,7 +183,7 @@ describe("whole-video reference generation", () => {
           contentType: "video/mp4",
         },
         "owner",
-        { durationSeconds: 5, width: 96, height: 64 },
+        { width: 96, height: 64 },
       );
       expect(result).toMatchObject({
         frameCount: 124,

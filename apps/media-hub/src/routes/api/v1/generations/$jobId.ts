@@ -17,7 +17,10 @@ const updateGenerationBody = z.object({
   scheduled_at: z.iso.datetime().nullable().optional(),
 });
 
-async function handleGet(request: Request, jobId: string): Promise<Response> {
+export async function handleGet(
+  request: Request,
+  jobId: string,
+): Promise<Response> {
   try {
     const { caller } = await createAgentApiCaller(request);
     return agentJson(await caller.mediaHub.generation.getById({ id: jobId }));

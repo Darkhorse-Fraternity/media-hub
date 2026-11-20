@@ -4,7 +4,10 @@ import { Link } from "@tanstack/react-router";
 
 import type { ContentLanguage } from "~/lib/content-language";
 import { MediaHubAccountMenu } from "~/components/media-hub-account-menu";
-import { formatGenerationElapsed } from "~/lib/generation-display";
+import {
+  formatVideoJobTiming,
+  videoJobDisplayStatus,
+} from "~/lib/generation-display";
 import {
   resolveScheduledAt,
   scheduleDayOptions,
@@ -19,7 +22,7 @@ const qualityOptions = [
   {
     value: "balanced",
     label: "均衡 · 6 步",
-    description: "推荐，匹配 Turbo 工作流",
+    description: "兼顾速度和细节",
   },
   {
     value: "quality",
@@ -722,10 +725,7 @@ export function VideoLibrary({
                 const selectedScheduledCount = selectedPublishDrafts.filter(
                   (draft) => draft.timing === "scheduled",
                 ).length;
-                const generationElapsed = formatGenerationElapsed(
-                  job.startedAt,
-                  job.finishedAt,
-                );
+                const generationTiming = formatVideoJobTiming(job);
                 const failedPublishTargets = job.publishTargets.filter(
                   (target) => target.status === "failed",
                 );
@@ -767,14 +767,9 @@ export function VideoLibrary({
                             : job.referenceImages.length > 0) &&
                             ` · 参考图 ${job.referenceImages.length + (job.sourceImageStorageKey ? 1 : 0)} 张`}
                         </p>
-                        {generationElapsed && (
+                        {generationTiming && (
                           <p className="mt-1 text-xs text-cyan-300/80">
-                            {job.status === "running"
-                              ? "已生成"
-                              : job.status === "succeeded"
-                                ? "生成耗时"
-                                : "执行耗时"}
-                            ：{generationElapsed}
+                            {generationTiming}
                           </p>
                         )}
                         {job.audioValidationStatus && (
@@ -810,7 +805,7 @@ export function VideoLibrary({
                         </p>
                       </div>
                       <div className="flex shrink-0 flex-col items-end gap-2">
-                        <StatusBadge status={job.status} />
+                        <StatusBadge status={videoJobDisplayStatus(job)} />
                         <div className="flex flex-wrap items-center justify-end gap-2">
                           {canRetry && (
                             <button
@@ -2166,7 +2161,7 @@ function StatusBadge({ status }: { status: string }) {
   const labels: Record<string, string> = {
     scheduled: "已定时",
     queued: "排队中",
-    waiting_for_gpu: "等待 GPU",
+    waiting_for_gpu: "排队中",
     running: "生成中",
     succeeded: "已完成",
     failed: "失败",

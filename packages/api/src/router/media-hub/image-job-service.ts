@@ -2,7 +2,7 @@ import type { db as database } from "@acme/db/client";
 import { mediaImageJob, mediaImageJobInput } from "@acme/db/schema";
 
 import {
-  HIDREAM_IMAGE_PROFILE,
+  defaultMediaImageProfile,
   scheduleMediaImageJob,
   startMediaImageScheduler,
 } from "./image-generation";
@@ -45,7 +45,7 @@ export async function queueMediaImageJob(input: QueueMediaImageJobInput) {
       seed: input.seed ?? null,
       outputCount: input.outputCount,
       diversity: input.diversity,
-      profile: HIDREAM_IMAGE_PROFILE,
+      profile: defaultMediaImageProfile(),
       status: "queued",
       createdBy: input.userId,
       createdAt: now,

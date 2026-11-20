@@ -1,7 +1,8 @@
 import type { MediaH3Dialogue } from "@acme/validators";
 import { MEDIA_H3_PROMPT_MAX_LENGTH } from "@acme/validators";
 
-export const DEFAULT_H3_GENERATION_PROFILE = "platform-h3-i2v-inline-v1";
+export const DEFAULT_H3_GENERATION_PROFILE =
+  "platform-h3-hyperflow-flash-gguf-v1";
 export const DEFAULT_H3_EDIT_PROFILE = "platform-h3-ref2va-edit-v1";
 // Backward-compatible alias for callers that still use the original name.
 export const H3_PROFILE = DEFAULT_H3_GENERATION_PROFILE;
@@ -20,7 +21,7 @@ export const h3QualityPresets = {
   balanced: {
     steps: 6,
     label: "均衡",
-    description: "6 步，匹配当前 Turbo 工作流",
+    description: "6 步，兼顾速度和细节",
   },
   quality: {
     steps: 8,
@@ -324,6 +325,14 @@ export function validateH3GenerationPrompt(
     return validatePromptBody(marked[0]?.prompt ?? "", "SEGMENT 1/1");
   }
   return validatePromptBody(prompt.trim(), "提示词");
+}
+
+/** Older agents used Image for the subject images sent to Ref2VA. */
+export function normalizeH3ReferencePrompt(prompt: string): string {
+  return prompt.replace(
+    /<(?:Image|Picture)[ \t]+(\d+)>/gi,
+    (_, index: string) => `<Picture ${index.replace(/^0+(?=\d)/, "")}>`,
+  );
 }
 
 /** Ref2VA 参考生成使用六字段契约，不能降级为首帧/基础提示词。 */

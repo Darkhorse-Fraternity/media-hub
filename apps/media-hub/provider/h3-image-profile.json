@@ -1,0 +1,23 @@
+{
+  "platform-minimax-h3-image-v1": {
+    "adapter": "comfyui_minimax_h3_image.v1",
+    "workflow_version": "comfyui-minimax-h3-image-6step-v1",
+    "model_version": "minimax-h3-image-pruned-int8-convrot",
+    "models": {
+      "transformer": "minimax_h3_image_pruned_int8_convrot.safetensors",
+      "text_encoder": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+      "vae": "minimax_h3_image_vae_fp16.safetensors",
+      "prompt_expander": "qwen3.5_9b_w4a8_gptq.safetensors"
+    },
+    "defaults": {
+      "width": 1024,
+      "height": 1024,
+      "steps": 6,
+      "cfg": 1
+    },
+    "limits": {
+      "max_width": 4096,
+      "max_height": 4096
+    }
+  }
+}

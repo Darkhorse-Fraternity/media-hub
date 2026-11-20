@@ -17,18 +17,16 @@ from urllib.request import Request, urlopen
 
 
 DEFAULT_BASE_URL = "https://media-hub.test-xm.pumpkii.click:8880"
-KEYCHAIN_SERVICE = "media-hub-agent-api"
-KEYCHAIN_ACCOUNT = "media-hub-agent"
+TOKEN_ENV = "MEDIA_HUB_SERVER_AGENT_TOKEN"
 
 
 def token() -> str:
-    value = os.environ.get("MEDIA_HUB_AGENT_TOKEN", "").strip()
+    value = os.environ.get(TOKEN_ENV, "").strip()
     if value:
         return value
     if sys.platform == "darwin":
         result = subprocess.run(
-            ["security", "find-generic-password", "-a", KEYCHAIN_ACCOUNT,
-             "-s", KEYCHAIN_SERVICE, "-w"],
+            ["swift", str(Path(__file__).with_name("read-server-token.swift"))],
             capture_output=True,
             text=True,
             check=False,
@@ -36,13 +34,17 @@ def token() -> str:
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
     raise RuntimeError(
-        "No Agent API token available. Set MEDIA_HUB_AGENT_TOKEN or add the "
-        "media-hub-agent-api item to macOS Keychain."
+        "Cannot read the server@growup.com Agent credential on this host. "
+        "Retry the Keychain read in an authorized host context before concluding "
+        "it is missing. Use MEDIA_HUB_SERVER_AGENT_TOKEN or the macOS Keychain "
+        "service media-hub-agent-token-server-growup for the current OS user."
     )
 
 
 def base_url() -> str:
-    return os.environ.get("MEDIA_HUB_AGENT_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
+    return (os.environ.get("MEDIA_HUB_BASE_URL")
+            or os.environ.get("MEDIA_HUB_AGENT_BASE_URL")
+            or DEFAULT_BASE_URL).rstrip("/")
 
 
 def request(method: str, path: str, payload: dict | None = None):
